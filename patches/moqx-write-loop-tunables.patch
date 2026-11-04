@@ -1,0 +1,99 @@
+diff --git a/src/MoqxRelayServer.cpp b/src/MoqxRelayServer.cpp
+index b798ba7b..1132deb2 100644
+--- a/src/MoqxRelayServer.cpp
++++ b/src/MoqxRelayServer.cpp
+@@ -140,6 +140,8 @@ buildTransportSettings(const config::QuicConfig& quic, const config::MvfstConfig
+                                     : quic::QuicBatchingMode::BATCHING_MODE_SENDMMSG;
+   ts.maxBatchSize = mvfst.maxConnPacketsSentPerLoop;
+   ts.writeConnectionDataPacketsLimit = mvfst.maxConnPacketsSentPerLoop;
++  ts.writeLimitRttFraction = mvfst.writeLimitRttFraction;
++  ts.pacingTickInterval = std::chrono::microseconds(mvfst.pacingTickIntervalUs);
+   ts.dataPathType = quic::DataPathType::ContinuousMemory;
+   ts.shouldUseWrapperRecvmmsgForBatchRecv = mvfst.useRecvmmsg;
+   ts.maxServerRecvPacketsPerLoop = mvfst.maxServerRecvPacketsPerLoop;
+diff --git a/src/config/Config.h b/src/config/Config.h
+index 1da4bfd0..eb2f797f 100644
+--- a/src/config/Config.h
++++ b/src/config/Config.h
+@@ -93,6 +93,15 @@ struct MvfstConfig {
+   // Per-connection write loop limit. Written to both maxBatchSize and
+   // writeConnectionDataPacketsLimit so the cap is honored in all batching modes.
+   uint32_t maxConnPacketsSentPerLoop{48};
++  // Time budget for one write loop, as srtt/N. 0 removes the limit. The value
++  // scales with RTT, so a setting tuned for the internet is far tighter on a
++  // short path: at 25 a 0.4ms datacenter RTT allows ~16us per loop, which ends
++  // the loop early and spends more event-loop iterations per byte sent.
++  // mvfst's own tperf sets this to 0 whenever pacing is enabled.
++  uint32_t writeLimitRttFraction{25};
++  // Smallest interval the pacer will use, microseconds. Coarse ticks release
++  // larger bursts; tperf uses 200us against mvfst's 1000us default.
++  uint32_t pacingTickIntervalUs{1000};
+ 
+   // Receive-path tuning.
+   // Use recvmmsg for batch receives in QuicServerWorker.
+diff --git a/src/config/ConfigResolver.cpp b/src/config/ConfigResolver.cpp
+index 9a2309ef..b5a14612 100644
+--- a/src/config/ConfigResolver.cpp
++++ b/src/config/ConfigResolver.cpp
+@@ -859,6 +859,10 @@ void applyMvfstOverride(MvfstConfig& base, const ParsedMvfstConfig& overlay) {
+     base.enableGSO = *v;
+   if (auto v = overlay.max_conn_packets_sent_per_loop.value())
+     base.maxConnPacketsSentPerLoop = *v;
++  if (auto v = overlay.write_limit_rtt_fraction.value())
++    base.writeLimitRttFraction = *v;
++  if (auto v = overlay.pacing_tick_interval_us.value())
++    base.pacingTickIntervalUs = *v;
+   if (auto v = overlay.use_recvmmsg.value())
+     base.useRecvmmsg = *v;
+   if (auto v = overlay.max_server_recv_packets_per_loop.value())
+@@ -1010,6 +1014,11 @@ void validateMvfstConfig(
+   if (mvfst.numGROBuffers == 0) {
+     errors.push_back(context + " mvfst: num_gro_buffers must be >= 1");
+   }
++  // 0 is meaningful here: it removes the write-loop time limit entirely.
++  if (mvfst.pacingEnabled && mvfst.pacingTickIntervalUs == 0) {
++    errors.push_back(
++        context + " mvfst: pacing_tick_interval_us must be >= 1 when pacing_enabled");
++  }
+   if (mvfst.numGROBuffers > 64) {
+     warnings.push_back(
+         context + " mvfst: num_gro_buffers (" + std::to_string(mvfst.numGROBuffers) +
+diff --git a/src/config/ConfigSerializer.h b/src/config/ConfigSerializer.h
+index 7c04312e..a5266672 100644
+--- a/src/config/ConfigSerializer.h
++++ b/src/config/ConfigSerializer.h
+@@ -115,6 +115,8 @@ inline void serializeMvfst(ConfigSink& s, const MvfstConfig& m) {
+   s.boolField("pacing_enabled", m.pacingEnabled);
+   s.boolField("enable_gso", m.enableGSO);
+   s.uintField("max_conn_packets_sent_per_loop", m.maxConnPacketsSentPerLoop);
++  s.uintField("write_limit_rtt_fraction", m.writeLimitRttFraction);
++  s.uintField("pacing_tick_interval_us", m.pacingTickIntervalUs);
+   s.boolField("use_recvmmsg", m.useRecvmmsg);
+   s.uintField("max_server_recv_packets_per_loop", m.maxServerRecvPacketsPerLoop);
+   s.uintField("num_gro_buffers", m.numGROBuffers);
+diff --git a/src/config/loader/ParsedConfig.h b/src/config/loader/ParsedConfig.h
+index 5966d092..1fe94bcf 100644
+--- a/src/config/loader/ParsedConfig.h
++++ b/src/config/loader/ParsedConfig.h
+@@ -148,6 +148,21 @@ struct ParsedMvfstConfig {
+       "applies in all batching modes.",
+       std::optional<uint32_t>>
+       max_conn_packets_sent_per_loop;
++  rfl::Description<
++      "Time budget for one write loop, expressed as srtt/N (default: 25). "
++      "0 removes the limit. The budget scales with RTT, so a value tuned for "
++      "internet paths is much tighter on a short one: at 25, a 0.4ms "
++      "datacenter RTT allows only ~16us per loop, ending the loop early and "
++      "spending more event-loop iterations per byte. Set 0 when pacing is on, "
++      "which is what mvfst's own tperf benchmark does.",
++      std::optional<uint32_t>>
++      write_limit_rtt_fraction;
++  rfl::Description<
++      "Smallest interval the pacer will use, in microseconds (default: 1000). "
++      "Coarser ticks release larger bursts; tperf uses 200. Only has an effect "
++      "when pacing_enabled is true.",
++      std::optional<uint32_t>>
++      pacing_tick_interval_us;
+   rfl::Description<
+       "Use recvmmsg for batch receives in QuicServerWorker (default: true). "
+       "Enables the recvmmsg kernel call to read multiple UDP packets per syscall, "

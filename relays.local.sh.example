@@ -1,0 +1,42 @@
+# Copy to relays.local.sh (untracked, gitignored) to benchmark a relay whose
+# launch and build details do not belong in this repo. lib/run.sh sources it,
+# so the relay then works with relay-deploy.sh, relay-load.sh and
+# relay-capacity.sh like the built-in ones:
+#
+#   ./bin/relay-deploy.sh myrelay ~/build/my-relay   # install a binary built elsewhere
+#   ./bin/relay-load.sh adaptive myrelay 120
+#   CONFIGS="moqx myrelay" ./bin/relay-capacity.sh --matrix
+#
+# PROC is the process name as `pgrep -x` sees it (truncated to 15 chars), PATHS
+# the URL path clients connect to, LABEL the relay/stack name in the CSV, BIN
+# where relay-deploy.sh installs the binary, under ~/Projects on the relay host.
+PROC[myrelay]=my-relay
+PATHS[myrelay]=/
+LABEL[myrelay]=myrelay/quinn
+BIN[myrelay]=myrelay/my-relay
+
+# Launch command, run from ~/Projects on the relay host. Bind 4533 and use the
+# harness certs (bench/cert.pem, bench/key.pem) so every client and publisher
+# works unchanged.
+local_relay_cmd() {
+  local cfg=$1 threads=$2
+  case $cfg in
+    myrelay) echo "RUST_LOG=warn TOKIO_WORKER_THREADS=$threads myrelay/my-relay --bind 0.0.0.0:4533 --tls-cert bench/cert.pem --tls-key bench/key.pem" ;;
+  esac
+}
+
+# Optional: an installer for a relay that needs more than a binary copied in,
+# such as a build on the relay host itself (the hosts run Ubuntu 22.04, glibc
+# 2.35, so a binary built on a newer distro will not load). relay-deploy.sh
+# calls it when no binary is given, as local_deploy <relay> <relay-host> [arg].
+# Stage the build at ~/Projects/<BIN>.new and finish with deploy_install
+# (lib/deploy.sh), which checks it loads, keeps the old one as .prev and records
+# what went in; deploy_check first skips a build that is already there.
+local_deploy() {
+  local relay=$1 host=$2 src=${3:-$HOME/src/my-relay} label
+  label=$(git -C "$src" rev-parse --short HEAD)
+  deploy_check "$host" "${BIN[$relay]}" "$label" || return $(( $? == 1 ? 0 : 1 ))
+  tar czf - -C "$src" --exclude=./target . | $SSH "$RUSER@$host" 'rm -rf ~/myrelay-src; mkdir ~/myrelay-src; tar xzf - -C ~/myrelay-src'
+  $SSH "$RUSER@$host" 'cd ~/myrelay-src && cargo build --release && install -m 0755 target/release/my-relay ~/Projects/myrelay/my-relay.new'
+  deploy_install "$host" "${BIN[$relay]}" "$label"
+}

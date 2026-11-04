@@ -1,0 +1,44 @@
+# A complete environment for a tenancy of your own. Copy to
+# <name>.local.tfvars (gitignored; <name> becomes the environment and its
+# Terraform workspace), fill in, then:
+#
+#   ./bin/testbed.sh <name> plan            # a deployment with the environment's own name
+#   ./bin/testbed.sh <name> up && ./bin/testbed-provision.sh && ./bin/testbed-tune.sh && ./bin/relay-smoke.sh
+#
+# Nothing here is a credential. The profile NAME points at ~/.oci/config, where
+# the API key or session token stays. Create one with either:
+#   oci setup config                                   # API key, long-lived
+#   oci session authenticate --profile-name <name>     # browser login, ~1 h tokens
+
+config_file_profile = "<profile name>"
+auth                = "APIKey" # or "SecurityToken" for a session profile
+region              = "us-ashburn-1"
+tenancy_ocid        = "<ocid1.tenancy... from your profile>"
+# expected_tenancy_name = "<tenancy name>"   # optional guard: refuse any other tenancy
+
+# A compartment you can manage. A dedicated one keeps cleanup to `./bin/testbed.sh <name> destroy`.
+compartment_ocid    = "<ocid1.compartment...>"
+availability_domain = "<XXXX:US-ASHBURN-AD-1>" # oci iam availability-domain list
+# Ubuntu 22.04 for the region: the relay and moxygen binaries need glibc 2.35.
+#   oci compute image list --compartment-id <compartment> --operating-system 'Canonical Ubuntu' \
+#     --operating-system-version 22.04 --shape VM.Standard.E5.Flex --sort-by TIMECREATED --limit 1
+image_ocid = "<ocid1.image...>"
+
+ssh_key_file  = "~/.ssh/id_ed25519"  # <path>.pub goes onto every host
+allowed_cidrs = ["<your egress IP>/32"]
+owner         = "<your name>"
+
+# The default four hosts; check your E5 core limit covers 28.
+relay_shape     = "VM.Standard.E5.Flex"
+relay_ocpus     = 8
+relay_memory_gb = 32
+
+client_count     = 2
+client_shape     = "VM.Standard.E5.Flex"
+client_ocpus     = 8
+client_memory_gb = 32
+
+probe_count     = 1
+probe_shape     = "VM.Standard.E5.Flex"
+probe_ocpus     = 4
+probe_memory_gb = 8

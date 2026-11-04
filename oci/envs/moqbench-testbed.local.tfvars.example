@@ -1,0 +1,36 @@
+# Your half of the moqbench-testbed environment. Copy to
+# moqbench-testbed.local.tfvars (gitignored) and fill in. Nothing here is a
+# credential: the profile NAME points at ~/.oci/config, where the session token
+# or API key stays.
+
+# The ~/.oci/config profile you log in with. For a session login:
+#   oci session authenticate --region <region> --profile-name <name> ...
+# ./bin/testbed.sh checks the session is still valid before every action; renew with
+#   oci session refresh --profile <name> --auth security_token
+config_file_profile = "<profile name>"
+auth                = "SecurityToken"
+
+# The tenancy that profile authenticates in: its `tenancy=` line in
+# ~/.oci/config. Set target_tenancy_ocid below only when you deploy into a
+# different tenancy from the one you log in to.
+tenancy_ocid = "<ocid1.tenancy... from your profile>"
+
+# Your SSH key; <path>.pub is installed on every host and the drivers use the
+# private key. The drivers find it through `terraform -chdir=oci output`.
+ssh_key_file = "~/.ssh/id_ed25519"
+
+# Your public egress address, the only source allowed in from outside the VCN
+# (SSH, relay and metrics ports). With expected_tenancy_name set, a /0 is refused.
+#   curl -s https://checkip.amazonaws.com
+allowed_cidrs = ["<your egress IP>/32"]
+
+# Tagged on every resource, so the compartment shows whose lab it is.
+owner = "<your name>"
+
+# Target deployment identity; keep these in this ignored local file.
+expected_tenancy_name = "<target tenancy name>"
+target_tenancy_ocid   = "<target tenancy OCID>"
+region               = "<region>"
+compartment_ocid     = "<test compartment OCID>"
+availability_domain  = "<availability domain name>"
+image_ocid           = "<Ubuntu 22.04 image OCID for this region>"

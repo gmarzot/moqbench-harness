@@ -1,0 +1,44 @@
+# The Graviton3 video-shape sweep (sweep-g3.plan) against moq-dev main and
+# cloudflare moq-rs (draft-18-dev), both built by ./bin/relay-build.sh: same
+# hosts, shapes, limits and publisher placement, draft 18, 60 relay threads.
+PUB_HOST=client:2
+DRAFT=18
+THREADS=60
+STEP_SUBS=250
+JOIN=10
+STAGGER=0.02
+LATENCY_MS=500
+SHORTFALL=0.7
+DELIVERY_TIMEOUT=500
+MP_THREADS=32
+MP_RAMP=64
+# tool  build  shape  max/box  seconds  run
+RELAY=moqdev
+# moq-dev's runtime modes at 1080p: thread-per-core workers, the same on
+# io_uring, and its default work-stealing runtime.
+MOQDEV_RUNTIME=workers
+aio     src    1080p   5000    600      aio-mdev60-3b-1080+g3
+aio     src    720p    8000    700      aio-mdev60-3b-720+g3
+MOQDEV_RUNTIME=shared
+aio     src    1080p   5000    600      aio-mdevsh60-3b-1080+g3
+mp      src    1080p   5000    420      mp-mdevsh60-3b-1080+g3
+MOQDEV_RUNTIME=uring
+aio     src    1080p   5000    600      aio-mdevur60-3b-1080+g3
+mp      src    1080p   5000    420      mp-mdevur60-3b-1080+g3
+# moq-rs stalls (SERVER_SETUP timeouts, minutes of latency) below the first
+# 250-per-host step without using more than ~3 cores, so it ramps by 10.
+# moqperf is left out: moq-rs closes moqtest_server's session at moxygen's
+# 30 s PUBLISH_NAMESPACE "ping" keepalive.
+RELAY=cf
+STEP_SUBS=10
+aio     src    1080p   5000    300      aio-mrs60-3b-1080+g3
+aio     src    720p    8000    300      aio-mrs60-3b-720+g3
+aio     src    480p   10000    300      aio-mrs60-3b-480+g3
+# moq-dev's remaining points, in its worker mode.
+RELAY=moqdev
+STEP_SUBS=250
+MOQDEV_RUNTIME=workers
+aio     src    480p   10000    800      aio-mdev60-3b-480+g3
+mp      src    1080p   5000    420      mp-mdev60-3b-1080+g3
+mp      src    720p    8000    520      mp-mdev60-3b-720+g3
+mp      src    480p   10000    600      mp-mdev60-3b-480+g3

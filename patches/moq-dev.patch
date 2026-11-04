@@ -1,0 +1,449 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index ba95fb9..63854ba 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -10450,9 +10450,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "web-transport-quiche"
+-version = "0.6.0"
++version = "0.7.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "153ece42b1d6e86015fcac192b6d4aae0ac8595045e844ac075169b22f1d37c6"
++checksum = "723f409f2e2d440a53e3c44e64af9b4f9d0c8d49e815c7194b4c581df981632e"
+ dependencies = [
+  "boring",
+  "bytes",
+diff --git a/Cargo.toml b/Cargo.toml
+index 3e6ce52..58544e0 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -128,7 +128,7 @@ web-transport-iroh = "0.7"
+ # Keep the `qlog` passthrough feature available for moq-native to forward.
+ web-transport-noq = { version = "0.3.0", default-features = false }
+ web-transport-proto = "0.6"
+-web-transport-quiche = "0.6"
++web-transport-quiche = "0.7"
+ web-transport-quinn = "0.12"
+ web-transport-trait = "0.4.0"
+ web-transport-wasm = "0.5"
+diff --git a/rs/moq-native/src/bind.rs b/rs/moq-native/src/bind.rs
+index 6f99282..e324187 100644
+--- a/rs/moq-native/src/bind.rs
++++ b/rs/moq-native/src/bind.rs
+@@ -23,11 +23,51 @@ use std::time::Duration;
+ const KEEPALIVE_IDLE: Duration = Duration::from_secs(30);
+ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+ 
++/// Request larger UDP socket buffers, in bytes, from `MOQ_UDP_BUFFER_BYTES`.
++///
++/// Neither quinn nor quiche sizes the socket itself, so a relay otherwise runs
++/// on the kernel default while the host is tuned for far more. Under fan-out
++/// the send buffer is what absorbs a burst to many peers; when it is too small
++/// the kernel drops datagrams the relay believed it had sent. Unset leaves the
++/// default in place. The kernel clamps to net.core.{r,w}mem_max.
++fn set_buffer_sizes(socket: &Socket) {
++	let Some(bytes) = std::env::var("MOQ_UDP_BUFFER_BYTES")
++		.ok()
++		.and_then(|v| v.parse::<usize>().ok())
++	else {
++		return;
++	};
++	if let Err(err) = socket.set_recv_buffer_size(bytes) {
++		tracing::warn!(?err, bytes, "could not set UDP recv buffer size");
++	}
++	if let Err(err) = socket.set_send_buffer_size(bytes) {
++		tracing::warn!(?err, bytes, "could not set UDP send buffer size");
++	}
++}
++
+ /// Bind a UDP socket, making an IPv6 socket dual-stack so it also serves IPv4.
+ pub fn udp(addr: SocketAddr) -> std::io::Result<UdpSocket> {
+ 	let domain = if addr.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
+ 	let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+ 	make_dual_stack(&socket, addr);
++	set_buffer_sizes(&socket);
++	socket.bind(&addr.into())?;
++	Ok(socket.into())
++}
++
++/// Bind a UDP socket with SO_REUSEPORT so several sockets can share one port.
++///
++/// The kernel then hashes each 4-tuple to one of them, letting a server run an
++/// independent receive path per worker instead of funnelling every datagram
++/// through a single socket. Note that 4-tuple hashing does not follow QUIC
++/// connection migration; CID-aware steering (eBPF) is needed for that.
++pub fn udp_reuseport(addr: SocketAddr) -> std::io::Result<UdpSocket> {
++	let domain = if addr.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
++	let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
++	socket.set_reuse_address(true)?;
++	socket.set_reuse_port(true)?;
++	make_dual_stack(&socket, addr);
++	set_buffer_sizes(&socket);
+ 	socket.bind(&addr.into())?;
+ 	Ok(socket.into())
+ }
+diff --git a/rs/moq-native/src/quiche.rs b/rs/moq-native/src/quiche.rs
+index 234597f..092d346 100644
+--- a/rs/moq-native/src/quiche.rs
++++ b/rs/moq-native/src/quiche.rs
+@@ -392,8 +392,10 @@ impl QuicheClient {
+ 				let alpn = conn.alpn().ok_or(Error::MissingAlpn)?;
+ 				let alpn = std::str::from_utf8(&alpn)?;
+ 
+-				let response = web_transport_quiche::proto::ConnectResponse::OK.with_protocol(alpn);
+-				Ok(web_transport_quiche::Connection::raw(conn, request, response))
++				// web-transport-quiche 0.7 derives the protocol from the negotiated
++				// ALPN for raw sessions, so no ConnectRequest/Response is needed.
++				let _ = alpn;
++				Ok(web_transport_quiche::Connection::raw(conn))
+ 			}
+ 			_ => unreachable!("unsupported URL scheme: {}", url.scheme()),
+ 		}
+@@ -556,10 +558,22 @@ fn proto_status(err: &web_transport_quiche::proto::ConnectError) -> Option<u16>
+ // ── Server ──────────────────────────────────────────────────────────
+ 
+ pub(crate) struct QuicheServer {
+-	pub server: web_transport_quiche::ez::Server,
++	/// Accepted connections from every shard, merged.
++	incoming: tokio::sync::mpsc::Receiver<web_transport_quiche::ez::Incoming>,
++	local: net::SocketAddr,
+ 	pub certs: crate::tls::Certificates,
+ }
+ 
++/// Number of SO_REUSEPORT shards (independent sockets + accept loops).
++/// `MOQ_QUICHE_SHARDS=1` reproduces the original single-socket behaviour.
++fn quiche_shards() -> usize {
++	std::env::var("MOQ_QUICHE_SHARDS")
++		.ok()
++		.and_then(|v| v.parse().ok())
++		.filter(|n| *n >= 1)
++		.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
++}
++
+ impl QuicheServer {
+ 	pub fn new(config: ServerConfig) -> Result<Self> {
+ 		if config.quic.quic_lb_id.is_some() {
+@@ -570,7 +584,12 @@ impl QuicheServer {
+ 
+ 		let listen =
+ 			crate::util::resolve(config.bind.as_deref(), crate::server::DEFAULT_BIND).map_err(Error::ResolveBind)?;
+-		let socket = crate::bind::udp(listen)?;
++		let shards = quiche_shards();
++		let socket = if shards > 1 {
++			crate::bind::udp_reuseport(listen)?
++		} else {
++			crate::bind::udp(listen)?
++		};
+ 
+ 		let (chain, key) = if !config.tls.generate.is_empty() {
+ 			generate_quiche_cert(&config.tls.generate)?
+@@ -613,7 +632,7 @@ impl QuicheServer {
+ 		apply_settings(&mut settings, &quic)?;
+ 
+ 		let mut builder = web_transport_quiche::ez::ServerBuilder::default()
+-			.with_settings(settings)
++			.with_settings(settings.clone())
+ 			.with_gso(quic.gso.unwrap_or(true));
+ 
+ 		if let Some(interval) = quic.keep_alive {
+@@ -636,14 +655,47 @@ impl QuicheServer {
+ 
+ 		let server = builder
+ 			.with_socket(socket)?
+-			.with_single_cert(chain, key)
++			.with_single_cert(chain.clone(), key.clone_key())
+ 			.map_err(Error::ServerBuild)?;
+ 
+-		Ok(Self { server, certs })
++		let local = server.local_addrs().first().copied().ok_or(Error::NoLocalAddr)?;
++
++		// One accept loop per shard, all feeding a single queue. Shard 0 owns the
++		// socket bound above; the rest re-bind the same port via SO_REUSEPORT.
++		let (tx, rx) = tokio::sync::mpsc::channel(1024);
++		let mut servers = vec![server];
++		for _ in 1..shards {
++			let sock = crate::bind::udp_reuseport(local).map_err(Error::Io)?;
++			let mut b = web_transport_quiche::ez::ServerBuilder::default()
++				.with_settings(settings.clone())
++				.with_gso(quic.gso.unwrap_or(true));
++			if let Some(interval) = quic.keep_alive {
++				b = b.with_keep_alive(interval);
++			}
++			servers.push(
++				b.with_socket(sock)?
++					.with_single_cert(chain.clone(), key.clone_key())
++					.map_err(Error::ServerBuild)?,
++			);
++		}
++		tracing::info!(shards = servers.len(), %local, "quiche server listening");
++
++		for mut srv in servers {
++			let tx = tx.clone();
++			tokio::spawn(async move {
++				while let Some(conn) = srv.accept().await {
++					if tx.send(conn).await.is_err() {
++						break;
++					}
++				}
++			});
++		}
++
++		Ok(Self { incoming: rx, local, certs })
+ 	}
+ 
+-	pub fn accept(&mut self) -> impl std::future::Future<Output = Option<web_transport_quiche::ez::Incoming>> + '_ {
+-		self.server.accept()
++	pub async fn accept(&mut self) -> Option<web_transport_quiche::ez::Incoming> {
++		self.incoming.recv().await
+ 	}
+ 
+ 	pub fn certificates(&self) -> crate::tls::Certificates {
+@@ -651,7 +703,7 @@ impl QuicheServer {
+ 	}
+ 
+ 	pub fn local_addr(&self) -> Result<net::SocketAddr> {
+-		self.server.local_addrs().first().copied().ok_or(Error::NoLocalAddr)
++		Ok(self.local)
+ 	}
+ 
+ 	pub fn close(&mut self) {
+@@ -748,10 +800,9 @@ pub(crate) async fn accept(
+ 		// not the global default set, so opt-in / work-in-progress versions (e.g.
+ 		// moq-lite-06-wip) that are deliberately absent from `moq_net::ALPNS` still work.
+ 		alpn if alpns.contains(&alpn) => {
+-			let request = ConnectRequest::new("moqt://".to_string().parse::<Url>().unwrap());
+-			let response = web_transport_quiche::proto::ConnectResponse::OK.with_protocol(alpn);
+-			// Raw QUIC carries no request URL; the path rides the SETUP.
+-			let session = web_transport_quiche::Connection::raw(conn, request, response);
++			// Raw QUIC carries no request URL; the path rides the SETUP, and 0.7
++			// derives the protocol from the negotiated ALPN.
++			let session = web_transport_quiche::Connection::raw(conn);
+ 			Ok((session, None, identity))
+ 		}
+ 		_ => Err(Error::UnsupportedAlpn(alpn.to_string())),
+diff --git a/rs/moq-net/src/ietf/publisher.rs b/rs/moq-net/src/ietf/publisher.rs
+index ffc9b53..45a066e 100644
+--- a/rs/moq-net/src/ietf/publisher.rs
++++ b/rs/moq-net/src/ietf/publisher.rs
+@@ -502,11 +502,12 @@ impl<S: web_transport_trait::Session> Publisher<S> {
+ 			FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
+ 				tracing::warn!(?msg, "absolute subscribe not supported, ignoring");
+ 			}
+-			FilterType::NextGroup => {
+-				tracing::warn!(?msg, "next group subscribe not supported, ignoring");
+-			}
++			FilterType::NextGroup => {}
+ 			FilterType::LargestObject => {}
+ 		};
++		// NextGroup = start at the next group boundary (skip the in-flight group);
++		// LargestObject = the live edge.
++		let next_group = matches!(msg.filter_type, FilterType::NextGroup);
+ 
+ 		let request_id = msg.request_id;
+ 		let track_name = msg.track_name.clone();
+@@ -556,6 +557,13 @@ impl<S: web_transport_trait::Session> Publisher<S> {
+ 					_ => None,
+ 				},
+ 				track_alias: request_id.0,
++				// draft-16 §9.2.2.7 MUST: report the largest Location once the track
++				// has content, otherwise a late joiner sees "empty track" and treats
++				// it as a restart. Sampled here, so it may lag the data streams by a
++				// group; subscribers tolerate that skew.
++				largest: track
++					.latest_location()
++					.map(|(group, object)| ietf::Location { group, object }),
+ 				properties: ietf::Properties {
+ 					// Declaring the timescale is what opts the track into timestamps; every
+ 					// object Timestamp below is in these units.
+@@ -568,7 +576,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
+ 
+ 		// Run the track, cancelling on reader close (Unsubscribe or stream close)
+ 		let res = {
+-			let mut serve = std::pin::pin!(self.run_track(track, request_id));
++			let mut serve = std::pin::pin!(self.run_track(track, request_id, next_group));
+ 			let mut reader_closed = std::pin::pin!(stream.reader.closed());
+ 			let mut session_closed = std::pin::pin!(self.session.closed());
+ 			kio::wait(|waiter| {
+@@ -677,12 +685,17 @@ impl<S: web_transport_trait::Session> Publisher<S> {
+ 	}
+ 
+ 	/// Serve a track using FuturesUnordered for unlimited concurrent groups.
+-	async fn run_track(&self, mut track: track::Subscriber, request_id: RequestId) -> Result<(), Error> {
++	async fn run_track(
++		&self,
++		mut track: track::Subscriber,
++		request_id: RequestId,
++		next_group: bool,
++	) -> Result<(), Error> {
+ 		// A fresh cursor starts at the oldest cached group, so leaving it there replays the
+ 		// whole retained history at once, one concurrent stream per group. LargestObject is
+ 		// the only filter we accept and it means the live edge.
+ 		if let Some(latest) = track.latest() {
+-			track.start_at(latest);
++			track.start_at(if next_group { latest + 1 } else { latest });
+ 		}
+ 
+ 		let mut tasks = FuturesUnordered::new();
+@@ -1606,7 +1619,7 @@ mod subscribe_cursor_test {
+ 		let subscriber = track.subscribe(None);
+ 		track.finish().unwrap();
+ 
+-		publisher.run_track(subscriber, RequestId(1)).await.unwrap();
++		publisher.run_track(subscriber, RequestId(1), false).await.unwrap();
+ 
+ 		// `run_group` sets the priority once per stream it opens, so this counts groups served.
+ 		assert_eq!(log.priorities().len(), 1, "only group 3 should have been served");
+diff --git a/rs/moq-net/src/ietf/subscribe.rs b/rs/moq-net/src/ietf/subscribe.rs
+index 87a3dbd..99e98f0 100644
+--- a/rs/moq-net/src/ietf/subscribe.rs
++++ b/rs/moq-net/src/ietf/subscribe.rs
+@@ -177,6 +177,12 @@ pub struct SubscribeOk {
+ 	pub request_id: Option<RequestId>,
+ 	pub track_alias: u64,
+ 
++	/// Largest Location observed on the track (LARGEST_OBJECT, param 0x09).
++	/// draft-16 §9.2.2.7: the publisher MUST send it once objects exist;
++	/// omitting it asserts the track is empty, which a subscriber that has
++	/// already seen content reads as a track restart.
++	pub largest: Option<Location>,
++
+ 	/// Metadata about the track, sent as Track Properties (draft-17+).
+ 	pub properties: Properties,
+ }
+@@ -215,7 +221,12 @@ impl Message for SubscribeOk {
+ 					_ => None,
+ 				};
+ 
++				let largest = match version {
++					Version::Draft15 | Version::Draft16 => self.largest.clone(),
++					_ => None,
++				};
+ 				encode_params!(w, version,
++					0x09 => largest,
+ 					0x22 => group_order,
+ 				);
+ 
+@@ -235,6 +246,7 @@ impl Message for SubscribeOk {
+ 		};
+ 		let track_alias = u64::decode(r, version)?;
+ 		let mut properties = Properties::default();
++		let mut largest: Option<Location> = None;
+ 
+ 		match version {
+ 			Version::Draft14 => {
+@@ -246,8 +258,9 @@ impl Message for SubscribeOk {
+ 				properties.group_order = Some(GroupOrder::decode(r, version)?.any_to_descending());
+ 
+ 				if bool::decode(r, version)? {
+-					let _group = u64::decode(r, version)?;
+-					let _object = u64::decode(r, version)?;
++					let group = u64::decode(r, version)?;
++					let object = u64::decode(r, version)?;
++					largest = Some(Location { group, object });
+ 				}
+ 
+ 				let _params = Parameters::decode(r, version)?;
+@@ -260,9 +273,10 @@ impl Message for SubscribeOk {
+ 						// LARGEST_OBJECT is required here once the track has content, but
+ 						// the session model does not currently expose the location.
+ 						decode_params!(r, version,
+-							0x09 => _largest_location: Option<Location>,
++							0x09 => largest_location: Option<Location>,
+ 							0x22 => group_order: Option<GroupOrder>,
+ 						);
++						largest = largest_location;
+ 						group_order
+ 					}
+ 					_ => {
+@@ -280,6 +294,7 @@ impl Message for SubscribeOk {
+ 		Ok(Self {
+ 			request_id,
+ 			track_alias,
++			largest,
+ 			properties,
+ 		})
+ 	}
+@@ -637,6 +652,7 @@ mod tests {
+ 		let msg = SubscribeOk {
+ 			request_id: Some(RequestId(42)),
+ 			track_alias: 42,
++			largest: None,
+ 			properties: Properties::default(),
+ 		};
+ 
+@@ -663,6 +679,7 @@ mod tests {
+ 		let msg = SubscribeOk {
+ 			request_id: Some(RequestId(42)),
+ 			track_alias: 42,
++			largest: None,
+ 			properties: Properties::default(),
+ 		};
+ 
+@@ -802,6 +819,7 @@ mod tests {
+ 		let msg = SubscribeOk {
+ 			request_id: None,
+ 			track_alias: 42,
++			largest: None,
+ 			properties: Properties::default(),
+ 		};
+ 
+@@ -857,6 +875,7 @@ mod tests {
+ 		let msg = SubscribeOk {
+ 			request_id: None,
+ 			track_alias: 42,
++			largest: None,
+ 			properties: Properties::default(),
+ 		};
+ 
+@@ -876,6 +895,7 @@ mod tests {
+ 		let msg = SubscribeOk {
+ 			request_id: None,
+ 			track_alias: 42,
++			largest: None,
+ 			properties: Properties {
+ 				timescale: None,
+ 				group_order: Some(GroupOrder::Descending),
+@@ -902,6 +922,7 @@ mod tests {
+ 		let msg = SubscribeOk {
+ 			request_id: Some(RequestId(7)),
+ 			track_alias: 42,
++			largest: None,
+ 			properties: Properties {
+ 				timescale: None,
+ 				group_order: Some(GroupOrder::Descending),
+diff --git a/rs/moq-net/src/model/track.rs b/rs/moq-net/src/model/track.rs
+index 3c01801..9e16659 100644
+--- a/rs/moq-net/src/model/track.rs
++++ b/rs/moq-net/src/model/track.rs
+@@ -2567,6 +2567,30 @@ impl Subscriber {
+ 			SubscriberKind::Spliced(spliced) => spliced.latest(),
+ 		}
+ 	}
++
++	/// The largest Location observed on this track: the latest group and the id
++	/// of the last object written in it.
++	///
++	/// draft-16 §9.2.2.7 requires this in SUBSCRIBE_OK (LARGEST_OBJECT) once the
++	/// track has content. A spliced subscriber only exposes the sequence, so the
++	/// object is reported as 0 there.
++	pub fn latest_location(&self) -> Option<(u64, u64)> {
++		match &self.inner {
++			SubscriberKind::Plain(plain) => {
++				let state = plain.state.read();
++				let sequence = state.max_sequence?;
++				// frame_count counts completed plus in-flight frames, so the
++				// largest object id written is one less.
++				let object = state
++					.lookup
++					.get(&sequence)
++					.map(|slot| slot.group.frame_count().saturating_sub(1) as u64)
++					.unwrap_or(0);
++				Some((sequence, object))
++			}
++			SubscriberKind::Spliced(spliced) => spliced.latest().map(|sequence| (sequence, 0)),
++		}
++	}
+ }
+ 
+ /// A subscriber asked for a track this broadcast doesn't have yet.

@@ -1,0 +1,26 @@
+# Your own AWS settings. Copy to moqbench-aws.local.tfvars to use the shared
+# sizing in moqbench-aws.tfvars, or to <name>.local.tfvars (gitignored; <name>
+# becomes the environment) for one of your own, then:
+#
+#   ./bin/testbed.sh <deployment> plan --env <name>
+#   ./bin/testbed.sh <deployment> up && ./bin/testbed-provision.sh && ./bin/testbed-tune.sh && ./bin/relay-smoke.sh
+#
+# Nothing here is a credential. The profile NAME points at ~/.aws/config, where
+# the keys or SSO session stay. Create one with either:
+#   aws configure sso --profile <name>      # SSO login; renew with aws sso login --profile <name>
+#   aws configure --profile <name>          # access keys
+
+profile             = "<profile name>"
+expected_account_id = "<12-digit account id>" # refuse any other account
+
+ssh_key_file  = "~/.ssh/id_ed25519" # <path>.pub goes onto every host
+allowed_cidrs = ["<your egress IP>/32"] # curl -s https://checkip.amazonaws.com
+owner         = "<your name>"
+
+# For an environment of your own, also where and how big (defaults in aws/main.tf):
+# region               = "us-west-2"
+# availability_zone    = "us-west-2a"
+# arch                 = "arm64"         # or amd64, with x86 instance types
+# relay_instance_type  = "c6gn.16xlarge"
+# client_count         = 2
+# client_instance_type = "c6gn.16xlarge"

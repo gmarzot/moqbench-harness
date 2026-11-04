@@ -1,0 +1,26 @@
+{
+  "480p": {
+    "aiomoqt_profile": "480p",
+    "nominal_mbps": 1.10,
+    "moqperf_first_object": 40000,
+    "moqperf_other_object": 3965,
+    "objects_per_group": 60,
+    "object_interval_ms": 33
+  },
+  "720p": {
+    "aiomoqt_profile": "720p",
+    "nominal_mbps": 2.19,
+    "moqperf_first_object": 80000,
+    "moqperf_other_object": 7931,
+    "objects_per_group": 60,
+    "object_interval_ms": 33
+  },
+  "1080p": {
+    "aiomoqt_profile": "1080p",
+    "nominal_mbps": 4.30,
+    "moqperf_first_object": 200000,
+    "moqperf_other_object": 14829,
+    "objects_per_group": 60,
+    "object_interval_ms": 33
+  }
+}

@@ -1,0 +1,100 @@
+--- a/aiomoqt/tools/adaptive_bench.py
++++ b/aiomoqt/tools/adaptive_bench.py
+@@ -878,7 +878,8 @@
+                  backoff_factor: float = 0.9,
+                  loss_threshold_pct: float = 0.5,
+                  duration_s: float | None = None,
+-                 tick_s: float | None = None):
++                 tick_s: float | None = None,
++                 fixed_subs: bool = False):
+         self.actuator = actuator
+         self.state = state
+         self.interval_s = interval_s
+@@ -900,6 +901,7 @@
+         self.backoff_factor = backoff_factor
+         self.loss_threshold_pct = loss_threshold_pct
+         self.duration_s = duration_s
++        self.fixed_subs = fixed_subs
+         self.shortfall_streak = 0
+         self.pressure_streak = 0
+         self.hold_intervals = 0
+@@ -960,6 +962,16 @@
+                 self._emit(sig, "rx=0 (no data)")
+                 continue
+             self.no_data_streak = 0
++
++            if self.fixed_subs:
++                # apply() fills at most one worker batch per tick and replaces
++                # dead workers. Never change the requested population for SLO
++                # failures: this mode measures a fixed offered load.
++                await a.apply(a.max_level)
++                self.high_water = max(self.high_water, float(sig.active_subs))
++                self._emit(sig, "fixed" if sig.active_subs >= a.max_level
++                           else "filling / shortfall")
++                continue
+ 
+             level = sig.level  # controller's scalar, unit matches actuator
+ 
+@@ -1145,7 +1157,8 @@
+                 f"{sig.latency_mean_ms:.2f}",
+                 f"{sig.latency_p90_ms:.2f}",
+                 f"{sig.loss_pct:.3f}",
+-            ])
++            ] + ([f"{time.time():.3f}", sig.target_subs, sig.active_subs,
++                  int(sig.latency_known)] if self.fixed_subs else []))
+         self._print_row(sig, action)
+ 
+     async def _apply(self, new_level: float, sig: Signal, action: str,
+@@ -1564,6 +1577,9 @@
+                    help="subs-mode: subscribers per group (default: 1). "
+                         "Also the batch size: one worker process hosts a "
+                         "group of this many self-healing subscriptions.")
++    p.add_argument("--fixed-subs", action="store_true",
++                   help="Fill to --max-subs and maintain that target until "
++                        "--duration, without latency-driven ramp/back-off.")
+     p.add_argument("--max-subs", type=int, default=200,
+                    help="subs-mode: cap (default: 200)")
+     p.add_argument("--sub-mbps", type=float, default=10.0,
+@@ -1666,6 +1682,13 @@
+     # straight into the controller's back-off signal. Jitter (a
+     # difference of differences) and shortfall (a count) are immune.
+     args.skew_safe_signals = args.role != "both"
++    if args.fixed_subs:
++        if args.mode != "subs" or args.duration is None or args.duration <= 0:
++            p.error("--fixed-subs requires --mode subs and positive --duration")
++        if args.step_subs <= 0 or args.max_subs <= 0 or args.max_subs % args.step_subs:
++            p.error("--fixed-subs requires --max-subs to be a positive multiple "
++                    "of --step-subs (subscriber worker batch size)")
++        args.start_subs = args.max_subs
+ 
+     args.sub_filter = filter_choices[args.sub_filter]
+     if args.sub_filter in (FilterType.ABSOLUTE_START,
+@@ -1735,7 +1758,9 @@
+               f"(rx delivered)")
+     else:
+         print(f"  High-water:  {controller.high_water:.1f} {unit}")
+-    if controller.pivots:
++    if args.fixed_subs:
++        print(f"  Fixed target: {args.max_subs} subs (no adaptation)")
++    elif controller.pivots:
+         print(f"  Equilibrium: {controller.eq_level:.1f} {unit} "
+               f"({len(controller.pivots)} pivots)")
+     else:
+@@ -1829,7 +1854,8 @@
+         csv_writer.writerow([
+             "t_monotonic", "target_mbps", "tx_mbps", "rx_mbps",
+             "mean_ms", "p90_ms", "loss_pct",
+-        ])
++        ] + (["t_wall", "target_subs", "active_subs", "latency_known"]
++             if args.fixed_subs else []))
+ 
+     mp_cleanup_queues: list = []
+     if args.mode == "subs":
+@@ -1981,6 +2007,7 @@
+         backoff_factor=args.backoff_factor,
+         duration_s=args.duration,
+         tick_s=(args.join_rate if args.mode == "subs" else None),
++        fixed_subs=args.fixed_subs,
+     )
+ 
+     server = None

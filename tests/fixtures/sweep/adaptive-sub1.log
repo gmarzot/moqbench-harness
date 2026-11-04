@@ -1,0 +1,18 @@
+                 Target        │           Actual           │   Latency (worst sub)    │
+    time      BW        Nsub   │  Tx       Rx        Nsub   │  mean    p90     jitter  │  loss   action
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+    160s     16Gbps     3750   │  16Gbps   18Gbps    3750   │  73ms    244ms   17ms    │  0.0%   ramp
+    170s     17Gbps     4000   │  17Gbps   19Gbps    4000   │  103ms   320ms   18ms    │  0.0%   ramp
+    180s     18Gbps     4250   │  18Gbps   21Gbps    4250   │  128ms   391ms   19ms    │  0.0%   hold
+    190s     18Gbps     4250   │  18Gbps   20Gbps    4250   │  168ms   461ms   19ms    │  0.0%   hold
+    200s     18Gbps     4250   │  18Gbps   21Gbps    4250   │  132ms   392ms   19ms    │  0.0%   hold
+    210s     18Gbps     4250   │  18Gbps   21Gbps    4250   │  144ms   420ms   19ms    │  0.0%   hold
+    220s     18Gbps     4250   │  18Gbps   20Gbps    4250   │  149ms   415ms   20ms    │  0.0%   hold
+    230s     18Gbps     4250   │  18Gbps   21Gbps    4250   │  151ms   385ms   20ms    │  0.0%   hold
+    240s     18Gbps     4250   │  18Gbps   21Gbps    4250   │  167ms   383ms   19ms    │  0.0%   hold
+    250s     18Gbps     4250   │  18Gbps   21Gbps    4250   │  139ms   364ms   19ms    │  0.0%   ramp
+    260s     19Gbps     4500   │  19Gbps   22Gbps    4500   │  192ms   530ms   19ms    │  0.0%   watch (p90 over)
+    270s     19Gbps     4500   │  19Gbps   22Gbps    4500   │  161ms   389ms   20ms    │  0.0%   hold
+    280s     19Gbps     4500   │  19Gbps   22Gbps    4500   │  175ms   377ms   20ms    │  0.0%   hold
+    290s     19Gbps     4500   │  19Gbps   22Gbps    4500   │  236ms   694ms   18ms    │  0.0%   watch (p90 over)
+    300s     19Gbps     4500   │  19Gbps   23Gbps    4500   │  225ms   521ms   19ms    │  0.0%   back-off (p90 over)

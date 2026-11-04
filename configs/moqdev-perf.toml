@@ -1,0 +1,36 @@
+# moq-dev main as ./bin/relay-build.sh builds it; build.json records the revision.
+# Paths are relative to ~/Projects. Private benchmark listener, anonymous access.
+drain_timeout = "5s"
+
+[listen]
+bind = "0.0.0.0:4533"
+version = ["moq-transport-18"]
+tls.cert = "bench/cert.pem"
+tls.key = "bench/key.pem"
+
+[runtime]
+workers = 16
+pin = false
+io_uring = false
+
+[quic]
+congestion_control = "delay"
+max_streams = 8192
+gso = true
+mtu_discovery = false
+receive_window = 134217728
+stream_receive_window = 4194304
+send_window = 16777216
+
+[auth]
+public = "**"
+
+[cache]
+capacity = "1GiB"
+duration = "2s"
+
+[internal]
+listen = "127.0.0.1:4503"
+
+[log]
+level = "warn"

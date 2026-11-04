@@ -1,0 +1,162 @@
+diff --git a/moq-native-ietf/src/quic.rs b/moq-native-ietf/src/quic.rs
+index 309f0e3..14c41d9 100644
+--- a/moq-native-ietf/src/quic.rs
++++ b/moq-native-ietf/src/quic.rs
+@@ -85,6 +85,23 @@ fn bind_smart(addr: net::SocketAddr) -> anyhow::Result<(net::UdpSocket, bool)> {
+         }
+     }
+ 
++    // Large socket buffers absorb fan-out bursts; the kernel clamps to
++    // net.core.{r,w}mem_max.
++    // Overridable via MOQ_UDP_BUFFER_BYTES so operators can match host tuning.
++    const DEFAULT_SOCKET_BUFFER_SIZE: usize = 16 * 1024 * 1024;
++    let socket_buffer_size: usize = std::env::var("MOQ_UDP_BUFFER_BYTES")
++        .ok()
++        .and_then(|v| v.parse().ok())
++        .unwrap_or(DEFAULT_SOCKET_BUFFER_SIZE);
++    let SOCKET_BUFFER_SIZE = socket_buffer_size;
++    #[allow(non_snake_case)]
++    if let Err(e) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
++        tracing::warn!("could not set UDP recv buffer size: {}", e);
++    }
++    if let Err(e) = socket.set_send_buffer_size(SOCKET_BUFFER_SIZE) {
++        tracing::warn!("could not set UDP send buffer size: {}", e);
++    }
++
+     socket
+         .bind(&addr.into())
+         .with_context(|| format!("failed to bind UDP socket to {}", addr))?;
+diff --git a/moq-transport/src/data/header.rs b/moq-transport/src/data/header.rs
+index b73ddc8..a1233d4 100644
+--- a/moq-transport/src/data/header.rs
++++ b/moq-transport/src/data/header.rs
+@@ -22,30 +22,47 @@ pub enum StreamHeaderType {
+     SubgroupFirstObjectIdExtEndOfGroup = 0x1b,
+     SubgroupIdEndOfGroup = 0x1c,
+     SubgroupIdExtEndOfGroup = 0x1d,
++    // 0x20 bit set: the header omits the Publisher Priority field and the
++    // subscriber uses the publisher priority from the control plane.
++    SubgroupZeroIdNoPri = 0x30,
++    SubgroupZeroIdExtNoPri = 0x31,
++    SubgroupFirstObjectIdNoPri = 0x32,
++    SubgroupFirstObjectIdExtNoPri = 0x33,
++    SubgroupIdNoPri = 0x34,
++    SubgroupIdExtNoPri = 0x35,
++    SubgroupZeroIdEndOfGroupNoPri = 0x38,
++    SubgroupZeroIdExtEndOfGroupNoPri = 0x39,
++    SubgroupFirstObjectIdEndOfGroupNoPri = 0x3a,
++    SubgroupFirstObjectIdExtEndOfGroupNoPri = 0x3b,
++    SubgroupIdEndOfGroupNoPri = 0x3c,
++    SubgroupIdExtEndOfGroupNoPri = 0x3d,
+     Fetch = 0x5,
+ }
+ 
+ impl StreamHeaderType {
+     pub fn is_subgroup(&self) -> bool {
+         let header_type = *self as u64;
+-        (0x10..=0x1d).contains(&header_type)
++        (0x10..=0x1d).contains(&header_type) || (0x30..=0x3d).contains(&header_type)
+     }
+ 
+     pub fn is_fetch(&self) -> bool {
+         *self == StreamHeaderType::Fetch
+     }
+ 
++    /// Whether the header carries an explicit Publisher Priority byte.
++    /// Types with the 0x20 bit omit it; the subscriber falls back to the
++    /// publisher priority from the control plane.
++    pub fn has_explicit_priority(&self) -> bool {
++        let header_type = *self as u64;
++        !self.is_subgroup() || (header_type & 0x20) == 0
++    }
++
+     pub fn has_extension_headers(&self) -> bool {
+-        matches!(
+-            *self,
+-            StreamHeaderType::SubgroupZeroIdExt
+-                | StreamHeaderType::SubgroupFirstObjectIdExt
+-                | StreamHeaderType::SubgroupIdExt
+-                | StreamHeaderType::SubgroupZeroIdExtEndOfGroup
+-                | StreamHeaderType::SubgroupFirstObjectIdExtEndOfGroup
+-                | StreamHeaderType::SubgroupIdExtEndOfGroup
+-                | StreamHeaderType::Fetch
+-        )
++        if *self == StreamHeaderType::Fetch {
++            return true;
++        }
++        // 0x01 bit: extension headers present.
++        self.is_subgroup() && (*self as u64 & 0x01) != 0
+     }
+ 
+     pub fn has_subgroup_id(&self) -> bool {
+@@ -55,6 +72,10 @@ impl StreamHeaderType {
+                 | StreamHeaderType::SubgroupIdExt
+                 | StreamHeaderType::SubgroupIdEndOfGroup
+                 | StreamHeaderType::SubgroupIdExtEndOfGroup
++                | StreamHeaderType::SubgroupIdNoPri
++                | StreamHeaderType::SubgroupIdExtNoPri
++                | StreamHeaderType::SubgroupIdEndOfGroupNoPri
++                | StreamHeaderType::SubgroupIdExtEndOfGroupNoPri
+         )
+     }
+ 
+@@ -65,6 +86,10 @@ impl StreamHeaderType {
+                 | StreamHeaderType::SubgroupFirstObjectIdExt
+                 | StreamHeaderType::SubgroupFirstObjectIdEndOfGroup
+                 | StreamHeaderType::SubgroupFirstObjectIdExtEndOfGroup
++                | StreamHeaderType::SubgroupFirstObjectIdNoPri
++                | StreamHeaderType::SubgroupFirstObjectIdExtNoPri
++                | StreamHeaderType::SubgroupFirstObjectIdEndOfGroupNoPri
++                | StreamHeaderType::SubgroupFirstObjectIdExtEndOfGroupNoPri
+         )
+     }
+ }
+@@ -109,6 +134,18 @@ impl Decode for StreamHeaderType {
+             0x1b_u64 => Ok(Self::SubgroupFirstObjectIdExtEndOfGroup),
+             0x1c_u64 => Ok(Self::SubgroupIdEndOfGroup),
+             0x1d_u64 => Ok(Self::SubgroupIdExtEndOfGroup),
++            0x30_u64 => Ok(Self::SubgroupZeroIdNoPri),
++            0x31_u64 => Ok(Self::SubgroupZeroIdExtNoPri),
++            0x32_u64 => Ok(Self::SubgroupFirstObjectIdNoPri),
++            0x33_u64 => Ok(Self::SubgroupFirstObjectIdExtNoPri),
++            0x34_u64 => Ok(Self::SubgroupIdNoPri),
++            0x35_u64 => Ok(Self::SubgroupIdExtNoPri),
++            0x38_u64 => Ok(Self::SubgroupZeroIdEndOfGroupNoPri),
++            0x39_u64 => Ok(Self::SubgroupZeroIdExtEndOfGroupNoPri),
++            0x3a_u64 => Ok(Self::SubgroupFirstObjectIdEndOfGroupNoPri),
++            0x3b_u64 => Ok(Self::SubgroupFirstObjectIdExtEndOfGroupNoPri),
++            0x3c_u64 => Ok(Self::SubgroupIdEndOfGroupNoPri),
++            0x3d_u64 => Ok(Self::SubgroupIdExtEndOfGroupNoPri),
+             0x05_u64 => Ok(Self::Fetch),
+             _ => {
+                 tracing::error!(
+diff --git a/moq-transport/src/data/subgroup.rs b/moq-transport/src/data/subgroup.rs
+index bc7158e..0e8e8e5 100644
+--- a/moq-transport/src/data/subgroup.rs
++++ b/moq-transport/src/data/subgroup.rs
+@@ -55,7 +55,13 @@ impl SubgroupHeader {
+             }
+         };
+ 
+-        let publisher_priority = u8::decode(r)?;
++        // NoPri header types omit the priority byte; the subscriber falls back
++        // to the publisher priority from the control plane (default 128).
++        let publisher_priority = if header_type.has_explicit_priority() {
++            u8::decode(r)?
++        } else {
++            128
++        };
+         tracing::trace!(
+             "[DECODE] SubgroupHeader: publisher_priority={}, buffer_remaining={} bytes",
+             publisher_priority,
+@@ -128,7 +134,9 @@ impl Encode for SubgroupHeader {
+             tracing::trace!("[ENCODE] SubgroupHeader: subgroup_id not encoded (not required for this header type)");
+         }
+ 
+-        self.publisher_priority.encode(w)?;
++        if self.header_type.has_explicit_priority() {
++            self.publisher_priority.encode(w)?;
++        }
+         tracing::trace!(
+             "[ENCODE] SubgroupHeader: encoded publisher_priority={}",
+             self.publisher_priority
