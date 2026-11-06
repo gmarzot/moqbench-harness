@@ -10,16 +10,16 @@ sweep-point.json. Monitor counters become 5 s rates, as the datasets expect.
 """
 import argparse
 import calendar
-import importlib.util
 import json
 from pathlib import Path
 import re
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-_spec = importlib.util.spec_from_file_location('telemetry', ROOT / 'bin/load-telemetry-report.py')
-telemetry = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(telemetry)
+sys.path.insert(0, str(ROOT / 'lib'))
+import telemetry  # noqa: E402
+from telemetry import AGG, BW, ROW, ms  # noqa: E402
 
 SHAPES = json.loads((ROOT / 'scenarios/shapes.json').read_text())
 BUILDS = {'pgo': 'PGO+LTO', 'reg': 'regular'}
@@ -34,23 +34,6 @@ def relay_fields(pt):
     if relay == 'moqdev':
         out['relay_runtime'] = pt.get('env', {}).get('MOQDEV_RUNTIME', 'workers')
     return out
-
-UNIT = {'us': 1e-3, 'ms': 1.0, 's': 1e3}
-BW = {'Kbps': 1e-6, 'Mbps': 1e-3, 'Gbps': 1.0}
-ROW = re.compile(r'^\s*(\d+)s\s+([\d.]+)(Kbps|Mbps|Gbps)\s+(\d+)\s+│\s+([\d.]+)(Kbps|Mbps|Gbps)\s+([\d.]+)(Kbps|Mbps|Gbps)'
-                 r'\s+(\d+)\s+│\s+(n/a|[\d.]+(?:us|ms|s))\s+(n/a|[\d.]+(?:us|ms|s))\s+(n/a|[\d.]+(?:us|ms|s))\s+│'
-                 r'\s+([\d.]+)%\s+(.*)$')
-AGG = re.compile(r'^I(\d\d)(\d\d) (\d\d):(\d\d):(\d\d)\.\d+ .*\[AGGREGATE\] \[(\d+)s\] Subs: (\d+) \| Obj/s: (\d+) '
-                 r'\| Mbps: ([\d.]+) .*Latency\(interval min/avg/max\): ([\d.]+)/([\d.]+)/([\d.]+) ms '
-                 r'\| Resets: (\d+)/s, (\d+) total \| Failures: (\d+)/s, (\d+) total')
-
-
-def ms(v):
-    if v == 'n/a':
-        return None
-    m = re.match(r'([\d.]+)(us|ms|s)$', v)
-    return float(m.group(1)) * UNIT[m.group(2)]
-
 
 def sub_rows(path):
     """adaptive_bench's per-host table rows."""

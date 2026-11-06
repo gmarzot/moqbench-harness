@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live Load Run</title>
+<style>
+:root { color-scheme: light; --surface: #fcfcfb; --panel: #f4f3ef; --ink: #0b0b0b; --ink2: #52514e; --ink3: #7d7c76;
+  --grid: #e6e5df; --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --good: #0ca30c; --warn: #fab219; --crit: #d03b3b; }
+@media (prefers-color-scheme: dark) { :root { color-scheme: dark; --surface: #1a1a19; --panel: #232322; --ink: #f0efec;
+  --ink2: #c3c2b7; --ink3: #8f8e85; --grid: #34342f; --s1: #3987e5; --s2: #d95926; --s3: #199e70; } }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 16px; background: var(--surface); color: var(--ink);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; font-variant-numeric: tabular-nums; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; margin-bottom: 12px; }
+h1 { font-size: 18px; margin: 0; font-weight: 600; }
+h2 { font-size: 14px; margin: 24px 0 8px; font-weight: 600; }
+#state { color: var(--ink2); }
+#tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 16px; }
+.tile { background: var(--panel); border-radius: 8px; padding: 10px 12px; }
+.tile .k { color: var(--ink2); font-size: 12px; }
+.tile .v { font-size: 24px; font-weight: 600; }
+.tile .s { font-size: 12px; color: var(--ink2); min-height: 17px; }
+.mark { font-weight: 700; }
+.good { color: var(--good); } .warn { color: var(--warn); } .crit { color: var(--crit); }
+#charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.chart { min-width: 0; }
+.chart .head { display: flex; justify-content: space-between; gap: 8px; }
+.chart .title { font-weight: 600; }
+.chart .now { color: var(--ink2); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--ink2); min-height: 17px; }
+.legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+canvas { display: block; width: 100%; height: 150px; cursor: crosshair; }
+#tip { position: fixed; display: none; pointer-events: none; background: var(--panel); color: var(--ink); padding: 6px 8px;
+  border-radius: 6px; font-size: 12px; box-shadow: 0 1px 6px rgb(0 0 0 / 25%); white-space: nowrap; z-index: 2; }
+.table { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: right; padding: 4px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--ink2); font-weight: 500; font-size: 12px; }
+@media (max-width: 420px) { #charts { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header><h1>Load run</h1><span id="state">Connecting</span></header>
+<section id="tiles" aria-label="Current values"></section>
+<section id="charts"></section>
+<h2 id="hostsTitle">Hosts now</h2>
+<div class="table"><table>
+  <thead><tr><th>Host</th><th>Busy, %</th><th>Hottest CPU, %</th><th>Steal, %</th><th>Out, Gbps</th><th>In, Gbps</th><th>Tool cores</th><th>Tool RSS, GB</th><th>UDP errors, run</th><th>NIC allowance, run</th></tr></thead>
+  <tbody id="hosts"></tbody>
+</table></div>
+<div id="tip"></div>
+<script>
+const CHARTS = [
+  {id: 'subs', title: 'Subscribers', unit: ''},
+  {id: 'lat', title: 'Worst latency', unit: ' ms', ref: () => meta.slo_ms, refLabel: 'SLO'},
+  {id: 'gbps', title: 'Relay egress', unit: ' Gbps'},
+  {id: 'mpps', title: 'Relay packets out', unit: ' Mpps'},
+  {id: 'relaycpu', title: 'Relay CPU', unit: '%', max: 100},
+  {id: 'cores', title: 'Relay process cores', unit: ''},
+  {id: 'load', title: 'Load hosts busy', unit: '%', max: 100, ref: () => meta.load_limit, refLabel: 'limit'},
+];
+let meta = {hosts: []}, seq = 0, hostRows = {}, toolRows = {}, totals = {}, runName = '', lastArrival = 0, hover = null, dirty = true;
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = (v, d = 1) => v == null || Number.isNaN(v) ? 'n/a' : v >= 1000 ? Math.round(v).toLocaleString('en-US') : v.toFixed(d);
+
+function reset(name) {
+  hostRows = {}; toolRows = {}; totals = {}; runName = name || '';
+}
+function ingest(rows) {
+  for (const r of rows) {
+    seq = Math.max(seq, r.seq || 0);
+    if (r.kind === 'run') { reset(r.name); continue; }
+    if (r.kind === 'host') {
+      (hostRows[r.host] = hostRows[r.host] || []).push(r);
+      const t = totals[r.host] = totals[r.host] || {udp: 0, allowance: 0};
+      t.udp += r.udp_errors || 0; t.allowance += r.allowance || 0;
+    } else if (r.kind === 'tool') {
+      (toolRows[r.host] = toolRows[r.host] || []).push(r);
+    }
+  }
+  if (rows.length) { lastArrival = Date.now(); dirty = true; }
+}
+function merged(pick, combine) {
+  const events = [];
+  for (const [h, rows] of Object.entries(toolRows)) for (const r of rows) events.push([r.t, h, pick(r)]);
+  events.sort((a, b) => a[0] - b[0]);
+  const last = {}, out = [];
+  for (const [t, h, v] of events) { if (v != null) last[h] = v; out.push([t, combine(Object.values(last))]); }
+  return out;
+}
+const hostLine = (h, k) => (hostRows[h] || []).filter(r => r[k] != null).map(r => [r.t, r[k]]);
+// Rolling mean: one-second samples swing with the GOP.
+function smooth(pts, seconds = 5) {
+  const out = []; let lo = 0, sum = 0;
+  for (let i = 0; i < pts.length; i++) {
+    sum += pts[i][1];
+    while (pts[i][0] - pts[lo][0] >= seconds) sum -= pts[lo++][1];
+    out.push([pts[i][0], sum / (i - lo + 1)]);
+  }
+  return out;
+}
+const smoothed = (h, k) => smooth(hostLine(h, k));
+function seriesFor(id) {
+  const loads = meta.hosts.filter(h => h.role === 'load').map(h => h.name);
+  const colors = ['--s1', '--s2', '--s3'];
+  switch (id) {
+    case 'subs': return [{name: 'Subscribers', pts: merged(r => r.subs, v => v.reduce((a, b) => a + b, 0)), color: '--s1'}];
+    case 'lat': return [{name: latencyName(), pts: merged(r => r.latency_ms, v => Math.max(...v)), color: '--s1'}];
+    case 'gbps': return [{name: 'Egress', pts: smoothed('relay', 'tx_gbps'), color: '--s1'}];
+    case 'mpps': return [{name: 'Packets out', pts: smoothed('relay', 'tx_mpps'), color: '--s1'}];
+    case 'relaycpu': return [
+      {name: 'Hottest CPU', pts: smoothed('relay', 'hottest'), color: '--s2'},
+      {name: 'Host busy', pts: smoothed('relay', 'busy'), color: '--s1'}];
+    case 'cores': return [{name: 'Cores', pts: smoothed('relay', 'cores'), color: '--s1'}];
+    case 'load': return loads.map((h, i) => ({name: h, pts: smoothed(h, 'busy'), color: colors[i % 3]}));
+  }
+  return [];
+}
+// First time the worst latency passes the SLO with subscribers attached.
+function crossing() {
+  const lat = seriesFor('lat')[0].pts, subs = seriesFor('subs')[0].pts;
+  for (const p of lat) if (p[1] > meta.slo_ms) { const n = nearest(subs, p[0]); if (n && n[1] > 0) return {t: p[0], subs: n[1]}; }
+  return null;
+}
+// The instant the tiles and table describe: the pointer, else a finished run's peak, else now.
+function focusTime() {
+  if (hover != null) return hover;
+  if (meta.mode !== 'replay') return null;
+  const pts = smoothed('relay', 'tx_gbps');
+  return pts.length ? pts.reduce((a, b) => b[1] > a[1] ? b : a)[0] : null;
+}
+function latencyName() {
+  for (const rows of Object.values(toolRows)) if (rows.length) return rows[rows.length - 1].metric === 'slowest' ? 'Slowest object' : 'Worst-sub p90';
+  return 'Latency';
+}
+function domain() {
+  let lo = Infinity, hi = -Infinity;
+  for (const rows of Object.values(hostRows)) if (rows.length) { lo = Math.min(lo, rows[0].t); hi = Math.max(hi, rows[rows.length - 1].t); }
+  return hi > lo ? [lo, hi] : null;
+}
+function niceMax(v) {
+  if (!(v > 0)) return 1;
+  const p = 10 ** Math.floor(Math.log10(v)), m = v / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+}
+const nearest = (pts, t) => {
+  let lo = 0, hi = pts.length - 1;
+  if (hi < 0) return null;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (pts[mid][0] < t) lo = mid + 1; else hi = mid; }
+  return lo > 0 && t - pts[lo - 1][0] < pts[lo][0] - t ? pts[lo - 1] : pts[lo];
+};
+function elapsed(s) { const m = Math.floor(s / 60); return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`; }
+
+function draw(chart, dom, cross, focus) {
+  const cv = chart.canvas, dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const L = 44, R = 10, T = 8, B = 20, series = seriesFor(chart.id);
+  chart.series = series;
+  const ref = chart.ref ? chart.ref() : null;
+  let top = chart.max || 0;
+  if (!chart.max) { for (const s of series) for (const p of s.pts) top = Math.max(top, p[1]); if (ref) top = Math.max(top, ref * 1.1); top = niceMax(top); }
+  const X = t => L + (t - dom[0]) / (dom[1] - dom[0]) * (W - L - R), Y = v => T + (1 - Math.min(v, top) / top) * (H - T - B);
+  chart.X = X; chart.dom = dom; chart.L = L; chart.W = W; chart.R = R;
+  g.font = '11px system-ui, sans-serif'; g.textBaseline = 'middle'; g.lineWidth = 1;
+  for (let i = 0; i <= 2; i++) {
+    const v = top * i / 2, y = Math.round(Y(v)) + .5;
+    g.strokeStyle = css('--grid'); g.beginPath(); g.moveTo(L, y); g.lineTo(W - R, y); g.stroke();
+    g.fillStyle = css('--ink3'); g.textAlign = 'right'; g.fillText(fmt(v, top < 10 ? 1 : 0), L - 6, y);
+  }
+  g.textAlign = 'center'; g.fillStyle = css('--ink3');
+  for (let i = 0; i <= 4; i++) { const t = dom[0] + (dom[1] - dom[0]) * i / 4; g.textAlign = i === 0 ? 'left' : i === 4 ? 'right' : 'center'; g.fillText(elapsed(t - dom[0]), X(t), H - 8); }
+  if (ref) {
+    const y = Math.round(Y(ref)) + .5;
+    g.setLineDash([4, 4]); g.strokeStyle = css('--ink2'); g.beginPath(); g.moveTo(L, y); g.lineTo(W - R, y); g.stroke(); g.setLineDash([]);
+    g.fillStyle = css('--ink2'); g.textAlign = 'left'; g.fillText(`${chart.refLabel} ${fmt(ref, 0)}`, L + 4, y - 8);
+  }
+  if (cross && cross.t >= dom[0] && cross.t <= dom[1]) {
+    const x = Math.round(X(cross.t)) + .5;
+    g.setLineDash([2, 3]); g.lineWidth = 1; g.strokeStyle = css('--crit'); g.beginPath(); g.moveTo(x, T); g.lineTo(x, H - B); g.stroke(); g.setLineDash([]);
+  }
+  g.lineWidth = 2; g.lineJoin = 'round';
+  for (const s of series) {
+    g.strokeStyle = css(s.color); g.beginPath();
+    s.pts.forEach((p, i) => i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1])));
+    g.stroke();
+  }
+  if (hover != null && hover >= dom[0] && hover <= dom[1]) {
+    const x = Math.round(X(hover)) + .5;
+    g.lineWidth = 1; g.strokeStyle = css('--ink3'); g.beginPath(); g.moveTo(x, T); g.lineTo(x, H - B); g.stroke();
+    for (const s of series) { const p = nearest(s.pts, hover); if (p) { g.fillStyle = css(s.color); g.strokeStyle = css('--surface'); g.lineWidth = 2; g.beginPath(); g.arc(X(p[0]), Y(p[1]), 4, 0, 7); g.fill(); g.stroke(); } }
+  }
+  const last = series.map(s => { const p = focus == null ? s.pts[s.pts.length - 1] : nearest(s.pts, focus); return p ? p[1] : null; });
+  chart.now.textContent = series.length === 1 && last[0] != null ? `${fmt(last[0], chart.unit === ' Gbps' || chart.unit === ' Mpps' ? 2 : 0)}${chart.unit}` : '';
+  chart.legend.replaceChildren(...(series.length > 1 ? series.map((s, i) => {
+    const e = document.createElement('span'), m = document.createElement('i');
+    m.style.background = css(s.color); e.append(m, `${s.name}${last[i] != null ? ` ${fmt(last[i], 0)}${chart.unit}` : ''}`);
+    return e;
+  }) : []));
+}
+function latest(h, k, focus) {
+  const pts = smoothed(h, k);
+  const p = focus == null ? pts[pts.length - 1] : nearest(pts, focus);
+  return p ? p[1] : null;
+}
+function tile(k, v, state, note) {
+  const e = document.createElement('div'); e.className = 'tile';
+  const a = document.createElement('div'); a.className = 'k'; a.textContent = k;
+  const b = document.createElement('div'); b.className = 'v'; b.textContent = v;
+  const c = document.createElement('div'); c.className = 's';
+  if (state) { const m = document.createElement('span'); m.className = `mark ${state[0]}`; m.textContent = state[1] + ' '; c.append(m); }
+  c.append(note || '');
+  e.append(a, b, c); return e;
+}
+function tiles(cross, focus) {
+  const at = pts => { const p = focus == null ? pts[pts.length - 1] : nearest(pts, focus); return p ? p[1] : null; };
+  const subs = at(seriesFor('subs')[0].pts), lv = at(seriesFor('lat')[0].pts);
+  const loads = meta.hosts.filter(h => h.role === 'load').map(h => h.name);
+  const busy = loads.map(h => latest(h, 'busy', focus)).filter(v => v != null);
+  const loadMax = busy.length ? Math.max(...busy) : null;
+  const names = meta.hosts.map(h => h.name);
+  const udp = names.reduce((a, h) => a + ((totals[h] || {}).udp || 0), 0);
+  const allow = names.reduce((a, h) => a + ((totals[h] || {}).allowance || 0), 0);
+  const steal = Math.max(0, ...names.map(h => latest(h, 'steal', focus) || 0));
+  const moved = udp + allow > 0, thread = latest('relay', 'hot_thread', focus);
+  $('tiles').replaceChildren(
+    tile('Subscribers', subs == null ? 'n/a' : fmt(subs, 0), cross ? ['crit', '✕'] : null, cross ? `SLO crossed at ${fmt(cross.subs, 0)}` : ''),
+    tile(latencyName(), lv == null ? 'n/a' : `${fmt(lv, 0)} ms`, lv == null ? null : lv > meta.slo_ms ? ['crit', '✕'] : ['good', '✓'], lv == null ? '' : lv > meta.slo_ms ? `over the ${fmt(meta.slo_ms, 0)} ms SLO` : `within the ${fmt(meta.slo_ms, 0)} ms SLO`),
+    tile('Relay egress', `${fmt(latest('relay', 'tx_gbps', focus))} Gbps`, null, `${fmt(latest('relay', 'tx_mpps', focus), 2)} Mpps`),
+    tile('Relay hottest CPU', `${fmt(latest('relay', 'hottest', focus), 0)}%`, null, thread != null ? `hottest thread ${fmt(thread, 0)}%` : ''),
+    tile('Busiest load host', loadMax == null ? 'n/a' : `${fmt(loadMax, 0)}%`, loadMax == null ? null : loadMax > meta.load_limit ? ['warn', '!'] : ['good', '✓'], loadMax == null ? '' : loadMax > meta.load_limit ? `over the ${fmt(meta.load_limit, 0)}% limit` : `under the ${fmt(meta.load_limit, 0)}% limit`),
+    tile('Drops and shaping', moved ? fmt(udp + allow, 0) : '0', moved ? ['crit', '✕'] : ['good', '✓'], `UDP ${fmt(udp, 0)}, NIC ${fmt(allow, 0)}, steal ${fmt(steal, 1)}%`));
+}
+function table(focus) {
+  const d = domain();
+  $('hostsTitle').textContent = focus == null || !d ? 'Hosts now' : `Hosts at ${elapsed(focus - d[0])}`;
+  $('hosts').replaceChildren(...meta.hosts.map(h => {
+    const tr = document.createElement('tr'), t = totals[h.name] || {}, v = k => latest(h.name, k, focus);
+    const cells = [h.name, fmt(v('busy'), 0), fmt(v('hottest'), 0), fmt(v('steal')), fmt(v('tx_gbps')), fmt(v('rx_gbps')), fmt(v('tool_cores')), fmt(v('tool_rss_gb')), fmt(t.udp || 0, 0), fmt(t.allowance || 0, 0)];
+    for (const c of cells) { const td = document.createElement('td'); td.textContent = c; tr.append(td); }
+    return tr;
+  }));
+}
+function status() {
+  const age = lastArrival ? (Date.now() - lastArrival) / 1000 : null, n = meta.hosts.length;
+  const d = domain(), span = d ? `, ${elapsed(d[1] - d[0])} of data` : '';
+  $('state').textContent = meta.mode === 'replay' ? `Replay of ${meta.source.split('/').filter(Boolean).pop()}${span}`
+    : age == null ? `Live, ${n} hosts, waiting for a run` : age > 15 ? `Live, ${n} hosts, no new data for ${Math.round(age)} s${span}` : `Live, ${n} hosts${span}`;
+}
+function render() {
+  status();
+  if (!dirty) return;
+  dirty = false;
+  const dom = domain(), cross = crossing(), focus = focusTime();
+  tiles(cross, focus); table(focus);
+  if (dom) for (const c of CHARTS) draw(c, dom, cross, focus);
+}
+function build() {
+  for (const c of CHARTS) {
+    const e = document.createElement('div'); e.className = 'chart';
+    e.innerHTML = '<div class="head"><span class="title"></span><span class="now"></span></div><div class="legend"></div><canvas role="img"></canvas>';
+    e.querySelector('.title').textContent = c.title;
+    c.canvas = e.querySelector('canvas'); c.canvas.setAttribute('aria-label', c.title);
+    c.now = e.querySelector('.now'); c.legend = e.querySelector('.legend');
+    c.canvas.addEventListener('pointermove', ev => hoverAt(c, ev));
+    c.canvas.addEventListener('pointerleave', () => { hover = null; $('tip').style.display = 'none'; dirty = true; render(); });
+    $('charts').append(e);
+  }
+}
+function hoverAt(c, ev) {
+  if (!c.dom) return;
+  const rect = c.canvas.getBoundingClientRect(), x = ev.clientX - rect.left;
+  hover = c.dom[0] + Math.max(0, Math.min(1, (x - c.L) / (c.W - c.L - c.R))) * (c.dom[1] - c.dom[0]);
+  dirty = true; render();
+  const tip = $('tip');
+  const lines = c.series.map(s => { const p = nearest(s.pts, hover); return p ? `${s.name}: ${fmt(p[1], c.unit === ' Gbps' || c.unit === ' Mpps' ? 2 : 0)}${c.unit}` : null; }).filter(Boolean);
+  tip.textContent = `${elapsed(hover - c.dom[0])}  ${lines.join('  ')}`;
+  tip.style.display = 'block';
+  tip.style.left = `${Math.min(ev.clientX + 12, innerWidth - tip.offsetWidth - 8)}px`;
+  tip.style.top = `${rect.top - 6}px`;
+}
+async function start() {
+  build();
+  const h = await (await fetch('/history')).json();
+  meta = h.meta; ingest(h.rows); render();
+  if (meta.mode === 'live') {
+    const es = new EventSource(`/events?since=${seq}`);
+    es.onmessage = m => { const rows = JSON.parse(m.data); ingest(rows); };
+    setInterval(async () => { if (!meta.hosts.length) meta = (await (await fetch('/history')).json()).meta; render(); }, 1000);
+  }
+  addEventListener('resize', () => { dirty = true; render(); });
+}
+start();
+</script>
+</body>
+</html>

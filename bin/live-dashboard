@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""Watch a load run on a local page, without touching it.
+
+  ./bin/live-dashboard                      # the selected testbed's hosts
+  ./bin/live-dashboard --replay <run dir>   # a finished run, on the same page
+
+Then open http://127.0.0.1:8765/. Live mode only reads what a run already
+writes: one ssh connection per host follows the monitor's file and the load
+tool's log with a niced tail. It starts no agent and opens no port on a host,
+and the run does not know it exists, so it can attach, detach or fail at any
+time.
+"""
+import argparse
+import csv
+from collections import deque
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from urllib.parse import parse_qs, urlparse
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'lib'))
+import telemetry  # noqa: E402
+
+PAGE = ROOT / 'lib/live-dashboard.html'
+MONITOR_FILES = '/tmp/moqbench-monitor-*.jsonl'
+TOOL_LOG = '/tmp/loadsub.log'
+MAX_ROWS = 40000  # about three hours of one-second samples from three hosts
+DISCOVER_S = 15   # how often a host is asked for a newer monitor file
+
+
+def list_command():
+    return f'ls -t {MONITOR_FILES} 2>/dev/null | head -1'
+
+
+def follow_command(path, lines=1):
+    return f'exec nice -n 19 tail -n {lines} -F {shlex.quote(path)} 2>/dev/null'
+
+
+class Store:
+    """Rows of the current run, in arrival order, for the page's history and event stream."""
+
+    def __init__(self, **meta):
+        self.cond = threading.Condition()
+        self.rows = deque(maxlen=MAX_ROWS)
+        self.seq = 0
+        self.run = None
+        self.meta = meta
+
+    def add(self, row):
+        with self.cond:
+            self.seq += 1
+            self.rows.append(dict(row, seq=self.seq))
+            self.cond.notify_all()
+
+    def new_run(self, name):
+        """Monitor files carry the run's start time, so a later name is a later run."""
+        with self.cond:
+            if self.run is not None and name <= self.run:
+                return
+            self.run = name
+            self.rows.clear()
+            self.seq += 1
+            self.rows.append(dict(kind='run', name=name, seq=self.seq))
+            self.cond.notify_all()
+
+    def since(self, seq):
+        with self.cond:
+            return [r for r in self.rows if r['seq'] > seq]
+
+
+def sample_row(host, role, a, b, hz):
+    """One host's rates between two monitor samples."""
+    r = telemetry.rates(a, b, hz)
+    row = dict(kind='host', host=host, role=role, t=b['t_wall'], busy=r['host_busy_pct'],
+               hottest=r['hottest_cpu_pct'], tx_gbps=r['net_tx_mbps'] / 1e3, rx_gbps=r['net_rx_mbps'] / 1e3,
+               tx_mpps=r['net_tx_kpps'] / 1e3, rx_mpps=r['net_rx_kpps'] / 1e3, steal=telemetry.steal_pct(a, b),
+               udp_errors=r['udp_InErrors_delta'] + r['udp_SndbufErrors_delta'],
+               allowance=r['nic_allowance_exceeded_delta'])
+    if r['process_cores'] != '':
+        row['cores'] = r['process_cores']
+    thread = telemetry.hottest_thread_pct(a, b, hz)
+    if thread is not None:
+        row['hot_thread'] = thread
+    ca, cb = a.get('comm'), b.get('comm')
+    if ca and cb and cb['ticks'] >= ca['ticks']:
+        row['tool_cores'] = (cb['ticks'] - ca['ticks']) / hz / r['interval_s']
+        row['tool_rss_gb'] = cb['rss_bytes'] / 2**30
+    return row
+
+
+def tool_row(line, year=2000):
+    """A load tool's interval line as subscribers and worst latency, or None."""
+    m = telemetry.ROW.match(line)
+    if m:
+        g = m.groups()
+        return dict(subs=int(g[8]), latency_ms=telemetry.ms(g[10]), metric='p90', action=g[13].strip(), elapsed=int(g[0]))
+    m = telemetry.AGG.match(line)
+    if m:
+        g = m.groups()
+        return dict(subs=int(g[6]), latency_ms=float(g[11]), metric='slowest', resets=int(g[13]), stamp=g[:5])
+    return None
+
+
+class Host:
+    """Follows one host's monitor file and, on load hosts, its tool log."""
+
+    def __init__(self, name, role, address, ssh, store, stop):
+        self.name, self.role, self.address, self.ssh, self.store, self.stop = name, role, address, ssh, store, stop
+        self.path = None
+        self.proc = None
+        self.offset = 0.0  # local clock minus this host's clock
+
+    def command(self, remote):
+        return [*self.ssh, f'{self.address}', remote]
+
+    def start(self):
+        threading.Thread(target=self.discover, daemon=True).start()
+        if self.role == 'load':
+            threading.Thread(target=self.follow_tool, daemon=True).start()
+
+    def discover(self):
+        while not self.stop.is_set():
+            try:
+                newest = subprocess.run(self.command(list_command()), capture_output=True, text=True,
+                                        timeout=20).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                newest = ''
+            if newest and newest != self.path:
+                self.path = newest
+                self.store.new_run(Path(newest).stem)
+                threading.Thread(target=self.follow_monitor, args=(newest,), daemon=True).start()
+            self.stop.wait(DISCOVER_S)
+
+    def follow_monitor(self, path):
+        hz = 100
+        try:
+            head = subprocess.run(self.command(f'head -n 1 {shlex.quote(path)}'), capture_output=True, text=True,
+                                  timeout=20).stdout
+            hz = json.loads(head).get('clock_ticks', hz)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+        proc = subprocess.Popen(self.command(follow_command(path)), stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True)
+        self.store.meta.setdefault('procs', []).append(proc)
+        prev = None
+        for line in proc.stdout:
+            if self.stop.is_set() or path != self.path:
+                break
+            try:
+                sample = json.loads(line)
+            except ValueError:
+                continue
+            if 'monotonic' not in sample:
+                continue
+            self.offset = time.time() - sample['t_wall']
+            if prev:
+                try:
+                    self.store.add(sample_row(self.name, self.role, prev, sample, hz))
+                except (KeyError, ValueError, ZeroDivisionError):
+                    pass
+            prev = sample
+        proc.terminate()
+
+    def follow_tool(self):
+        while not self.stop.is_set():
+            proc = subprocess.Popen(self.command(follow_command(TOOL_LOG, lines=0)), stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True, errors='replace')
+            self.store.meta.setdefault('procs', []).append(proc)
+            for line in proc.stdout:
+                row = tool_row(line)
+                if row:
+                    self.store.add(dict(row, kind='tool', host=self.name, t=time.time() - self.offset))
+            self.stop.wait(5)
+
+
+def attach(inventory, store, stop, control):
+    """Start following every host of the testbed."""
+    inv = json.loads(Path(inventory).read_text())
+    user = inv.get('user') or 'ubuntu'
+    ssh = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new',
+           '-o', 'ServerAliveInterval=15', '-o', 'ControlMaster=auto', '-o', 'ControlPersist=30',
+           '-o', f'ControlPath={control}/%C', '-l', user]
+    if inv.get('ssh_key_file'):
+        ssh += ['-i', inv['ssh_key_file']]
+    hosts = [('relay', 'relay', inv['relay']['public'])]
+    hosts += [(f'load-{i + 1}', 'load', c['public']) for i, c in enumerate(inv['clients'])]
+    store.meta['hosts'] = [dict(name=n, role=r) for n, r, _ in hosts]
+    for name, role, address in hosts:
+        Host(name, role, address, ssh, store, stop).start()
+
+
+def replay(run_dir, store):
+    """Load a finished run's saved telemetry and tool logs."""
+    run_dir = Path(run_dir)
+    store.new_run(run_dir.name)
+    hosts, offsets = [], {}
+    for path in sorted(run_dir.glob('telemetry-*.jsonl')):
+        stem = path.stem.removeprefix('telemetry-')
+        name, role = ('relay', 'relay') if stem == 'relay' else (f'load-{int(stem[3:]) + 1}', 'load')
+        hosts.append(dict(name=name, role=role))
+        records = [json.loads(line) for line in path.open()]
+        hz = records[0].get('clock_ticks', 100)
+        samples = [r for r in records if 'monotonic' in r]
+        offsets[name] = samples[0]['t_wall'] - samples[0]['monotonic'] if samples else 0
+        for a, b in zip(samples, samples[1:]):
+            store.add(sample_row(name, role, a, b, hz))
+    store.meta['hosts'] = hosts
+    for log in sorted(run_dir.glob('sub[0-9]*.log')):
+        index = int(log.stem[3:])
+        name = f'load-{index + 1}'
+        base = None
+        report = run_dir / f'sub{index}' / 'loadreport.csv'
+        if report.exists():
+            rows = list(csv.DictReader(report.open()))
+            if rows:
+                base = float(rows[0]['t_monotonic']) + offsets.get(name, 0)
+        first = None
+        year = time.gmtime(offsets.get(name) or time.time()).tm_year
+        for line in log.open(errors='replace'):
+            row = tool_row(line)
+            if not row:
+                continue
+            if 'stamp' in row:
+                row['t'] = telemetry.calendar_seconds(year, row.pop('stamp'))
+            elif base is not None:
+                first = row['elapsed'] if first is None else first
+                row['t'] = base + row['elapsed'] - first
+            else:
+                continue
+            store.add(dict(row, kind='tool', host=name))
+
+
+class Handler(BaseHTTPRequestHandler):
+    store = None
+
+    def log_message(self, *args):
+        pass
+
+    def send_body(self, body, content_type):
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        url = urlparse(self.path)
+        if url.path == '/':
+            self.send_body(PAGE.read_bytes(), 'text/html; charset=utf-8')
+        elif url.path == '/history':
+            meta = {k: v for k, v in self.store.meta.items() if k != 'procs'}
+            body = json.dumps(dict(meta=meta, rows=self.store.since(0))).encode()
+            self.send_body(body, 'application/json')
+        elif url.path == '/events':
+            self.events(int(parse_qs(url.query).get('since', ['0'])[0]))
+        else:
+            self.send_error(404)
+
+    def events(self, seq):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        try:
+            while True:
+                with self.store.cond:
+                    self.store.cond.wait(5)
+                rows = self.store.since(seq)
+                if rows:
+                    seq = rows[-1]['seq']
+                self.wfile.write(f'data: {json.dumps(rows)}\n\n'.encode() if rows else b': keepalive\n\n')
+                self.wfile.flush()
+        except OSError:
+            pass
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--inventory', default=str(ROOT / '.testbed/inventory.json'), help='testbed host list (default: %(default)s)')
+    p.add_argument('--replay', metavar='RUN_DIR', help='show a finished run instead of following hosts')
+    p.add_argument('--port', type=int, default=8765, help='local port (default: %(default)s)')
+    p.add_argument('--slo-ms', type=float, default=500, help='latency line on the chart (default: %(default)s)')
+    p.add_argument('--load-limit', type=float, default=85, help='load-host busy line (default: %(default)s)')
+    args = p.parse_args()
+    store = Store(slo_ms=args.slo_ms, load_limit=args.load_limit, mode='replay' if args.replay else 'live',
+                  source=str(args.replay or args.inventory), hosts=[])
+    stop = threading.Event()
+    control = tempfile.mkdtemp(prefix='mbd')
+    if args.replay:
+        replay(args.replay, store)
+    else:
+        attach(args.inventory, store, stop, control)
+    Handler.store = store
+    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+    server.daemon_threads = True
+    print(f'http://127.0.0.1:{args.port}/', flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop.set()
+        for proc in store.meta.get('procs', []):
+            proc.terminate()
+        shutil.rmtree(control, ignore_errors=True)
+
+
+if __name__ == '__main__':
+    main()
