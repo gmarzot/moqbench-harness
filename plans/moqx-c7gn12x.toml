@@ -1,0 +1,15 @@
+description = "moqx 0.3.7 PGO+LTO at one thread per vCPU on c7gn.12xlarge"
+deployment  = "aws-c7gn12x"
+relays      = ["moqx:pgo"]
+suites      = ["capacity-1080", "ceiling-2160", "client-1080"]
+threads     = "all"
+slo_ms      = 500
+tune        = { rps = 0 }
+budget      = { hours = 4 }
+teardown    = true
+
+[builds]
+moqx     = "patches/bin/moqx-v0.3.7-arm64-pgo-0783f501-linux-arm64.tar.gz"
+aiomoqt  = "52cfda8"
+aiopquic = "5711a08"
+moxygen  = "v0.3.7"

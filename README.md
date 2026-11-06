@@ -9,6 +9,29 @@ A generic deployment and benchmark helper for public MoQ implementations.
 Cloud backends are optional; deployment identities and private relay adapters
 belong in ignored local files.
 
+## Running a series
+
+`bin/moqbench` runs a benchmark from three kinds of file:
+
+| file | what it says |
+|---|---|
+| `deployments/<name>.toml` | The nodes: instance type or address, and each node's roles. Your account settings go in `deployments/<provider>.local.toml` (see the `.example` files), which git ignores. |
+| `suites/<name>.toml` | The tests: test type, load tool, video shape, limits. No hardware. |
+| `plans/<name>.toml` | A deployment, its suites, the relays, builds and tuning, the budget, and whether to tear down. |
+
+```bash
+./bin/moqbench run moqx-c7gn12x --dry-run   # hosts, commands, each setting's source, time and cost
+./bin/moqbench run moqx-c7gn12x             # up, provision, tune, baseline, suites, report, down
+./bin/moqbench run moqx-c7gn12x --only ceiling-2160 --no-setup
+./bin/moqbench test capacity --tool moqperf --video 1080p --max-per-box 7000 --seconds 420
+./bin/moqbench status
+./bin/moqbench dashboard                    # watch a run; see RUNBOOK.md
+```
+
+The test types are `capacity` (ramp until the latency SLO is crossed) and `ceiling`
+(ramp past it to the egress plateau, moqperf only). The commands below it remain
+available and are what `moqbench` calls.
+
 ## Start here
 
 | file | what it is |

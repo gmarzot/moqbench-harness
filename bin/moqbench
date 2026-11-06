@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+"""Run MoQ relay benchmarks from deployments, suites and plans.
+
+  moqbench run <plan>            up, provision, tune, baseline, suites, report, down
+  moqbench test <type> ...       one test on the hosts already up
+  moqbench up <deployment>       create the hosts
+  moqbench down <deployment>     destroy them and check nothing is left
+  moqbench status                what is up
+  moqbench dashboard [args]      watch a run (bin/live-dashboard)
+
+A deployment (deployments/) is the nodes and their roles, a suite (suites/) is
+the tests, and a plan (plans/) pairs them with the relays, builds and budget of
+one series. run, test, up and down take --dry-run, which prints what they would
+do and changes nothing.
+"""
+import argparse
+import datetime
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'lib'))
+import config  # noqa: E402
+
+BRINGUP_S = 2400       # create, provision, tune and baseline
+POINT_OVERHEAD_S = 90  # relay restart and collection around each point
+
+
+def shown(cmd, env):
+    prefix = ' '.join(f'{k}={v}' for k, v in (env or {}).items())
+    return f'{prefix} {" ".join(map(str, cmd))}'.strip()
+
+
+def call(cmd, env=None, dry=False, stdout=None):
+    """Run a harness command from the repo root; returns its exit status."""
+    print(f'$ {shown(cmd, env)}', flush=True)
+    if dry:
+        return 0
+    if stdout:
+        with open(stdout, 'w') as f:
+            return subprocess.run(cmd, cwd=ROOT, env={**os.environ, **(env or {})}, stdout=f, stderr=subprocess.STDOUT).returncode
+    return subprocess.run(cmd, cwd=ROOT, env={**os.environ, **(env or {})}).returncode
+
+
+def inventory():
+    path = ROOT / '.testbed/inventory.json'
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def static_env(deployment):
+    """Host variables for machines no testbed created."""
+    if deployment.provider != 'static':
+        return {}
+    return dict(RELAY_HOST=deployment.relay['address'],
+                CLIENT_HOSTS=' '.join(n['address'] for n in deployment.load_nodes))
+
+
+def wait_for_ssh(deployment, limit_s=300):
+    """New hosts refuse connections for their first minute or two."""
+    inv = inventory()
+    hosts = [inv['relay']['public'], *[c['public'] for c in inv['clients']]]
+    user = inv.get('user') or 'ubuntu'
+    end = time.time() + limit_s
+    for host in hosts:
+        while subprocess.run(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=accept-new',
+                              '-i', inv.get('ssh_key_file') or str(Path.home() / '.ssh/id_ed25519'), f'{user}@{host}', 'true'],
+                             capture_output=True).returncode:
+            if time.time() > end:
+                raise SystemExit(f'{deployment.name}: {host} did not accept ssh within {limit_s} s')
+            time.sleep(5)
+
+
+def do_up(deployment, dry):
+    if deployment.provider == 'static':
+        print(f'{deployment.name}: static, nothing to create')
+        return 0
+    if dry:
+        print(f'would write {deployment.provider}/envs/{deployment.name}.local.tfvars:')
+        print(''.join(f'  {line}\n' for line in config.render_tfvars(deployment).splitlines()), end='')
+    else:
+        config.write_tfvars(deployment)
+    status = call(['./bin/testbed.sh', deployment.name, 'up', '--env', deployment.name, '-y'], dry=dry)
+    if status == 0 and not dry:
+        wait_for_ssh(deployment)
+    return status
+
+
+def aws_instances(deployment):
+    """Harness instances that exist in this deployment's region and account."""
+    profile = deployment.account.get('profile')
+    if deployment.provider != 'aws' or not profile:
+        return None
+    query = 'Reservations[].Instances[].[InstanceId,InstanceType,State.Name,LaunchTime]'
+    run = subprocess.run(['aws', '--profile', profile, 'ec2', 'describe-instances', '--region', deployment.region or 'us-west-2',
+                          '--filters', 'Name=tag:purpose,Values=perf-bench',
+                          'Name=instance-state-name,Values=pending,running,stopping,stopped',
+                          '--query', query, '--output', 'json'], capture_output=True, text=True, timeout=60)
+    return json.loads(run.stdout) if run.returncode == 0 else None
+
+
+def do_down(deployment, dry):
+    if deployment.provider == 'static':
+        print(f'{deployment.name}: static, nothing to destroy')
+        return 0
+    status = call(['./bin/testbed.sh', deployment.name, 'destroy', '-y'], dry=dry)
+    if dry:
+        return status
+    left = aws_instances(deployment)
+    if left:
+        print(f'LEFT RUNNING: {left}', file=sys.stderr)
+        return 1
+    if left is None and deployment.provider == 'aws':
+        print('could not check for leftovers: no AWS profile in deployments/aws.local.toml', file=sys.stderr)
+    return status
+
+
+def hourly_usd(deployment):
+    """On-demand cost per hour of an AWS deployment, or None when the price list cannot say."""
+    profile = deployment.account.get('profile')
+    if deployment.provider != 'aws' or not profile:
+        return None
+    total = 0.0
+    for node in deployment.nodes:
+        filters = [f'Type=TERM_MATCH,Field={f},Value={v}' for f, v in (
+            ('instanceType', node['instance']), ('regionCode', deployment.region), ('operatingSystem', 'Linux'),
+            ('tenancy', 'Shared'), ('preInstalledSw', 'NA'), ('capacitystatus', 'Used'))]
+        try:
+            run = subprocess.run(['aws', '--profile', profile, 'pricing', 'get-products', '--region', 'us-east-1',
+                                  '--service-code', 'AmazonEC2', '--filters', *filters, '--query', 'PriceList[0]', '--output', 'text'],
+                                 capture_output=True, text=True, timeout=30)
+            terms = json.loads(run.stdout)['terms']['OnDemand']
+            total += float(next(iter(next(iter(terms.values()))['priceDimensions'].values()))['pricePerUnit']['USD'])
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, StopIteration):
+            return None
+    return total
+
+
+def describe_point(point):
+    print(f'  {point["run"]}: {point["type"]}, {point["tool"]}, {point["shape"]}, up to {point["max_per_box"]} per box, {point["seconds"]} s')
+    for var, (value, source) in sorted(point['env'].items()):
+        print(f'      {var}={value}  ({source})')
+
+
+def describe_plan(plan, price):
+    dep = plan.deployment
+    print(f'plan {plan.name}: {plan.description}')
+    print(f'deployment {dep.name} ({dep.provider}, {dep.region or "no region"}):')
+    for node in dep.nodes:
+        print(f'  {node["name"]}: {node.get("instance") or node.get("address")}, {", ".join(node["roles"])}')
+    print(f'relays: {", ".join(plan.relays)}')
+    print(f'builds: {", ".join(f"{k}={v}" for k, v in plan.builds.items()) or "harness defaults"}')
+    print(f'tuning: RPS={plan.tune.get("rps", 1)}')
+    points = [p for s in plan.suites for p in plan.points(s)]
+    seconds = BRINGUP_S + plan.seconds() + POINT_OVERHEAD_S * len(points)
+    cost = f', about ${price * seconds / 3600:.0f} at ${price:.2f}/hour' if price and dep.provider != 'static' else ''
+    budget = f', budget {plan.budget_hours} hours' if plan.budget_hours else ''
+    print(f'{len(points)} points; about {seconds / 3600:.1f} hours{cost}{budget}; teardown {"yes" if plan.teardown else "no"}')
+
+
+def tarball_env(plan):
+    env = {}
+    moqx = plan.builds.get('moqx')
+    if moqx:
+        path = Path(moqx)
+        path = path if path.is_absolute() else ROOT / path
+        for relay in plan.relays:
+            env[{'pgo': 'MOQX_PGO_TARBALL', 'reg': 'MOQX_REG_TARBALL'}[relay.partition(':')[2]]] = str(path)
+    return env
+
+
+def run_suites(plan, suites, label, dry, started, extra_env):
+    """One bin/sweep.sh per suite; a failed suite does not stop the next. Returns the failures."""
+    failed = []
+    folder = ROOT / 'results' / 'moqbench' / label
+    for suite in suites:
+        points = plan.points(suite)
+        cost_s = sum(p['seconds'] + POINT_OVERHEAD_S for p in points)
+        if plan.budget_hours and not dry and time.time() - started + cost_s > plan.budget_hours * 3600:
+            print(f'suite {suite.name}: would pass the {plan.budget_hours} hour budget; skipped', file=sys.stderr)
+            failed.append(suite.name)
+            continue
+        print(f'-- suite {suite.name}: {suite.description}')
+        for point in points:
+            describe_point(point)
+        sweep = f'{label}-{suite.name}'
+        path = folder / f'{suite.name}.plan'
+        if not dry:
+            folder.mkdir(parents=True, exist_ok=True)
+            path.write_text(plan.sweep_text(suite))
+        env = {**tarball_env(plan), **extra_env}
+        if call(['./bin/sweep.sh', path, sweep], env=env, dry=dry):
+            failed.append(suite.name)
+        call(['./bin/sweep-report.py', f'results/sweep-{sweep}'], dry=dry)
+    return failed
+
+
+def do_run(args):
+    plan = config.load_plan(args.plan)
+    dep = plan.deployment
+    suites = [s for s in plan.suites if not args.only or s.name in args.only]
+    if not suites:
+        raise SystemExit(f'--only matches none of {", ".join(s.name for s in plan.suites)}')
+    dry = args.dry_run
+    describe_plan(plan, None if args.no_price else hourly_usd(dep))
+    started = time.time()
+    hosts = static_env(dep)
+    builds = plan.builds
+    rps = str(plan.tune.get('rps', 1))
+    folder = ROOT / 'results' / 'moqbench' / plan.name
+    if not dry:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'plan.toml').write_text((ROOT / 'plans' / f'{plan.name}.toml').read_text())
+    keep = args.keep or not plan.teardown
+    try:
+        if not args.no_setup:
+            if do_up(dep, dry):
+                raise SystemExit('up failed')
+            provision = dict(TOOLS='aiomoqt', RELAYS='none', **hosts)
+            if 'aiomoqt' in builds:
+                provision['AIOMOQT_SRC'] = builds['aiomoqt']
+            if 'aiopquic' in builds:
+                provision['AIOPQUIC_SRC'] = builds['aiopquic']
+            if 'moxygen' in builds:
+                provision['MOXYGEN_RELEASE'] = builds['moxygen']
+            if call(['./bin/testbed-provision.sh'], env=provision, dry=dry):
+                raise SystemExit('provisioning failed')
+            if call(['./bin/testbed-tune.sh'], env=dict(RPS=rps, **hosts), dry=dry):
+                raise SystemExit('tuning failed')
+            if call(['./bin/bw-baseline.sh'], env=hosts, dry=dry):
+                raise SystemExit('path baseline failed')
+        call(['./bin/testbed-tune.sh', '--check'], env=dict(RPS=rps, **hosts), dry=dry,
+             stdout=None if dry else folder / 'tune-check.txt')
+        failed = run_suites(plan, suites, plan.name, dry, started, hosts)
+    finally:
+        if keep:
+            print(f'hosts left up: ./bin/moqbench down {dep.name}')
+        elif not args.no_setup:
+            do_down(dep, dry)
+    if failed:
+        print(f'suites that did not finish: {", ".join(failed)}', file=sys.stderr)
+    return int(bool(failed))
+
+
+def do_test(args):
+    inv = inventory()
+    name = args.deployment or (inv or {}).get('deployment')
+    if not name:
+        raise SystemExit('no hosts selected: moqbench up <deployment>, or name one with --deployment')
+    test = dict(type=args.type, tool=args.tool, video=args.video, max_per_box=args.max_per_box, seconds=args.seconds)
+    if args.suffix:
+        test['suffix'] = args.suffix
+    if args.subscriber_nodes:
+        test['subscriber_nodes'] = args.subscriber_nodes
+    suite = config.Suite('one-test', dict(description='one test', test=[test]))
+    data = dict(deployment=name, relays=[args.relay], suites=[suite], slo_ms=args.slo_ms, threads=args.threads)
+    if args.threads != 'all':
+        data['threads'] = int(args.threads)
+    plan = config.Plan('one-test', data)
+    label = 'test-' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')
+    failed = run_suites(plan, [suite], label, args.dry_run, time.time(), static_env(plan.deployment))
+    return int(bool(failed))
+
+
+def do_status(_args):
+    inv = inventory()
+    if inv:
+        print(f'selected: {inv.get("deployment")} ({inv.get("provider")}, {inv.get("region", "")})')
+        print(f'  relay {inv["relay"]["public"]}')
+        for i, client in enumerate(inv['clients']):
+            print(f'  load-{i + 1} {client["public"]}')
+    else:
+        print('no hosts selected')
+    now = datetime.datetime.now(datetime.timezone.utc)
+    seen = set()
+    for path in sorted((ROOT / 'deployments').glob('*.toml')):
+        if path.name.endswith('.local.toml') and path.stem.removesuffix('.local') in config.PROVIDERS:
+            continue
+        dep = config.load_deployment(path.stem.removesuffix('.local'))
+        if dep.provider != 'aws' or (dep.account.get('profile'), dep.region) in seen:
+            continue
+        seen.add((dep.account.get('profile'), dep.region))
+        instances = aws_instances(dep)
+        if instances is None:
+            print(f'aws {dep.region}: not checked (no profile in deployments/aws.local.toml, or the query failed)')
+            continue
+        print(f'aws {dep.region}: {len(instances)} instance(s) tagged purpose=perf-bench')
+        for instance, kind, state, launched in instances:
+            up = now - datetime.datetime.fromisoformat(launched.replace('Z', '+00:00'))
+            print(f'  {instance} {kind} {state}, up {up.total_seconds() / 3600:.1f} hours')
+    return 0
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog='moqbench', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest='command', required=True)
+    r = sub.add_parser('run', help='execute a plan')
+    r.add_argument('plan')
+    r.add_argument('--dry-run', action='store_true', help='print what would happen and change nothing')
+    r.add_argument('--only', action='append', metavar='SUITE', help='run only this suite (repeatable)')
+    r.add_argument('--no-setup', action='store_true', help='use the hosts already up, and leave them up')
+    r.add_argument('--keep', action='store_true', help='leave the hosts up afterwards')
+    r.add_argument('--no-price', action='store_true', help='skip the cloud price lookup')
+    t = sub.add_parser('test', help='one test on the hosts already up')
+    t.add_argument('type', choices=sorted(config.TEST_TYPES))
+    t.add_argument('--tool', required=True, choices=sorted(config.TOOLS))
+    t.add_argument('--video', required=True)
+    t.add_argument('--max-per-box', type=int, required=True)
+    t.add_argument('--seconds', type=int, required=True)
+    t.add_argument('--relay', default='moqx:pgo')
+    t.add_argument('--deployment', help='default: the selected testbed')
+    t.add_argument('--threads', default='all', help='relay io threads (default: one per relay vCPU)')
+    t.add_argument('--slo-ms', type=int, default=500)
+    t.add_argument('--subscriber-nodes', type=int)
+    t.add_argument('--suffix')
+    t.add_argument('--dry-run', action='store_true')
+    for name, text in (('up', 'create the hosts'), ('down', 'destroy the hosts and check nothing is left')):
+        c = sub.add_parser(name, help=text)
+        c.add_argument('deployment')
+        c.add_argument('--dry-run', action='store_true')
+    sub.add_parser('status', help='what is up')
+    d = sub.add_parser('dashboard', help='watch a run', add_help=False)
+    d.add_argument('rest', nargs=argparse.REMAINDER)
+    args = p.parse_args(argv)
+    try:
+        if args.command == 'run':
+            return do_run(args)
+        if args.command == 'test':
+            return do_test(args)
+        if args.command == 'up':
+            return do_up(config.load_deployment(args.deployment), args.dry_run)
+        if args.command == 'down':
+            return do_down(config.load_deployment(args.deployment), args.dry_run)
+        if args.command == 'status':
+            return do_status(args)
+        os.execv(ROOT / 'bin/live-dashboard', ['live-dashboard', *args.rest])
+    except config.ConfigError as exc:
+        print(f'moqbench: {exc}', file=sys.stderr)
+        return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main())

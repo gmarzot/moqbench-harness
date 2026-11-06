@@ -1,0 +1,14 @@
+# Machines no testbed created. Copy to deployments/<name>.local.toml, which git
+# ignores, and name it from a plan.
+provider = "static"
+
+[[nodes]]
+name    = "relay"
+address = "203.0.113.10"
+vcpus   = 32
+roles   = ["relay"]
+
+[[nodes]]
+name    = "load-1"
+address = "203.0.113.11"
+roles   = ["subscriber", "publisher"]

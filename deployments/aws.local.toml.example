@@ -1,0 +1,9 @@
+# Copy to deployments/aws.local.toml, which git ignores. These settings are added
+# to every AWS deployment. Nothing here is a credential: the profile name points
+# at ~/.aws/config.
+[account]
+profile             = "<profile name>"
+expected_account_id = "<12-digit account id>"
+ssh_key_file        = "~/.ssh/id_ed25519"
+allowed_cidrs       = ["<your egress IP>/32"]
+owner               = "<your name>"
