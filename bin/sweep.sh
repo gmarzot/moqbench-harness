@@ -19,6 +19,7 @@
 set -uo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
 source ./lib/dotenv.sh
+RELAY_NAME=${RELAY:-moqx}   # hosts.sh sets RELAY to the relay host's address
 source ./lib/hosts.sh
 PLAN=${1:?usage: sweep.sh <plan> [name]}
 NAME=${2:-$(basename "$PLAN" .plan)}; NAME=${NAME#sweep-}
@@ -30,7 +31,7 @@ cp "$PLAN" "$SWEEP/plan"
 deploy() {
   local src
   [[ $1 != src ]] || { echo src > "$SWEEP/.build-src"; return 0; }
-  [[ ${RELAY:-moqx} == moqx ]] || { echo "build $1 is moqx's; RELAY=$RELAY takes src" >&2; return 2; }
+  [[ $RELAY_NAME == moqx ]] || { echo "build $1 is moqx's; RELAY=$RELAY_NAME takes src" >&2; return 2; }
   case $1 in
     pgo) src=${MOQX_PGO_TARBALL:-} ;;
     reg) src=${MOQX_REG_TARBALL:-} ;;
@@ -46,7 +47,9 @@ while read -r line; do
   line=${line%%#*}
   [[ -n ${line// } ]] || continue
   if [[ $line =~ ^[[:space:]]*([A-Z_][A-Z0-9_]*)=([^[:space:]]*)[[:space:]]*$ ]]; then
-    export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"; continue
+    export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+    [[ ${BASH_REMATCH[1]} != RELAY ]] || RELAY_NAME=${BASH_REMATCH[2]}
+    continue
   fi
   read -r tool build shape max dur run <<< "$line"
   [[ -n ${run:-} && $max =~ ^[0-9]+$ && $dur =~ ^[0-9]+$ ]] || { echo "bad plan line: $line" >&2; exit 2; }
@@ -54,7 +57,7 @@ while read -r line; do
   out=$SWEEP/$run
   if grep -qs '^run_exit_status=0' "$out/run.txt"; then echo "=== $run: passed already, skipped"; continue; fi
   if [[ $build != "$built" ]]; then deploy "$build" || exit 1; built=$build; fi
-  relay=${RELAY:-moqx}
+  relay=$RELAY_NAME
   boxes=${#CLIENTS[@]}; [[ ${SUB_HOSTS:-clients} != client:* ]] || boxes=1
   echo "=== $(date -u +%T) $run: $t $relay $build $shape ${max}/host ${dur}s"
   mkdir -p "$out"

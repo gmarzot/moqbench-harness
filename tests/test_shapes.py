@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -63,6 +64,18 @@ class Shapes(unittest.TestCase):
                     self.assertIn(shape, SHAPES)
                     self.assertGreater(int(per_box), 0)
                     self.assertGreater(int(seconds), 0)
+
+    def test_sweep_keeps_the_relay_name_apart_from_its_address(self):
+        with tempfile.TemporaryDirectory() as d:
+            plan = Path(d) / 'sweep-x.plan'
+            plan.write_text('aio pgo 1080p 10 1 x\n')
+            env = dict(os.environ, RELAY_HOST='relay.invalid', CLIENT_HOSTS='a.invalid',
+                       MOQX_PGO_TARBALL=str(Path(d) / 'none.tar.gz'))
+            env.pop('RELAY', None)
+            run = subprocess.run([str(ROOT / 'bin/sweep.sh'), str(plan), f'test-{os.getpid()}'], env=env, cwd=d,
+                                 capture_output=True, text=True, timeout=60)
+            shutil.rmtree(ROOT / f'results/sweep-test-{os.getpid()}', ignore_errors=True)
+            self.assertNotIn('takes src', run.stdout + run.stderr)
 
     def test_sub_hosts_refuses_a_load_host_that_does_not_exist(self):
         env = dict(os.environ, RELAY_HOST='relay.invalid', CLIENT_HOSTS='a.invalid b.invalid', SUB_HOSTS='client:3')
