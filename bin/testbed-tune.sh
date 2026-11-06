@@ -12,6 +12,7 @@
 #   ./bin/testbed-tune.sh --mtu-only   # only pin the MTU: an otherwise untuned baseline
 #   ./bin/testbed-tune.sh --host 203.0.113.10
 #   QDISC=fq_codel ./bin/testbed-tune.sh
+#   RPS=0 ./bin/testbed-tune.sh    # leave receive work on the NIC's queues
 #
 # Apply also raises the thread and process limits ~10k subscribers per box
 # need, and on AWS (the inventory's provider, or PROVIDER=aws) points chrony at
@@ -68,12 +69,13 @@ RFS_ENTRIES=${RFS_ENTRIES:-65536}
 # discovery) use jumbo frames that no real subscriber path carries, inflating
 # every number. This is not a tuning choice, so --mtu-only applies it too.
 MTU=${MTU:-1500}
+RPS=${RPS:-1}
 PROVIDER=${PROVIDER:-$(python3 -c 'import json; print(json.load(open(".testbed/inventory.json")).get("provider", ""))' 2>/dev/null)}
 
 cat > /tmp/.tune_remote.sh <<'REMOTE'
 set -uo pipefail
 MODE=$1 QDISC=$2 QD_FLOWS=$3 QD_LIMIT=$4 TXQLEN=$5 RFS_ENTRIES=$6
-QD_TARGET=$7 QD_INTERVAL=$8 QD_MEMLIMIT=$9 DELAY_MS=${10} MTU=${11} PROVIDER=${12}
+QD_TARGET=$7 QD_INTERVAL=$8 QD_MEMLIMIT=$9 DELAY_MS=${10} MTU=${11} PROVIDER=${12} RPS=${13}
 IF=$(ip -o -4 route show to default | awk '{print $5}' | head -1)   # two default routes exist; take the first
 NCPU=$(nproc)
 
@@ -149,7 +151,7 @@ if [[ $MODE == apply ]]; then
   # packet, and a fan-out relay receives a lot of small ones: an ACK stream from
   # each subscriber. RPS spreads them over every CPU. RPS=0 for the A/B.
   NQ=$(ls /sys/class/net/"$IF"/queues/ | grep -c '^rx-')
-  if [[ ${RPS:-1} == 1 && $NQ -lt $NCPU ]]; then
+  if [[ $RPS == 1 && $NQ -lt $NCPU ]]; then
     sudo sysctl -qw net.core.rps_sock_flow_entries="$RFS_ENTRIES"
     for q in /sys/class/net/"$IF"/queues/rx-*; do
       echo "$(rps_mask "$NCPU")" | sudo tee "$q"/rps_cpus >/dev/null
@@ -208,10 +210,10 @@ if [[ $PROVIDER == aws ]]; then
 fi
 REMOTE
 
-echo "mode=$MODE mtu=$MTU qdisc=$QDISC one-way-delay=${DELAY_MS}ms (RTT=$((DELAY_MS*2))ms) provider=${PROVIDER:-unknown}"
+echo "mode=$MODE mtu=$MTU qdisc=$QDISC one-way-delay=${DELAY_MS}ms (RTT=$((DELAY_MS*2))ms) provider=${PROVIDER:-unknown} rps=$RPS"
 for H in "${HOSTS[@]}"; do
   $SSH "$RUSER"@"$H" 'bash -s' -- "$MODE" "$QDISC" "$QD_FLOWS" "$QD_LIMIT" \
-    "$TXQLEN" "$RFS_ENTRIES" "$QD_TARGET" "$QD_INTERVAL" "$QD_MEMLIMIT" "$DELAY_MS" "$MTU" "${PROVIDER:-none}" \
+    "$TXQLEN" "$RFS_ENTRIES" "$QD_TARGET" "$QD_INTERVAL" "$QD_MEMLIMIT" "$DELAY_MS" "$MTU" "${PROVIDER:-none}" "$RPS" \
     < /tmp/.tune_remote.sh 2>&1
 done
 rm -f /tmp/.tune_remote.sh

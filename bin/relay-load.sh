@@ -23,9 +23,10 @@
 #   PUB_HOST=client[:N]  publish from load host N (1-based, default 1), which
 #                    still subscribes
 #   SUB_HOSTS=clients (default) subscribers split over every load generator
+#   SUB_HOSTS=client:N  subscribers on load host N only (1-based)
 #   SUB_HOSTS=probe  subscribers on the probe only, for light probing
 #
-# Video shape (adaptive, fixed, moqperf-ramp): SHAPE=480p|720p|1080p from
+# Video shape (adaptive, fixed, moqperf-ramp): SHAPE=480p|720p|1080p|2160p from
 # scenarios/shapes.json; adaptive and fixed then publish aiomoqt's --video
 # profile instead of SUB_MBPS/OBJ_SIZE. LATENCY_MS (500) and SHORTFALL (tool
 # default) set adaptive_bench's back-off thresholds.
@@ -66,7 +67,7 @@ DRAFT=${DRAFT:-16}
 PUB_HOST=${PUB_HOST:-relay}
 SUB_HOSTS=${SUB_HOSTS:-clients}
 STAGGER=${STAGGER:-0.02}       # seconds between subscriber joins on one host
-SHAPE=${SHAPE:-}               # 480p | 720p | 1080p, scenarios/shapes.json
+SHAPE=${SHAPE:-}               # 480p | 720p | 1080p | 2160p, scenarios/shapes.json
 LATENCY_MS=${LATENCY_MS:-500}  # adaptive_bench --latency-threshold
 SHORTFALL=${SHORTFALL:-}       # adaptive_bench --shortfall-ratio; unset = tool default
 source ./lib/shapes.sh
@@ -83,8 +84,12 @@ case $PUB_HOST in
 esac
 case $SUB_HOSTS in
   clients) SUBHOSTS=("${CLIENTS[@]}") ;;
+  client:[1-9]*)
+    n=${SUB_HOSTS#client:}
+    [[ $n =~ ^[0-9]+$ ]] && (( n <= ${#CLIENTS[@]} )) || { echo "SUB_HOSTS=$SUB_HOSTS: there are ${#CLIENTS[@]} load hosts" >&2; exit 2; }
+    SUBHOSTS=("${CLIENTS[n-1]}") ;;
   probe)   SUBHOSTS=("${PROBES[0]:?no probe host in this environment}") ;;
-  *) echo "SUB_HOSTS must be clients or probe" >&2; exit 2 ;;
+  *) echo "SUB_HOSTS must be clients, client:N or probe" >&2; exit 2 ;;
 esac
 
 if [[ $DRAFT != 16 ]]; then
@@ -247,7 +252,8 @@ collect() {
 RUN_EPOCH=$(date +%s)
 NS="bench-$(date +%H%M%S)"          # fresh per run: a relay can hold a stale registration
 PER=$(( (SUBS + ${#SUBHOSTS[@]} - 1) / ${#SUBHOSTS[@]} ))
-PY="aiomoqt/.venv/bin/python -u"
+# AIOMOQT_ENV: environment for every aiomoqt process, e.g. MALLOC_ARENA_MAX=2
+PY="${AIOMOQT_ENV:+$AIOMOQT_ENV }aiomoqt/.venv/bin/python -u"
 AIOMOQT_EXTRA=${AIOMOQT_EXTRA:-}   # e.g. "--max-queued-bytes N --max-inflight-bytes N"
 
 case $TOOL in
@@ -305,6 +311,10 @@ wait"
       BENCH=/tmp/moqbench-fixed-bench.py
       FIXED_FLAG=--fixed-subs
     fi
+    # A shape whose bitrate the --video profile does not reach sets its frame sizes.
+    FRAMES=""
+    [[ -z $SHAPE ]] || FRAMES=$(shape_field "$SHAPE" aiomoqt_frames 2>/dev/null) || FRAMES=""
+    [[ -z $FRAMES ]] || BENCH="/tmp/moqbench-adaptive-frames.py $(shape_field "$SHAPE" aiomoqt_profile) $FRAMES ${BENCH#-m }"
     PUB_CMD="$PY $BENCH moqt://$PUB_ADDR:$RELAY_PORT$URLPATH $COMMON --role pub -t $(( DUR + 30 ))"
     sub_cmd() {
       echo "$PY $BENCH moqt://$RPRIV:$RELAY_PORT$URLPATH $COMMON --role sub \
@@ -328,7 +338,7 @@ wait"
     WAIT=$(( DUR + 60 ))
     ;;
   moqperf-ramp)
-    [[ -n $SHAPE ]] || { echo "moqperf-ramp needs SHAPE (480p, 720p or 1080p)" >&2; exit 2; }
+    [[ -n $SHAPE ]] || { echo "moqperf-ramp needs SHAPE (480p, 720p, 1080p or 2160p)" >&2; exit 2; }
     DELIVERY_TIMEOUT=${DELIVERY_TIMEOUT:-500} MP_THREADS=${MP_THREADS:-32} MP_RAMP=${MP_RAMP:-64}
     MP="--transport=quic --versions=$DRAFT"
     PUB_CMD="LD_LIBRARY_PATH=$RROOT/moxygen/lib moxygen/bin/moqtest_server --relay_url=https://$PUB_ADDR:$RELAY_PORT$URLPATH $MP --include_timestamp_extension=true"
@@ -378,6 +388,11 @@ PYCHECK
       echo "Load-generator preflight failed on $h; workload not started." >&2
       exit 1
     fi
+  done
+fi
+if [[ ${BENCH:-} == /tmp/moqbench-adaptive-frames.py* ]]; then
+  for h in "${!checked_hosts[@]}"; do
+    $SCP remote/adaptive-bench-frames.py "$RUSER@$h:/tmp/moqbench-adaptive-frames.py" || exit 1
   done
 fi
 # Prepare a temporary CLI copy, preserving the installed package and native

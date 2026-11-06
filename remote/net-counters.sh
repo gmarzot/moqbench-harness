@@ -21,4 +21,4 @@ nstat -saz 2>/dev/null | awk '$1 ~ /^Udp(InErrors|RcvbufErrors|SndbufErrors)$/ {
 tc -s qdisc show dev "$IF" | awk '/^qdisc/ {kind = $2}
   /dropped/ && kind != "mq" {for (i = 1; i < NF; i++) if ($i == "dropped") {v = $(i+1); sub(",", "", v); t += v}}
   END {print "qdisc_dropped", t + 0}'
-ethtool -S "$IF" 2>/dev/null | awk -F: '$1 ~ /drop|miss|fifo|full|err/ {k = $1; gsub(/[ \t]/, "", k); print "nic_" k, $2 + 0}'
+ethtool -S "$IF" 2>/dev/null | awk -F: '$1 ~ /drop|miss|fifo|full|err|allowance_exceeded/ {k = $1; gsub(/[ \t]/, "", k); print "nic_" k, $2 + 0}'

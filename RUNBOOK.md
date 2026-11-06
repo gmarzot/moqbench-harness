@@ -351,12 +351,13 @@ per-subscriber moq-bench logs and `moqbench.csv`), and `versions.txt`.
 | `SUBS` | 200 | total, split evenly over the subscriber hosts |
 | `THREADS` | 8 | relay worker threads (the 8 OCPU relay has 16 vCPU) |
 | `PUB_HOST` | relay | `probe` publishes from the probe node over the network; `client[:N]` from load host N (default 1), which still subscribes |
-| `SUB_HOSTS` | clients | `probe` puts the subscribers on the probe node |
+| `SUB_HOSTS` | clients | `client:N` puts the subscribers on load host N, `probe` on the probe node |
 | `DRAFT` | 16 | 18 only with moqx and a `MOQBENCH_DRAFT=18` build |
 | `STAGGER` | 0.02 | seconds between joins on one host; spaces the QUIC Initials |
 | `PROFILE` | moqbench/video-1080p.ini | moq-bench tracks; `start_delay` and duration are set per run |
 | `SUB_MBPS`, `OBJ_SIZE`, `STEP_SUBS`, `JOIN` | 2, 8192, 10, 5 | adaptive_bench ramp |
-| `SHAPE` | | `480p`, `720p`, `1080p` (`scenarios/shapes.json`): adaptive/fixed publish `--video SHAPE` instead of `SUB_MBPS`/`OBJ_SIZE`; required by `moqperf-ramp` |
+| `AIOMOQT_ENV` | | environment for every aiomoqt process, e.g. `MALLOC_ARENA_MAX=2` |
+| `SHAPE` | | `480p`, `720p`, `1080p`, `2160p` (`scenarios/shapes.json`): adaptive/fixed publish `--video SHAPE` instead of `SUB_MBPS`/`OBJ_SIZE`; required by `moqperf-ramp` |
 | `LATENCY_MS`, `SHORTFALL` | 500, tool default | adaptive_bench `--latency-threshold`, `--shortfall-ratio` |
 | `DELIVERY_TIMEOUT`, `MP_THREADS`, `MP_RAMP` | 500, 32, 64 | `moqperf-ramp` client: delivery timeout, threads, subscribers added per second |
 | `SCENARIO`, `RATE` | one track, 30 | load_sim; a scenario's audiences run on every subscriber host |
@@ -373,7 +374,7 @@ not connections. Watch the client-bound flag in `run.txt` before scaling
 A sweep is a plan of relay-load.sh points against moqx: aiomoqt adaptive_bench
 (`aio`) or moxygen's moqperf_test_client (`mp`, the `moqperf-ramp` tool), a PGO
 or regular moqx build, and a video shape from `scenarios/shapes.json` (480p,
-720p, 1080p at 1.10, 2.19 and 4.30 Mbps per subscriber). The plan's
+720p, 1080p, 2160p at 1.10, 2.19, 4.30 and 16 Mbps per subscriber). The plan's
 `KEY=VALUE` lines set the environment of the points after them;
 `scenarios/sweep-g3.plan` is the nine-point all-Graviton3 sweep (60 relay
 threads, publisher on load host 2, draft 18).
