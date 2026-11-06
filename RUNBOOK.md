@@ -387,7 +387,7 @@ not connections. Watch the client-bound flag in `run.txt` before scaling
 A sweep is a plan of relay-load.sh points against moqx: aiomoqt adaptive_bench
 (`aio`) or moxygen's moqperf_test_client (`mp`, the `moqperf-ramp` tool), a PGO
 or regular moqx build, and a video shape from `scenarios/shapes.json` (480p,
-720p, 1080p, 2160p at 1.10, 2.19, 4.30 and 16 Mbps per subscriber). The plan's
+720p, 1080p, 2160p at 1.10, 2.19, 4.30 and 16 Mbps per subscriber; aiomoqt's 2160p needs a build with `--video 4kuhd`). The plan's
 `KEY=VALUE` lines set the environment of the points after them;
 `scenarios/sweep-g3.plan` is the nine-point all-Graviton3 sweep (60 relay
 threads, publisher on load host 2, draft 18).

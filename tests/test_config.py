@@ -170,7 +170,7 @@ class Command(unittest.TestCase):
         before = subprocess.check_output(['git', 'status', '--short'], cwd=ROOT)
         run = self.moqbench('run', 'moqx-c7gn12x', '--dry-run', '--no-price')
         self.assertEqual(run.returncode, 0, run.stderr)
-        for text in ('6 points', './bin/testbed-provision.sh', 'AIOMOQT_SRC=52cfda8', 'RPS=0', './bin/sweep.sh',
+        for text in ('6 points', './bin/testbed-provision.sh', 'AIOMOQT_SRC=bd2bc66', 'RPS=0', './bin/sweep.sh',
                      'mp-pgo48-1b-1080-12x', 'THREADS=48  (relay vCPUs)', 'testbed.sh aws-c7gn12x destroy'):
             self.assertIn(text, run.stdout)
         self.assertEqual(subprocess.check_output(['git', 'status', '--short'], cwd=ROOT), before)

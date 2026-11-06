@@ -10,6 +10,6 @@ teardown    = true
 
 [builds]
 moqx     = "patches/bin/moqx-v0.3.7-arm64-pgo-0783f501-linux-arm64.tar.gz"
-aiomoqt  = "52cfda8"
+aiomoqt  = "bd2bc66"
 aiopquic = "5711a08"
 moxygen  = "v0.3.7"
