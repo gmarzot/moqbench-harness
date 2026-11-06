@@ -1,0 +1,15 @@
+description = "aiomoqt 2160p on the build that reads worker reports as they arrive"
+deployment  = "aws-c7gn12x"
+relays      = ["moqx:pgo"]
+suites      = ["moqx-c7gn12x-report-fix"]
+threads     = "all"
+slo_ms      = 500
+tune        = { rps = 0 }
+budget      = { hours = 1 }
+teardown    = true
+
+[builds]
+moqx     = "patches/bin/moqx-v0.3.7-arm64-pgo-0783f501-linux-arm64.tar.gz"
+aiomoqt  = "41f05b6"
+aiopquic = "5711a08"
+moxygen  = "v0.3.7"
