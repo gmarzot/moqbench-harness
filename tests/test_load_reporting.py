@@ -19,7 +19,7 @@ def module(name, path):
 
 report = module('report', 'bin/fixed-load-report.py')
 monitor = module('monitor', 'remote/load-monitor.py')
-telemetry = module('telemetry', 'bin/load-telemetry-report.py')
+telemetry = module('telemetry', 'lib/telemetry.py')
 
 
 def row(t, rx=20, p90=10):

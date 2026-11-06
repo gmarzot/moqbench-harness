@@ -5,59 +5,8 @@ import json
 from pathlib import Path
 import sys
 
-
-def cpu(text):
-    result = {}
-    for line in text.splitlines():
-        key, *fields = line.split()
-        if key.startswith('cpu'):
-            v = list(map(int, fields))[:8]  # guest time is already included in user/nice
-            result[key] = (sum(v), v[3] + v[4])
-    return result
-
-
-def net(text):
-    return {line.split(':')[0].strip(): list(map(int, line.split(':')[1].split()))
-            for line in text.splitlines() if ':' in line}
-
-
-def udp(text):
-    lines = text.splitlines()
-    for i, line in enumerate(lines):
-        if line.startswith('Udp:'):
-            return dict(zip(line.split()[1:], map(int, lines[i+1].split()[1:])))
-    return {}
-
-
-def rates(a, b, hz):
-    dt = b['monotonic'] - a['monotonic']
-    ac, bc = cpu(a['cpu']), cpu(b['cpu'])
-    busy = {k: 100 * (1 - (bc[k][1] - ac[k][1]) / max(1, bc[k][0] - ac[k][0]))
-            for k in ac.keys() & bc.keys()}
-    an, bn = net(a['netdev']), net(b['netdev'])
-    interfaces = (an.keys() & bn.keys()) - {'lo'}
-    au, bu = udp(a['snmp']), udp(b['snmp'])
-    ap, bp = a.get('process'), b.get('process')
-    same = bool(ap and bp and ap['pid'] == bp['pid'] and ap['start_ticks'] == bp['start_ticks']
-                and bp.get('state') != 'Z')
-    row = dict(t_wall=b['t_wall'], interval_s=dt, host_busy_pct=busy['cpu'],
-               hottest_cpu_pct=max(v for k, v in busy.items() if k != 'cpu'),
-               cpus_over_90_pct=sum(v >= 90 for k, v in busy.items() if k != 'cpu'),
-               process_cores=(bp['ticks']-ap['ticks'])/hz/dt if same else '',
-               process_rss_bytes=bp['rss_bytes'] if bp else '',
-               net_tx_mbps=sum(bn[k][8]-an[k][8] for k in interfaces)*8/dt/1e6,
-               net_rx_mbps=sum(bn[k][0]-an[k][0] for k in interfaces)*8/dt/1e6)
-    for key in ('InErrors', 'RcvbufErrors', 'SndbufErrors', 'InDatagrams', 'OutDatagrams'):
-        row['udp_' + key + '_delta'] = bu.get(key, 0) - au.get(key, 0)
-    row['nic_allowance_exceeded_delta'] = (sum(b.get('nic_allowance', {}).values())
-                                           - sum(a.get('nic_allowance', {}).values()))
-    return row
-
-
-def allowance_deltas(samples):
-    """Whole-run growth of each NIC allowance counter; {} when none were recorded."""
-    seen = [s['nic_allowance'] for s in samples if s.get('nic_allowance')]
-    return {k: seen[-1].get(k, 0) - seen[0][k] for k in seen[0]} if seen else {}
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
+from telemetry import allowance_deltas, rates  # noqa: E402
 
 
 def summarize(directory):

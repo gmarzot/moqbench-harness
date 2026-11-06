@@ -363,6 +363,19 @@ per-subscriber moq-bench logs and `moqbench.csv`), and `versions.txt`.
 | `SCENARIO`, `RATE` | one track, 30 | load_sim; a scenario's audiences run on every subscriber host |
 | `AIOMOQT_EXTRA` | | extra flags for both aiomoqt tools, e.g. `--max-queued-bytes` |
 
+### Watching a run
+
+```bash
+./bin/live-dashboard                      # then open http://127.0.0.1:8765/
+./bin/live-dashboard --replay results/sweep-<name>/<run>
+```
+
+The page shows subscribers, worst latency against the SLO, relay egress, packets
+and CPU, load-host busy against the 85% limit, and drop and NIC allowance counters.
+It adds nothing to a host beyond one ssh connection following the files a run
+already writes with a niced `tail`, so it can attach or detach at any time and a
+failure cannot stop the run. It binds to localhost only.
+
 moq-bench is one process per subscriber, so a client's ceiling is processes,
 not connections. Watch the client-bound flag in `run.txt` before scaling
 `SUBS` up. A relay kept out of this repo can be added through
