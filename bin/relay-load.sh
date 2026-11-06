@@ -252,7 +252,8 @@ collect() {
 RUN_EPOCH=$(date +%s)
 NS="bench-$(date +%H%M%S)"          # fresh per run: a relay can hold a stale registration
 PER=$(( (SUBS + ${#SUBHOSTS[@]} - 1) / ${#SUBHOSTS[@]} ))
-PY="aiomoqt/.venv/bin/python -u"
+# AIOMOQT_ENV: environment for every aiomoqt process, e.g. MALLOC_ARENA_MAX=2
+PY="${AIOMOQT_ENV:+$AIOMOQT_ENV }aiomoqt/.venv/bin/python -u"
 AIOMOQT_EXTRA=${AIOMOQT_EXTRA:-}   # e.g. "--max-queued-bytes N --max-inflight-bytes N"
 
 case $TOOL in
@@ -310,6 +311,10 @@ wait"
       BENCH=/tmp/moqbench-fixed-bench.py
       FIXED_FLAG=--fixed-subs
     fi
+    # A shape whose bitrate the --video profile does not reach sets its frame sizes.
+    FRAMES=""
+    [[ -z $SHAPE ]] || FRAMES=$(shape_field "$SHAPE" aiomoqt_frames 2>/dev/null) || FRAMES=""
+    [[ -z $FRAMES ]] || BENCH="/tmp/moqbench-adaptive-frames.py $(shape_field "$SHAPE" aiomoqt_profile) $FRAMES ${BENCH#-m }"
     PUB_CMD="$PY $BENCH moqt://$PUB_ADDR:$RELAY_PORT$URLPATH $COMMON --role pub -t $(( DUR + 30 ))"
     sub_cmd() {
       echo "$PY $BENCH moqt://$RPRIV:$RELAY_PORT$URLPATH $COMMON --role sub \
@@ -383,6 +388,11 @@ PYCHECK
       echo "Load-generator preflight failed on $h; workload not started." >&2
       exit 1
     fi
+  done
+fi
+if [[ ${BENCH:-} == /tmp/moqbench-adaptive-frames.py* ]]; then
+  for h in "${!checked_hosts[@]}"; do
+    $SCP remote/adaptive-bench-frames.py "$RUSER@$h:/tmp/moqbench-adaptive-frames.py" || exit 1
   done
 fi
 # Prepare a temporary CLI copy, preserving the installed package and native

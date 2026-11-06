@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,13 +20,36 @@ class Shapes(unittest.TestCase):
                 group_bits = 8 * (s['moqperf_first_object'] + (n - 1) * s['moqperf_other_object'])
                 mbps = group_bits * 30 / n / 1e6
                 self.assertLess(abs(mbps - s['nominal_mbps']) / s['nominal_mbps'], 0.01)
-                self.assertEqual(s['aiomoqt_profile'], name)
+                if 'aiomoqt_frames' in s:
+                    i, p, b = map(int, s['aiomoqt_frames'].split())
+                    mbps = 8 * (i + 19 * p + 40 * b) * 30 / n / 1e6  # ibp, 60 frames
+                    self.assertLess(abs(mbps - s['nominal_mbps']) / s['nominal_mbps'], 0.01)
+                else:
+                    self.assertEqual(s['aiomoqt_profile'], name)
 
     def test_shape_field(self):
         sh = lambda call: subprocess.run(['bash', '-c', f'source {ROOT}/lib/shapes.sh; {call}'],  # noqa: E731
                                          capture_output=True, text=True)
         self.assertEqual(sh('shape_field 720p moqperf_other_object').stdout.split(), ['7931'])
         self.assertNotEqual(sh('shape_field 4k nominal_mbps').returncode, 0)
+
+    def test_frames_wrapper_sets_the_profile_for_a_module_or_a_script(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / 'aiomoqt/tools').mkdir(parents=True)
+            (root / 'aiomoqt/__init__.py').write_text('')
+            (root / 'aiomoqt/tools/__init__.py').write_text('')
+            (root / 'aiomoqt/track.py').write_text('class VideoTrack:\n    PROFILES = {}\n')
+            bench = ('import sys\nfrom aiomoqt.track import VideoTrack\n'
+                     'print(VideoTrack.PROFILES["4k"]["i_frame"], sys.argv[1:], __name__)\n')
+            (root / 'aiomoqt/tools/adaptive_bench.py').write_text(bench)
+            (root / 'patched.py').write_text(bench)
+            for target in ('aiomoqt.tools.adaptive_bench', str(root / 'patched.py')):
+                with self.subTest(target=target):
+                    run = subprocess.run([sys.executable, str(ROOT / 'remote/adaptive-bench-frames.py'),
+                                          '4k', '744000', '93000', '37200', target, '--role', 'sub'],
+                                         env=dict(os.environ, PYTHONPATH=d), capture_output=True, text=True)
+                    self.assertEqual(run.stdout.strip(), "744000 ['--role', 'sub'] __main__", run.stderr)
 
     def test_plan_points_name_known_tools_and_shapes(self):
         for plan in (ROOT / 'scenarios').glob('sweep-*.plan'):

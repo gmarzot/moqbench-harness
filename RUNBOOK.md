@@ -356,6 +356,7 @@ per-subscriber moq-bench logs and `moqbench.csv`), and `versions.txt`.
 | `STAGGER` | 0.02 | seconds between joins on one host; spaces the QUIC Initials |
 | `PROFILE` | moqbench/video-1080p.ini | moq-bench tracks; `start_delay` and duration are set per run |
 | `SUB_MBPS`, `OBJ_SIZE`, `STEP_SUBS`, `JOIN` | 2, 8192, 10, 5 | adaptive_bench ramp |
+| `AIOMOQT_ENV` | | environment for every aiomoqt process, e.g. `MALLOC_ARENA_MAX=2` |
 | `SHAPE` | | `480p`, `720p`, `1080p`, `2160p` (`scenarios/shapes.json`): adaptive/fixed publish `--video SHAPE` instead of `SUB_MBPS`/`OBJ_SIZE`; required by `moqperf-ramp` |
 | `LATENCY_MS`, `SHORTFALL` | 500, tool default | adaptive_bench `--latency-threshold`, `--shortfall-ratio` |
 | `DELIVERY_TIMEOUT`, `MP_THREADS`, `MP_RAMP` | 500, 32, 64 | `moqperf-ramp` client: delivery timeout, threads, subscribers added per second |

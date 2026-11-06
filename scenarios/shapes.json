@@ -24,7 +24,8 @@
     "object_interval_ms": 33
   },
   "2160p": {
-    "aiomoqt_profile": "2160p",
+    "aiomoqt_profile": "4k",
+    "aiomoqt_frames": "744000 93000 37200",
     "nominal_mbps": 16.00,
     "moqperf_first_object": 744000,
     "moqperf_other_object": 55186,
