@@ -11,7 +11,7 @@ adapters, cloud targets, and measurement-method fixes.
 
 ## Setup
 
-You need bash, Python 3.10 or later, and, for cloud testbeds, Terraform and the
+You need bash, Python 3.11 or later, and, for cloud testbeds, Terraform and the
 cloud's CLI (`aws` or `oci`). Copy the relevant `*.local.tfvars.example` to its
 `*.local.tfvars` name and fill in your own account details; those files are
 ignored by git.

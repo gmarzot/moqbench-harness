@@ -1,0 +1,11 @@
+# Copy to deployments/oci.local.toml, which git ignores. These settings are added
+# to every OCI deployment; see oci/README.md for what each one is.
+[account]
+config_file_profile = "<profile name>"
+auth                = "APIKey"
+tenancy_ocid        = "<tenancy OCID>"
+compartment_ocid    = "<compartment OCID>"
+image_ocid          = "<image OCID>"
+ssh_key_file        = "~/.ssh/id_ed25519"
+allowed_cidrs       = ["<your egress IP>/32"]
+owner               = "<your name>"

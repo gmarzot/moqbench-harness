@@ -25,6 +25,7 @@ class RepositoryHygiene(unittest.TestCase):
 
     def test_local_environment_paths_are_ignored_and_untracked(self):
         paths = ['.env', 'relays.local.sh', 'oci/envs/test.local.tfvars', 'aws/envs/test.local.tfvars',
+                 'deployments/aws.local.toml', 'deployments/lab.local.toml',
                  '.testbed/private-notes/audit.txt', 'results/private-run/log.txt']
         for path in paths:
             with self.subTest(path=path):

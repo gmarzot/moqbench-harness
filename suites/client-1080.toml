@@ -1,0 +1,20 @@
+description = "Load-tool variations at 1080p: subscribers per Python worker, and one load host"
+requires = { subscriber = 2, publisher = 1 }
+
+[[test]]
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 6000
+seconds = 800
+step_subs = 500
+join_s = 20
+suffix = "k500"
+
+[[test]]
+type = "capacity"
+tool = "moqperf"
+video = "1080p"
+max_per_box = 13000
+seconds = 650
+subscriber_nodes = 1
