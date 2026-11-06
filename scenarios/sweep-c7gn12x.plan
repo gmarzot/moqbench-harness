@@ -23,7 +23,12 @@ aio     pgo    1080p   6000    800      aio-pgo48-2b-1080-12x
 STEP_SUBS=50
 MP_RAMP=32
 mp      pgo    2160p   5000    540      mp-pgo48-2b-2160-12x
-aio     pgo    2160p   2000    700      aio-pgo48-2b-2160-12x
+aio     pgo    2160p   2500    800      aio-pgo48-2b-2160-12x
+# Twice the subscribers per Python worker, joining at the same rate.
+STEP_SUBS=500
+JOIN=20
+aio     pgo    1080p   6000    800      aio-pgo48-2b-1080-12x-k500
+JOIN=10
 # One subscriber host.
 SUB_HOSTS=client:1
 STEP_SUBS=250
