@@ -23,9 +23,10 @@
 #   PUB_HOST=client[:N]  publish from load host N (1-based, default 1), which
 #                    still subscribes
 #   SUB_HOSTS=clients (default) subscribers split over every load generator
+#   SUB_HOSTS=client:N  subscribers on load host N only (1-based)
 #   SUB_HOSTS=probe  subscribers on the probe only, for light probing
 #
-# Video shape (adaptive, fixed, moqperf-ramp): SHAPE=480p|720p|1080p from
+# Video shape (adaptive, fixed, moqperf-ramp): SHAPE=480p|720p|1080p|2160p from
 # scenarios/shapes.json; adaptive and fixed then publish aiomoqt's --video
 # profile instead of SUB_MBPS/OBJ_SIZE. LATENCY_MS (500) and SHORTFALL (tool
 # default) set adaptive_bench's back-off thresholds.
@@ -66,7 +67,7 @@ DRAFT=${DRAFT:-16}
 PUB_HOST=${PUB_HOST:-relay}
 SUB_HOSTS=${SUB_HOSTS:-clients}
 STAGGER=${STAGGER:-0.02}       # seconds between subscriber joins on one host
-SHAPE=${SHAPE:-}               # 480p | 720p | 1080p, scenarios/shapes.json
+SHAPE=${SHAPE:-}               # 480p | 720p | 1080p | 2160p, scenarios/shapes.json
 LATENCY_MS=${LATENCY_MS:-500}  # adaptive_bench --latency-threshold
 SHORTFALL=${SHORTFALL:-}       # adaptive_bench --shortfall-ratio; unset = tool default
 source ./lib/shapes.sh
@@ -83,8 +84,12 @@ case $PUB_HOST in
 esac
 case $SUB_HOSTS in
   clients) SUBHOSTS=("${CLIENTS[@]}") ;;
+  client:[1-9]*)
+    n=${SUB_HOSTS#client:}
+    [[ $n =~ ^[0-9]+$ ]] && (( n <= ${#CLIENTS[@]} )) || { echo "SUB_HOSTS=$SUB_HOSTS: there are ${#CLIENTS[@]} load hosts" >&2; exit 2; }
+    SUBHOSTS=("${CLIENTS[n-1]}") ;;
   probe)   SUBHOSTS=("${PROBES[0]:?no probe host in this environment}") ;;
-  *) echo "SUB_HOSTS must be clients or probe" >&2; exit 2 ;;
+  *) echo "SUB_HOSTS must be clients, client:N or probe" >&2; exit 2 ;;
 esac
 
 if [[ $DRAFT != 16 ]]; then
@@ -328,7 +333,7 @@ wait"
     WAIT=$(( DUR + 60 ))
     ;;
   moqperf-ramp)
-    [[ -n $SHAPE ]] || { echo "moqperf-ramp needs SHAPE (480p, 720p or 1080p)" >&2; exit 2; }
+    [[ -n $SHAPE ]] || { echo "moqperf-ramp needs SHAPE (480p, 720p, 1080p or 2160p)" >&2; exit 2; }
     DELIVERY_TIMEOUT=${DELIVERY_TIMEOUT:-500} MP_THREADS=${MP_THREADS:-32} MP_RAMP=${MP_RAMP:-64}
     MP="--transport=quic --versions=$DRAFT"
     PUB_CMD="LD_LIBRARY_PATH=$RROOT/moxygen/lib moxygen/bin/moqtest_server --relay_url=https://$PUB_ADDR:$RELAY_PORT$URLPATH $MP --include_timestamp_extension=true"

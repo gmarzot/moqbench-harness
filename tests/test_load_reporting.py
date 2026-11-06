@@ -75,6 +75,21 @@ class Reporting(unittest.TestCase):
         b['process'] = dict(a['process'], ticks=700)
         self.assertEqual(telemetry.rates(a, b, 100)['process_cores'], 2)
 
+    def test_nic_allowance_counters(self):
+        text = """NIC statistics:
+     tx_timeout: 0
+     bw_in_allowance_exceeded: 3
+     pps_allowance_exceeded: 7
+     conntrack_allowance_available: 900
+     queue_0_tx_cnt: 12
+"""
+        self.assertEqual(monitor.allowance_counters(text), dict(bw_in_allowance_exceeded=3, pps_allowance_exceeded=7))
+        a = dict(monitor.snapshot(0), nic_allowance=dict(pps_allowance_exceeded=7))
+        b = dict(a, monotonic=a['monotonic'] + 1, nic_allowance=dict(pps_allowance_exceeded=10))
+        self.assertEqual(telemetry.rates(a, b, 100)['nic_allowance_exceeded_delta'], 3)
+        self.assertEqual(telemetry.allowance_deltas([a, b]), dict(pps_allowance_exceeded=3))
+        self.assertEqual(telemetry.allowance_deltas([dict(t=1)]), {})
+
 
 if __name__ == '__main__':
     unittest.main()

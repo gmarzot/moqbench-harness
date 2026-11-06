@@ -49,7 +49,15 @@ def rates(a, b, hz):
                net_rx_mbps=sum(bn[k][0]-an[k][0] for k in interfaces)*8/dt/1e6)
     for key in ('InErrors', 'RcvbufErrors', 'SndbufErrors', 'InDatagrams', 'OutDatagrams'):
         row['udp_' + key + '_delta'] = bu.get(key, 0) - au.get(key, 0)
+    row['nic_allowance_exceeded_delta'] = (sum(b.get('nic_allowance', {}).values())
+                                           - sum(a.get('nic_allowance', {}).values()))
     return row
+
+
+def allowance_deltas(samples):
+    """Whole-run growth of each NIC allowance counter; {} when none were recorded."""
+    seen = [s['nic_allowance'] for s in samples if s.get('nic_allowance')]
+    return {k: seen[-1].get(k, 0) - seen[0][k] for k in seen[0]} if seen else {}
 
 
 def summarize(directory):
@@ -84,6 +92,11 @@ def summarize(directory):
                   f'peak process cores {max(proc) if proc else "n/a"}')
             print('  UDP deltas: ' + ', '.join(f'{k}={sum(r["udp_"+k+"_delta"] for r in rows)}'
                                                for k in ('InErrors', 'RcvbufErrors', 'SndbufErrors')))
+            allowance = allowance_deltas(samples)
+            print('  NIC allowance exceeded: ' + (', '.join(f'{k}={v}' for k, v in sorted(allowance.items()))
+                                                  or 'not recorded'))
+            if any(allowance.values()):
+                print('  WARNING: the cloud NIC shaped traffic; see nic_allowance_exceeded_delta in the CSV')
             metric_errors = sum('metrics_error' in r for r in samples)
             if metric_errors:
                 print(f'  WARNING: {metric_errors} metrics scrapes failed; details in JSONL')

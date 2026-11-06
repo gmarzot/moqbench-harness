@@ -1,5 +1,7 @@
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 import unittest
 
@@ -9,7 +11,7 @@ SHAPES = json.loads((ROOT / 'scenarios/shapes.json').read_text())
 
 class Shapes(unittest.TestCase):
     def test_moqperf_sizes_match_nominal_bitrate(self):
-        self.assertEqual(sorted(SHAPES), ['1080p', '480p', '720p'])
+        self.assertEqual(sorted(SHAPES), ['1080p', '2160p', '480p', '720p'])
         for name, s in SHAPES.items():
             with self.subTest(shape=name):
                 n = s['objects_per_group']
@@ -23,6 +25,26 @@ class Shapes(unittest.TestCase):
                                          capture_output=True, text=True)
         self.assertEqual(sh('shape_field 720p moqperf_other_object').stdout.split(), ['7931'])
         self.assertNotEqual(sh('shape_field 4k nominal_mbps').returncode, 0)
+
+    def test_plan_points_name_known_tools_and_shapes(self):
+        for plan in (ROOT / 'scenarios').glob('sweep-*.plan'):
+            for line in plan.read_text().splitlines():
+                line = line.split('#')[0].strip()
+                if not line or re.fullmatch(r'[A-Z_][A-Z0-9_]*=\S*', line):
+                    continue
+                with self.subTest(plan=plan.name, line=line):
+                    tool, _build, shape, per_box, seconds, _run = line.split()
+                    self.assertIn(tool, ('aio', 'mp'))
+                    self.assertIn(shape, SHAPES)
+                    self.assertGreater(int(per_box), 0)
+                    self.assertGreater(int(seconds), 0)
+
+    def test_sub_hosts_refuses_a_load_host_that_does_not_exist(self):
+        env = dict(os.environ, RELAY_HOST='relay.invalid', CLIENT_HOSTS='a.invalid b.invalid', SUB_HOSTS='client:3')
+        run = subprocess.run([str(ROOT / 'bin/relay-load.sh'), 'adaptive', 'moqx', '1'], env=env,
+                             capture_output=True, text=True, timeout=30)
+        self.assertEqual(run.returncode, 2)
+        self.assertIn('there are 2 load hosts', run.stderr)
 
 
 if __name__ == '__main__':

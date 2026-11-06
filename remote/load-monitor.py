@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import time
 import urllib.request
 
@@ -35,7 +37,27 @@ def comm_totals(names):
     return total
 
 
-def snapshot(pid, comms=()):
+def default_interface():
+    """The interface of the first default route, or '' without one."""
+    try:
+        route = subprocess.run(['ip', '-o', '-4', 'route', 'show', 'to', 'default'],
+                               capture_output=True, text=True, timeout=5).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    return route[4] if len(route) > 4 else ''
+
+
+def allowance_counters(text):
+    """The *_allowance_exceeded counters in ethtool -S output: packets a cloud NIC shaped."""
+    counters = {}
+    for line in text.splitlines():
+        name, _, value = line.partition(':')
+        if name.strip().endswith('_allowance_exceeded'):
+            counters[name.strip()] = int(value)
+    return counters
+
+
+def snapshot(pid, comms=(), nic=''):
     result = dict(t_wall=time.time(), monotonic=time.monotonic(), errors=[])
     for label, path in [('cpu', '/proc/stat'), ('netdev', '/proc/net/dev'),
                         ('snmp', '/proc/net/snmp'), ('softnet', '/proc/net/softnet_stat'),
@@ -59,6 +81,12 @@ def snapshot(pid, comms=()):
             result['process'] = None
     if comms:
         result['comm'] = comm_totals(set(comms))
+    if nic:
+        try:
+            stats = subprocess.run(['ethtool', '-S', nic], capture_output=True, text=True, timeout=1)
+            result['nic_allowance'] = allowance_counters(stats.stdout)
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            result['errors'].append(f'ethtool: {exc}')
     return result
 
 
@@ -72,13 +100,14 @@ def main():
                    help='also sum CPU, RSS and threads of processes with this comm (repeatable)')
     args = p.parse_args()
     next_metrics = 0
+    nic = default_interface() if shutil.which('ethtool') else ''
     print(json.dumps(dict(type='metadata', hostname=os.uname().nodename,
                           clock_ticks=os.sysconf('SC_CLK_TCK'), pid=args.pid,
                           comm=sorted(args.comm))), flush=True)
     end = time.monotonic() + args.duration
     while time.monotonic() < end and not args.stop_file.exists():
         start = time.monotonic()
-        sample = snapshot(args.pid, args.comm)
+        sample = snapshot(args.pid, args.comm, nic)
         if args.metrics_url and start >= next_metrics:
             try:
                 with urllib.request.urlopen(args.metrics_url, timeout=0.5) as response:
