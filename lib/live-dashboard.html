@@ -16,6 +16,13 @@ header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; m
 h1 { font-size: 18px; margin: 0; font-weight: 600; }
 h2 { font-size: 14px; margin: 24px 0 8px; font-weight: 600; }
 #state { color: var(--ink2); }
+#intent { margin: -4px 0 14px; }
+#intent p { margin: 0 0 4px; color: var(--ink2); }
+#note { font-style: italic; }
+#facts { display: flex; flex-wrap: wrap; gap: 2px 18px; margin: 6px 0 0; font-size: 13px; }
+#facts div { display: flex; gap: 6px; }
+#facts dt { color: var(--ink3); }
+#facts dd { margin: 0; }
 #tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 16px; }
 .tile { background: var(--panel); border-radius: 8px; padding: 10px 12px; }
 .tile .k { color: var(--ink2); font-size: 12px; }
@@ -42,7 +49,8 @@ th { color: var(--ink2); font-weight: 500; font-size: 12px; }
 </style>
 </head>
 <body>
-<header><h1>Load run</h1><span id="state">Connecting</span></header>
+<header><h1 id="title">Load run</h1><span id="state">Connecting</span></header>
+<section id="intent" aria-label="What this run tests" hidden><p id="purpose"></p><p id="note"></p><dl id="facts"></dl></section>
 <section id="tiles" aria-label="Current values"></section>
 <section id="charts"></section>
 <h2 id="hostsTitle">Hosts now</h2>
@@ -58,7 +66,7 @@ const CHARTS = [
   {id: 'gbps', title: 'Relay egress', unit: ' Gbps'},
   {id: 'mpps', title: 'Relay packets out', unit: ' Mpps'},
   {id: 'relaycpu', title: 'Relay CPU', unit: '%', max: 100},
-  {id: 'cores', title: 'Relay process cores', unit: ''},
+  {id: 'cores', title: 'Relay process cores', unit: '', digits: 1},
   {id: 'load', title: 'Load hosts busy', unit: '%', max: 100, ref: () => meta.load_limit, refLabel: 'limit'},
 ];
 let meta = {hosts: []}, seq = 0, hostRows = {}, toolRows = {}, totals = {}, runName = '', lastArrival = 0, hover = null, dirty = true;
@@ -73,6 +81,7 @@ function ingest(rows) {
   for (const r of rows) {
     seq = Math.max(seq, r.seq || 0);
     if (r.kind === 'run') { reset(r.name); continue; }
+    if (r.kind === 'point') { meta.point = r.info; dirty = true; continue; }
     if (r.kind === 'host') {
       (hostRows[r.host] = hostRows[r.host] || []).push(r);
       const t = totals[r.host] = totals[r.host] || {udp: 0, allowance: 0};
@@ -152,6 +161,7 @@ const nearest = (pts, t) => {
   while (lo < hi) { const mid = (lo + hi) >> 1; if (pts[mid][0] < t) lo = mid + 1; else hi = mid; }
   return lo > 0 && t - pts[lo - 1][0] < pts[lo][0] - t ? pts[lo - 1] : pts[lo];
 };
+const digits = c => c.digits ?? (c.unit === ' Gbps' || c.unit === ' Mpps' ? 2 : 0);
 function elapsed(s) { const m = Math.floor(s / 60); return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`; }
 
 function draw(chart, dom, cross, focus) {
@@ -196,7 +206,7 @@ function draw(chart, dom, cross, focus) {
     for (const s of series) { const p = nearest(s.pts, hover); if (p) { g.fillStyle = css(s.color); g.strokeStyle = css('--surface'); g.lineWidth = 2; g.beginPath(); g.arc(X(p[0]), Y(p[1]), 4, 0, 7); g.fill(); g.stroke(); } }
   }
   const last = series.map(s => { const p = focus == null ? s.pts[s.pts.length - 1] : nearest(s.pts, focus); return p ? p[1] : null; });
-  chart.now.textContent = series.length === 1 && last[0] != null ? `${fmt(last[0], chart.unit === ' Gbps' || chart.unit === ' Mpps' ? 2 : 0)}${chart.unit}` : '';
+  chart.now.textContent = series.length === 1 && last[0] != null ? `${fmt(last[0], digits(chart))}${chart.unit}` : '';
   chart.legend.replaceChildren(...(series.length > 1 ? series.map((s, i) => {
     const e = document.createElement('span'), m = document.createElement('i');
     m.style.background = css(s.color); e.append(m, `${s.name}${last[i] != null ? ` ${fmt(last[i], 0)}${chart.unit}` : ''}`);
@@ -252,8 +262,21 @@ function status() {
   $('state').textContent = meta.mode === 'replay' ? `Replay of ${meta.source.split('/').filter(Boolean).pop()}${span}`
     : age == null ? `Live, ${n} hosts, waiting for a run` : age > 15 ? `Live, ${n} hosts, no new data for ${Math.round(age)} s${span}` : `Live, ${n} hosts${span}`;
 }
+function intent() {
+  const p = meta.point;
+  $('intent').hidden = !p;
+  $('title').textContent = p ? p.title : 'Load run';
+  if (!p) return;
+  for (const k of ['purpose', 'note']) { $(k).textContent = p[k] || ''; $(k).hidden = !p[k]; }
+  const d = domain(), facts = [...p.facts];
+  if (p.seconds) facts.push(['Elapsed', `${d ? elapsed(d[1] - d[0]) : '0:00'} of ${elapsed(p.seconds)}`]);
+  $('facts').replaceChildren(...facts.map(([k, v]) => {
+    const e = document.createElement('div'), dt = document.createElement('dt'), dd = document.createElement('dd');
+    dt.textContent = k; dd.textContent = v; e.append(dt, dd); return e;
+  }));
+}
 function render() {
-  status();
+  status(); intent();
   if (!dirty) return;
   dirty = false;
   const dom = domain(), cross = crossing(), focus = focusTime();
@@ -278,7 +301,7 @@ function hoverAt(c, ev) {
   hover = c.dom[0] + Math.max(0, Math.min(1, (x - c.L) / (c.W - c.L - c.R))) * (c.dom[1] - c.dom[0]);
   dirty = true; render();
   const tip = $('tip');
-  const lines = c.series.map(s => { const p = nearest(s.pts, hover); return p ? `${s.name}: ${fmt(p[1], c.unit === ' Gbps' || c.unit === ' Mpps' ? 2 : 0)}${c.unit}` : null; }).filter(Boolean);
+  const lines = c.series.map(s => { const p = nearest(s.pts, hover); return p ? `${s.name}: ${fmt(p[1], digits(c))}${c.unit}` : null; }).filter(Boolean);
   tip.textContent = `${elapsed(hover - c.dom[0])}  ${lines.join('  ')}`;
   tip.style.display = 'block';
   tip.style.left = `${Math.min(ev.clientX + 12, innerWidth - tip.offsetWidth - 8)}px`;

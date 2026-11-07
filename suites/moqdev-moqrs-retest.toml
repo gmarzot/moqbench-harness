@@ -25,10 +25,9 @@ join_s = 5
 stagger_s = 0.01
 stop_at_ceiling = 1
 
-# moq-rs stalled at larger steps, and its one crossing on 11-04 recovered, so
-# this ramps slowly and runs on past a crossing.
 [[test]]
 relay = "cf"
+note = "Ramps slowly and runs on past a crossing, since moq-rs stalled at larger steps"
 type = "capacity"
 tool = "aiomoqt"
 video = "720p"
@@ -37,9 +36,9 @@ seconds = 400
 step_subs = 10
 join_s = 5
 
-# moq-rs only used about 3 cores on 11-04; more workers may just add context switches.
 [[test]]
 relay = "cf"
+note = "Whether moq-rs does better with fewer workers than relay vCPUs"
 type = "capacity"
 tool = "aiomoqt"
 video = "720p"
@@ -49,9 +48,9 @@ seconds = 400
 step_subs = 10
 join_s = 5
 
-# Whether moq-dev's crossings depend on the ramp: slower, and past any crossing.
 [[test]]
 relay = "moqdev"
+note = "Whether moq-dev's crossings depend on the ramp: slower, and past any crossing"
 type = "capacity"
 tool = "aiomoqt"
 video = "720p"

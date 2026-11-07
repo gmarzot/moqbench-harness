@@ -372,6 +372,9 @@ per-subscriber moq-bench logs and `moqbench.csv`), and `versions.txt`.
 
 The page shows subscribers, worst latency against the SLO, relay egress, packets
 and CPU, load-host busy against the 85% limit, and drop and NIC allowance counters.
+For a sweep point its header names the plan and its description, the test's
+`note` if the suite gives one, the relay and build, tool and K, video and rate,
+draft, ramp, bound, and elapsed time against the limit.
 It adds nothing to a host beyond one ssh connection following the files a run
 already writes with a niced `tail`, so it can attach or detach at any time and a
 failure cannot stop the run. It binds to localhost only.
