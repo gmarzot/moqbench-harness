@@ -132,6 +132,31 @@ class Plans(unittest.TestCase):
         self.assertEqual(env['THREADS'], (48, 'relay vCPUs'))
         self.assertEqual(env['PUB_HOST'], ('client:2', 'deployment'))
 
+    def test_source_relays_need_a_ref_and_take_their_own_tests(self):
+        suite = config.Suite('s', dict(test=[
+            dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=10, seconds=60, relay='moqdev'),
+            dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=10, seconds=60, relay='cf', step_subs=10),
+        ]))
+        data = dict(deployment='aws-c7gn12x', relays=['moqdev:src', 'cf:src'], suites=[suite])
+        with self.assertRaises(config.ConfigError):
+            config.Plan('p', data)
+        plan = config.Plan('p', dict(data, builds=dict(moqdev='abc', moq_rs='def')))
+        points = plan.points(suite)
+        self.assertEqual([p['run'].split('-')[1] for p in points], ['moqdev48', 'cf48'])
+        self.assertEqual([p['env']['RELAY'][0] for p in points], ['moqdev', 'cf'])
+        self.assertEqual([p['env']['STEP_SUBS'][0] for p in points], [250, 10])
+        self.assertEqual({p['build'] for p in points}, {'src'})
+
+    def test_a_test_can_set_its_own_relay_threads(self):
+        plan = config.load_plan('moqdev-moqrs-retest')
+        cf = [p for p in plan.points(plan.suites[0]) if p['env']['RELAY'][0] == 'cf']
+        self.assertEqual([p['env']['THREADS'] for p in cf], [(48, 'relay vCPUs'), (3, 'test')])
+        self.assertEqual([p['run'] for p in cf], ['aio-cf48-2b-720-12x', 'aio-cf3-2b-720-12x'])
+
+    def test_moqx_points_do_not_set_relay(self):
+        plan = config.load_plan('moqx-c7gn12x-720p-sockets')
+        self.assertNotIn('RELAY', plan.points(plan.suites[0])[0]['env'])
+
     def test_sweep_text_is_a_plan_sweep_reads(self):
         plan = config.load_plan('moqx-c7gn12x')
         with tempfile.TemporaryDirectory() as d:
@@ -157,9 +182,9 @@ class Plans(unittest.TestCase):
         with self.assertRaisesRegex(config.ConfigError, 'needs 2 subscriber'):
             config.load_plan('x', tree)
 
-    def test_a_relay_other_than_moqx_is_refused(self):
+    def test_a_relay_moqbench_cannot_run_is_refused(self):
         tree = self.in_tree(self.DEPLOYMENT, self.SUITE % (1, 'moqperf'),
-                            'deployment = "x"\nsuites = ["x"]\nrelays = ["cf:src"]\n')
+                            'deployment = "x"\nsuites = ["x"]\nrelays = ["quinn:src"]\n')
         with self.assertRaisesRegex(config.ConfigError, 'moqx'):
             config.load_plan('x', tree)
 
