@@ -316,7 +316,8 @@ wait"
     fi
     PUB_CMD="$PY $BENCH moqt://$PUB_ADDR:$RELAY_PORT$URLPATH $COMMON --role pub -t $(( DUR + 30 ))"
     sub_cmd() {
-      echo "$PY $BENCH moqt://$RPRIV:$RELAY_PORT$URLPATH $COMMON --role sub \
+      # Background jobs start with SIGINT ignored; the first host's ceiling ends the others with it.
+      echo "env --default-signal=INT $PY $BENCH moqt://$RPRIV:$RELAY_PORT$URLPATH $COMMON --role sub \
 --start-subs $STEP_SUBS --step-subs $STEP_SUBS --max-subs $2 $FIXED_FLAG -j $JOIN -S $STAGGER \
 --sub-filter $SUB_FILTER $SUB_LIMITS $SUB_EXIT --report /tmp/loadreport.csv -t $DUR"
     }

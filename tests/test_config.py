@@ -1,3 +1,5 @@
+import importlib.machinery
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -5,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,6 +171,19 @@ class Plans(unittest.TestCase):
 
 
 class Command(unittest.TestCase):
+    def test_missing_builds_names_only_absent_files(self):
+        loader = importlib.machinery.SourceFileLoader('moqbench_cli', str(ROOT / 'bin/moqbench'))
+        spec = importlib.util.spec_from_loader('moqbench_cli', loader)
+        cli = importlib.util.module_from_spec(spec)
+        loader.exec_module(cli)
+        with tempfile.TemporaryDirectory() as d:
+            present = Path(d) / 'moqx.tar.gz'
+            present.write_bytes(b'x')
+            absent = Path(d) / 'gone.tar.gz'
+            plan = lambda path: types.SimpleNamespace(builds={'moqx': str(path)}, relays=['moqx:pgo'])
+            self.assertEqual(cli.missing_builds(plan(present)), [])
+            self.assertEqual(cli.missing_builds(plan(absent)), [str(absent)])
+
     def moqbench(self, *args):
         return subprocess.run([str(ROOT / 'bin/moqbench'), *args], capture_output=True, text=True, timeout=60,
                               env={k: v for k, v in os.environ.items() if not k.startswith('AWS')})

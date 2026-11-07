@@ -22,6 +22,9 @@ import subprocess
 import sys
 import time
 
+if sys.version_info < (3, 11):
+    sys.exit(f'moqbench needs Python 3.11 or newer; this is {sys.version.split()[0]}')
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lib'))
 import config  # noqa: E402
@@ -172,6 +175,11 @@ def tarball_env(plan):
     return env
 
 
+def missing_builds(plan):
+    """Local build files the plan names that are not on disk."""
+    return [path for path in tarball_env(plan).values() if not Path(path).is_file()]
+
+
 def run_suites(plan, suites, label, dry, started, extra_env):
     """One bin/sweep.sh per suite; a failed suite does not stop the next. Returns the failures."""
     failed = []
@@ -205,6 +213,11 @@ def do_run(args):
     if not suites:
         raise SystemExit(f'--only matches none of {", ".join(s.name for s in plan.suites)}')
     dry = args.dry_run
+    missing = missing_builds(plan)
+    if missing and not dry:
+        raise SystemExit(f'{plan.name}: no build at {", ".join(missing)}; nothing was started')
+    for path in missing:
+        print(f'warning: no build at {path}; a real run stops here')
     describe_plan(plan, None if args.no_price else hourly_usd(dep))
     started = time.time()
     hosts = static_env(dep)
