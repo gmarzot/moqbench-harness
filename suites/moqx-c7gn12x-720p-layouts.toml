@@ -1,0 +1,47 @@
+description = "720p under moqperf and aiomoqt's picoquic layouts, ending at each ceiling"
+requires = { subscriber = 2, publisher = 1 }
+
+[[test]]
+type = "capacity"
+tool = "moqperf"
+video = "720p"
+max_per_box = 12000
+seconds = 200
+
+# One picoquic worker per process: K subs share one source port.
+[[test]]
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 12000
+seconds = 300
+step_subs = 50
+join_s = 1
+stagger_s = 0.01
+stop_at_ceiling = 1
+suffix = "k50"
+
+[[test]]
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 12000
+seconds = 300
+step_subs = 100
+join_s = 2
+stagger_s = 0.01
+stop_at_ceiling = 1
+suffix = "k100"
+
+# One picoquic worker per subscriber, at the same ramp.
+[[test]]
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 12000
+seconds = 300
+step_subs = 250
+join_s = 5
+aiomoqt_extra = "--worker-per-sub"
+stop_at_ceiling = 1
+suffix = "old"
