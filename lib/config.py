@@ -198,7 +198,7 @@ def write_tfvars(deployment, root=ROOT):
 
 class Suite:
     KEYS = {'description', 'requires', 'test'}
-    TEST_KEYS = {'type', 'tool', 'video', 'max_per_box', 'seconds', 'suffix', 'subscriber_nodes', 'relay', 'threads', *SETTINGS}
+    TEST_KEYS = {'type', 'tool', 'video', 'max_per_box', 'seconds', 'suffix', 'subscriber_nodes', 'relay', 'threads', 'note', *SETTINGS}
 
     def __init__(self, name, data):
         self.name = name
@@ -216,6 +216,8 @@ class Suite:
         for i, test in enumerate(self.tests):
             at = f'{where}: test {i + 1}'
             only_keys(at, test, self.TEST_KEYS)
+            if not isinstance(test.get('note', ''), str) or '\n' in test.get('note', ''):
+                raise ConfigError(f'{at}: note must be one line of text')
             if test.get('type') not in TEST_TYPES:
                 raise ConfigError(f'{at}: type must be one of {", ".join(sorted(TEST_TYPES))}')
             if test.get('tool') not in TOOLS:
@@ -305,14 +307,18 @@ class Plan:
                     if part:
                         run += f'-{part}'
                 out.append(dict(run=run, type=test['type'], tool=TOOLS[test['tool']], build=build, shape=test['video'],
-                                max_per_box=test['max_per_box'], seconds=test['seconds'], env=env))
+                                max_per_box=test['max_per_box'], seconds=test['seconds'], note=test.get('note', ''),
+                                env=env))
         return out
 
     def sweep_text(self, suite):
-        """The suite as a bin/sweep.sh plan; every point states its whole environment."""
+        """The suite as a bin/sweep.sh plan; every point states its whole environment. Comments carry descriptions and notes."""
         lines = [f'# Written by moqbench from plans/{self.name}.toml and suites/{suite.name}.toml.']
+        lines += [f'# {k}: {" ".join(v.split())}' for k, v in (('plan', self.description), ('suite', suite.description)) if v]
         for point in self.points(suite):
             lines += [f'{var}={value}' for var, (value, _) in sorted(point['env'].items())]
+            if point['note']:
+                lines.append(f'# note: {point["note"]}')
             lines.append(f'{point["tool"]} {point["build"]} {point["shape"]} {point["max_per_box"]} {point["seconds"]} {point["run"]}')
         return '\n'.join(lines) + '\n'
 

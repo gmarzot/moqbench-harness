@@ -16,6 +16,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -30,6 +31,9 @@ sys.path.insert(0, str(ROOT / 'lib'))
 import telemetry  # noqa: E402
 
 PAGE = ROOT / 'lib/live-dashboard.html'
+RESULTS = ROOT / 'results'
+SHAPES = json.loads((ROOT / 'scenarios/shapes.json').read_text())
+WRITTEN_BY = re.compile(r'Written by moqbench from plans/(.+?)\.toml and suites/(.+?)\.toml')
 MONITOR_FILES = '/tmp/moqbench-monitor-*.jsonl'
 TOOL_LOG = '/tmp/loadsub.log'
 MAX_ROWS = 40000  # about three hours of one-second samples from three hosts
@@ -69,6 +73,16 @@ class Store:
             self.rows.clear()
             self.seq += 1
             self.rows.append(dict(kind='run', name=name, seq=self.seq))
+            if self.meta.get('point'):
+                self.seq += 1
+                self.rows.append(dict(kind='point', info=self.meta['point'], seq=self.seq))
+            self.cond.notify_all()
+
+    def set_point(self, info):
+        with self.cond:
+            self.meta['point'] = info
+            self.seq += 1
+            self.rows.append(dict(kind='point', info=info, seq=self.seq))
             self.cond.notify_all()
 
     def since(self, seq):
@@ -107,6 +121,126 @@ def tool_row(line, year=2000):
         g = m.groups()
         return dict(subs=int(g[6]), latency_ms=float(g[11]), metric='slowest', resets=int(g[13]), stamp=g[:5])
     return None
+
+
+def sweep_plan(path):
+    """A sweep plan's header comments, and its points with the settings in force and their notes."""
+    header, points, env, note = {}, [], {}, ''
+    for line in Path(path).read_text().splitlines():
+        line = line.strip()
+        if line.startswith('#'):
+            text = line[1:].strip()
+            key, _, value = text.partition(': ')
+            written = WRITTEN_BY.search(text)
+            if key == 'note':
+                note = value
+            elif key in ('plan', 'suite') and not points:
+                header[key] = value
+            elif written:
+                header['plan_name'], header['suite_name'] = written.groups()
+            continue
+        setting = re.match(r'([A-Z_][A-Z0-9_]*)=(\S*)$', line)
+        fields = line.split('#')[0].split()
+        if setting:
+            env[setting[1]] = setting[2]
+        elif len(fields) == 6:
+            points.append(dict(run=fields[5], env=dict(env), note=note))
+            note = ''
+    return header, points
+
+
+def description(kind, name):
+    """A plan's or suite's description from the repo, for sweeps written before plans carried it."""
+    try:
+        import tomllib
+        return tomllib.loads((ROOT / f'{kind}s' / f'{name}.toml').read_text()).get('description', '')
+    except (ImportError, OSError, ValueError):
+        return ''
+
+
+def match(path, pattern):
+    try:
+        found = re.search(pattern, Path(path).read_text(errors='replace'), re.M)
+    except OSError:
+        return None
+    return found and found.group(1)
+
+
+def number(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def point_info(run_dir):
+    """What a sweep point tests and why, from the files the sweep writes before it starts."""
+    run_dir = Path(run_dir)
+    try:
+        pt = json.loads((run_dir / 'sweep-point.json').read_text())
+    except (OSError, ValueError):
+        return None
+    plan_file = run_dir.parent / 'plan'
+    header, points = sweep_plan(plan_file) if plan_file.exists() else ({}, [])
+    index = next((i for i, p in enumerate(points) if p['run'] == pt.get('run')), None)
+    here = points[index] if index is not None else {}
+    env = {**here.get('env', {}), **pt.get('env', {})}
+    plan = header.get('plan_name') or run_dir.parent.name.removeprefix('sweep-')
+    purpose = header.get('plan') or (description('plan', header['plan_name']) if 'plan_name' in header else '')
+    relay = pt.get('relay', 'moqx')
+    label = match(run_dir / 'run.txt', r'^== \S+ vs (\S+)') or relay
+    version = match(run_dir / 'versions.txt', rf'^{re.escape(relay)}:[ \t]*(\S+)')
+    if relay == 'moqx' and not version:
+        version = Path(pt.get('moqx_source') or 'release').name
+    boxes, shape, bound = pt.get('load_boxes', 1), pt.get('shape', ''), env.get('LATENCY_MS', '500')
+    mbps = SHAPES.get(shape, {}).get('nominal_mbps')
+    # The load commands as run, then the plan's settings.
+    sub = match(run_dir / 'run-settings.txt', r'^subscriber_command_per_host=(.*)$') or ''
+    flag = lambda pattern, key: number(next(iter(re.findall(pattern, sub)), None) or env.get(key))  # noqa: E731
+    if pt.get('tool') == 'mp':
+        each = flag(r'--subscriber_ramp=(\S+)', 'MP_RAMP')
+        tool = f'moqperf, {env.get("MP_THREADS", "32")} threads per host'
+        ramp = each * boxes if each else None
+        stop = f'slowest object over {bound} ms, or a reset'
+    else:
+        step, join = flag(r'--step-subs (\S+)', 'STEP_SUBS'), flag(r' -j (\S+)', 'JOIN')
+        tool = f'aiomoqt, K={step:g} per worker' if step else 'aiomoqt'
+        ramp = step / join * boxes if step and join else None
+        stop = f'worst-sub p90 over {bound} ms; ' + (
+            'the first ceiling ends the run' if env.get('STOP_AT_CEILING') == '1' else 'runs to the time limit')
+    facts = [
+        ('Plan', f'{plan}, point {index + 1} of {len(points)}' if index is not None else plan),
+        ('Relay', ' '.join(filter(None, (label, version))) + (f', {env["THREADS"]} threads' if env.get('THREADS') else '')),
+        ('Tool', tool),
+        ('Video', f'{shape}, {mbps:g} Mbps per subscriber' if mbps else shape),
+        ('Draft', env.get('DRAFT', '16')),
+        ('Ramp', f'{ramp:g} subscribers/s' if ramp else 'n/a'),
+        ('Bound', stop),
+    ]
+    return dict(run=pt.get('run'), title=f'{label}, {shape}', purpose=purpose, note=here.get('note', ''),
+                seconds=pt.get('duration_s'), facts=facts)
+
+
+def current_point(results=RESULTS):
+    """The sweep point now running: the newest sweep-point.json whose run.txt has no exit status yet."""
+    try:
+        newest = max(Path(results).glob('sweep-*/*/sweep-point.json'), key=lambda p: p.stat().st_mtime)
+    except (ValueError, OSError):
+        return None
+    try:
+        if 'run_exit_status=' in (newest.parent / 'run.txt').read_text(errors='replace'):
+            return None
+    except OSError:
+        pass
+    return point_info(newest.parent)
+
+
+def follow_points(store, stop, results=RESULTS):
+    while not stop.is_set():
+        info = current_point(results)
+        if info and info != store.meta.get('point'):
+            store.set_point(info)
+        stop.wait(5)
 
 
 class Host:
@@ -193,6 +327,7 @@ def attach(inventory, store, stop, control):
     hosts = [('relay', 'relay', inv['relay']['public'])]
     hosts += [(f'load-{i + 1}', 'load', c['public']) for i, c in enumerate(inv['clients'])]
     store.meta['hosts'] = [dict(name=n, role=r) for n, r, _ in hosts]
+    threading.Thread(target=follow_points, args=(store, stop), daemon=True).start()
     for name, role, address in hosts:
         Host(name, role, address, ssh, store, stop).start()
 
@@ -201,6 +336,9 @@ def replay(run_dir, store):
     """Load a finished run's saved telemetry and tool logs."""
     run_dir = Path(run_dir)
     store.new_run(run_dir.name)
+    info = point_info(run_dir)
+    if info:
+        store.set_point(info)
     hosts, offsets = [], {}
     for path in sorted(run_dir.glob('telemetry-*.jsonl')):
         stem = path.stem.removeprefix('telemetry-')

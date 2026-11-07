@@ -164,6 +164,21 @@ class Plans(unittest.TestCase):
             path.write_text(plan.sweep_text(plan.suites[0]))
             self.assertEqual(set(scenario_points(path)), {p['run'] for p in plan.points(plan.suites[0])})
 
+    def test_descriptions_and_notes_ride_as_comments(self):
+        plan = config.load_plan('moqdev-moqrs-retest')
+        text = plan.sweep_text(plan.suites[0])
+        self.assertIn(f'# plan: {plan.description}\n', text)
+        self.assertIn('# note: Whether moq-rs does better with fewer workers than relay vCPUs\naio src 720p', text)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'x.plan'
+            path.write_text(text)
+            self.assertEqual(set(scenario_points(path)), {p['run'] for p in plan.points(plan.suites[0])})
+
+    def test_a_note_is_one_line(self):
+        test = dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=10, seconds=10, note='a\nb')
+        with self.assertRaisesRegex(config.ConfigError, 'one line'):
+            config.Suite('s', dict(test=[test]))
+
     def in_tree(self, deployment_text, suite_text, plan_text):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d)
