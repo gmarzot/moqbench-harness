@@ -1,0 +1,29 @@
+# One relay and two load hosts, AmpereOne, in one availability domain. Your
+# account settings, with an Arm image, go in deployments/oci.local.toml.
+provider     = "oci"
+region       = "us-chicago-1"
+arch         = "arm64"
+tag          = "a2"
+network_type = "VFIO"
+
+[[nodes]]
+name      = "relay"
+instance  = "VM.Standard.A2.Flex"
+ocpus     = 78
+memory_gb = 312
+vcpus     = 156
+roles     = ["relay"]
+
+[[nodes]]
+name      = "load-1"
+instance  = "VM.Standard.A2.Flex"
+ocpus     = 50
+memory_gb = 200
+roles     = ["subscriber"]
+
+[[nodes]]
+name      = "load-2"
+instance  = "VM.Standard.A2.Flex"
+ocpus     = 50
+memory_gb = 200
+roles     = ["subscriber", "publisher"]

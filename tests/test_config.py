@@ -75,6 +75,12 @@ class Deployments(unittest.TestCase):
         self.assertEqual((v['relay_shape'], v['relay_ocpus'], v['relay_memory_gb'], v['client_shape'], v['client_ocpus']),
                          ('VM.A', 8, 16, 'VM.A', 4))
 
+    def test_network_type_reaches_oci_only(self):
+        n = [dict(name='r', instance='VM.Standard.A2.Flex', roles=['relay', 'subscriber', 'publisher'])]
+        self.assertEqual(config.Deployment('d', dict(provider='oci', network_type='VFIO', nodes=n)).tfvars()['network_type'], 'VFIO')
+        with self.assertRaises(config.ConfigError):
+            config.Deployment('d', dict(provider='aws', network_type='VFIO', nodes=n))
+
     def test_tfvars_refuse_to_replace_a_file_written_by_hand(self):
         with tempfile.TemporaryDirectory() as d:
             envs = Path(d) / 'aws/envs'
