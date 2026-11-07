@@ -6,7 +6,7 @@ type = "capacity"
 tool = "moqperf"
 video = "720p"
 max_per_box = 12000
-seconds = 200
+seconds = 550
 
 # One picoquic worker per process: K subs share one source port.
 [[test]]

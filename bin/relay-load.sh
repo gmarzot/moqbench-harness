@@ -303,7 +303,7 @@ wait"
     BENCH="-m aiomoqt.tools.adaptive_bench"
     FIXED_FLAG=""
     SUB_EXIT=""
-    [[ ${STOP_AT_CEILING:-0} != 1 ]] || SUB_EXIT="--exit ceiling"
+    [[ ${STOP_AT_CEILING:-0} != 1 ]] || SUB_EXIT="--exit max"
     if [[ $TOOL == fixed ]]; then
       [[ $SUBS =~ ^[1-9][0-9]*$ && $STEP_SUBS =~ ^[1-9][0-9]*$ && $DUR =~ ^[1-9][0-9]*$ ]] || {
         echo "fixed requires positive integer SUBS, STEP_SUBS and duration" >&2; exit 2;
