@@ -1,18 +1,18 @@
                  Target        │           Actual           │   Latency (worst sub)    │
     time      BW        Nsub   │  Tx       Rx        Nsub   │  mean    p90     jitter  │  loss   action
 ──────────────────────────────────────────────────────────────────────────────────────────────────────
-    160s     16Gbps     3750   │  16Gbps   16Gbps    3750   │  79ms    266ms   17ms    │  0.0%   ramp
-    170s     17Gbps     4000   │  17Gbps   18Gbps    4000   │  97ms    310ms   17ms    │  0.0%   ramp
-    180s     18Gbps     4250   │  18Gbps   18Gbps    4250   │  168ms   420ms   18ms    │  0.0%   hold
-    190s     18Gbps     4250   │  18Gbps   18Gbps    4250   │  179ms   458ms   18ms    │  0.0%   hold
-    200s     18Gbps     4250   │  18Gbps   18Gbps    4250   │  146ms   427ms   19ms    │  0.0%   hold
-    210s     18Gbps     4250   │  18Gbps   19Gbps    4250   │  138ms   405ms   19ms    │  0.0%   hold
-    220s     18Gbps     4250   │  18Gbps   18Gbps    4250   │  121ms   400ms   19ms    │  0.0%   hold
-    230s     18Gbps     4250   │  18Gbps   18Gbps    4250   │  152ms   419ms   19ms    │  0.0%   hold
-    240s     18Gbps     4250   │  18Gbps   19Gbps    4250   │  159ms   371ms   20ms    │  0.0%   hold
-    250s     18Gbps     4250   │  18Gbps   18Gbps    4250   │  135ms   371ms   19ms    │  0.0%   hold
-    260s     18Gbps     4250   │  18Gbps   18Gbps    4250   │  195ms   460ms   19ms    │  0.0%   hold
-    270s     18Gbps     4250   │  18Gbps   18Gbps    4250   │  156ms   456ms   20ms    │  0.0%   hold
-    280s     18Gbps     4250   │  18Gbps   19Gbps    4250   │  164ms   378ms   21ms    │  0.0%   hold
-    290s     18Gbps     4250   │  18Gbps   18Gbps    4250   │  175ms   421ms   20ms    │  0.0%   hold
-    300s     18Gbps     4250   │  18Gbps   18Gbps    4250   │  176ms   462ms   21ms    │  0.0%   hold
+    160s     2.0Gbps    1000   │  2.0Gbps  2.0Gbps    1000   │  100ms    200ms    10ms    │  0.0%   ramp
+    170s     2.2Gbps    1100   │  2.2Gbps  2.2Gbps    1100   │  110ms    250ms    10ms    │  0.0%   ramp
+    180s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  100ms    300ms    10ms    │  0.0%   hold
+    190s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  103ms    310ms    10ms    │  0.0%   hold
+    200s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  106ms    320ms    10ms    │  0.0%   hold
+    210s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  109ms    330ms    10ms    │  0.0%   hold
+    220s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  112ms    340ms    10ms    │  0.0%   hold
+    230s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  115ms    350ms    10ms    │  0.0%   hold
+    240s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  118ms    360ms    10ms    │  0.0%   hold
+    250s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  121ms    370ms    10ms    │  0.0%   hold
+    260s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  124ms    380ms    10ms    │  0.0%   hold
+    270s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  127ms    390ms    10ms    │  0.0%   hold
+    280s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  130ms    400ms    10ms    │  0.0%   hold
+    290s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  133ms    410ms    10ms    │  0.0%   hold
+    300s     2.4Gbps    1200   │  2.4Gbps  2.4Gbps    1200   │  136ms    420ms    10ms    │  0.0%   hold

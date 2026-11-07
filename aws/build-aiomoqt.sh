@@ -3,7 +3,7 @@
 # Uses a uv-managed CPython so no system python3-dev / ensurepip is required.
 #
 # Optional: OPENSSL_ROOT_DIR=/usr/local/openssl-3.5.5 to link a current OpenSSL.
-# Ubuntu 22.04 ships 3.0.2, which measures ~7% slower on this workload; QUIC
+# Ubuntu 22.04 ships 3.0.2, which measures slower on this workload; QUIC
 # does an AEAD seal plus header protection per packet, so libcrypto's
 # per-operation cost is per-packet cost.
 set -euo pipefail

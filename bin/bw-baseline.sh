@@ -13,11 +13,11 @@
 # UDP_RATE x UDP_PROCS), and the loss column becomes real loss at that rate.
 #
 #   DUR=7 ./bin/bw-baseline.sh                    # ~60 s per node instead of ~90
-#   UDP_RATE=1.6G ./bin/bw-baseline.sh            # loss at a sustainable 6.4 Gbps
+#   UDP_RATE=1.6G ./bin/bw-baseline.sh            # loss at 1.6 Gbps per sender
 #   UDP_PROCS=8 UDP_RATE=0.8G ./bin/bw-baseline.sh   # same rate, half the load per receiver
 #
 # A UDP receiver here is one iperf3 thread doing a recv per datagram; past
-# ~140k packets/s it overflows its own socket, which shows as UdpRcvbufErrors on
+# what one core can drain it overflows its own socket, which shows as UdpRcvbufErrors on
 # the receiving host: the tool's loss, not the path's. UDP tests therefore get a
 # 32 MB socket buffer (UDP_WINDOW, iperf3 -w), and more processes at a lower
 # rate each keep every receiver within what one core can drain.

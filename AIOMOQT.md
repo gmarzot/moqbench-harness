@@ -38,19 +38,11 @@ payload-timestamp change took on, handled more carefully.
 
 ## Verified working
 
-From the laptop against a moqx relay on Linode, ramping 4 → 40 subscribers:
+From a laptop against a moqx relay, ramping to `--max-subs`. Each row shows
+offered against achieved, p50/p90, jitter, loss, and the controller's state; the
+run stops at `--max-subs`, not at a relay limit.
 
-```
-   10s    16Mbps     8    │  16Mbps    8   │  42ms   47ms   3.0ms  │ 0.0%   ramp
-   28s    64Mbps    32    │  65Mbps   32   │  51ms   50ms   2.8ms  │ 0.0%   ramp
-   34s    80Mbps    40    │  81Mbps   40   │  44ms   48ms   2.6ms  │ 0.0%   max
-```
-
-Offered against achieved, p50/p90, jitter, loss, and the controller's state.
-It stopped at `--max-subs`, not at any relay limit — 40 × 2 Mbps is nothing.
-
-Its p90 of ~48 ms over a ~45 ms path matches what moqperf reports on the same
-path, which is the cross-check that matters: two unrelated stacks agreeing.
+Its p90 matches what moqperf reports on the same path, which is the cross-check that matters: two unrelated stacks agreeing.
 
 ```bash
 cd <your aiomoqt checkout>

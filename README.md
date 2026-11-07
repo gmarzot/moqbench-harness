@@ -43,10 +43,8 @@ available and are what `moqbench` calls.
 | `RUNBOOK.md` | Commands, including `relay-load.sh` for every load generator. |
 | `OCI-READINESS.md` | Generic OCI deployment prerequisites, path characterization and runtime checks. |
 | `STATE-AND-PLAN.md` | Generic harness status and next steps; deployment-specific journals remain local. |
-| `aws/AIOMOQT-FINDINGS.md` | Written for the aiomoqt maintainer: five issues, plus a correction withdrawing an earlier analysis that turned out to be link-limited. |
 | `aws/README.md` | The legacy AWS/Linode harness scripts — setup, running, and the gotchas that cost time. |
-| `PARITY.md` | What was equalised across relays. Read before quoting any cross-relay number. |
-| `aws/data/` | Retained CSVs from hosts that may be rebuilt. |
+| `PARITY.md` | What was equalised across relays. Read before comparing relays. |
 
 ## The one rule
 
@@ -58,8 +56,8 @@ iperf3 -c <peer> -p 4533 -u -b 0 -l 1400 -t 15             # both directions
 iperf3 -c <peer> -p 4533 -u -b 0 -l 1400 -t 15 -P 4        # scales with flows?
 ```
 
-A full day went into explaining an 880 Mbps "QUIC ceiling" that was a 1 Gbps
-link nobody had measured. Read the **receiver** line, use **1400 B** datagrams,
+A full day went into explaining a "QUIC ceiling" that was a link nobody had
+measured. Read the **receiver** line, use **1400 B** datagrams,
 and record the ceiling beside every number.
 
 ---

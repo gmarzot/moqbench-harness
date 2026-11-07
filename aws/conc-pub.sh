@@ -1,5 +1,5 @@
 #!/bin/bash
-# Is the ~860 Mbps single-publisher ceiling per-connection or per-host?
+# Is the single-publisher ceiling per-connection or per-host?
 # Run N publishers concurrently and sum achieved bitrate.
 #   per-connection limit -> aggregate scales with N
 #   host/link limit      -> aggregate stays flat, each gets ~ceiling/N

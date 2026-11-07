@@ -1,6 +1,6 @@
 # Relay parity audit
 
-Read before publishing any cross-relay number. Written 2026-08-23 from the
+Read before comparing relays. Written 2026-08-23 from the
 sources, not from documentation, with file references so each claim can be
 rechecked when the code moves.
 
@@ -48,9 +48,8 @@ Sources audited:
   Parity and realism agree here. A relay's ingest and edge legs cross the
   public internet, so ~1200 bytes is what those paths actually get; the jumbo
   figure is not a suppressed advantage but one that would not survive
-  deployment. Measured on the bandwidth flavour, MTU is worth 1.17x
-  (1529 vs 1304 Mbps/core) while object size is worth 2.9x (1304 vs 447) — so
-  the object shape, not the MTU, is what moves this number.
+  deployment. On the bandwidth flavour, object size moves per-core throughput far more than
+  MTU does, so the object shape, not the MTU, is what moves this number.
 
   Relay-to-relay links are the exception, being a controlled path where the
   MTU is a choice. That deserves its own flavour rather than being folded into
@@ -96,24 +95,6 @@ SO_REUSEPORT paths. Unset leaves the kernel default alone. Verified with
 Both moq-dev binaries were rebuilt and deployed; the previous ones are kept
 beside them as `.prev`.
 
-## 6. Validation, 2026-08-23
-
-All four relays at parity settings, 200 subscribers on a 2-core dev pair.
-Nothing is near saturation here — this shows the settings work, not capacity:
-
-| relay | Mbps/core | proc cores | p99 |
-|---|---|---|---|
-| moqx | 447 | 0.38 | 23 ms |
-| cf-moq-rs | 353 | 0.51 | 22 ms |
-| moq-dev quinn | **646** | **0.25** | 0 ms |
-| moq-dev quiche | 394 | 0.43 | 0 ms |
-
-moq-dev/quinn is the most CPU-efficient of the four at this load. That is the
-opposite of the assumption behind this whole exercise, and it may well reverse
-under fan-out where quinn's single socket has to serve every subscriber — but
-it is recorded here so the capacity run tests the claim rather than confirming
-a prior.
-
 ## 8. Latency is unmeasurable for moq-dev - a private extension ID, not a moq-dev gap
 
 **Any latency-gated result for moq-dev is invalid until this is resolved.**
@@ -127,7 +108,7 @@ measurement at all, because `latencyObjects` never increments.
 
 Isolated with a controlled swap: the same publisher, the same explicitly
 announced namespace, and the same `--delivery_timeout 0`, pointed at **moqx**,
-reports **5.6 ms**. So the publisher sends it and moq-dev does not deliver it.
+reports latency normally. So the publisher sends it and moq-dev does not deliver it.
 
 The cause is narrower than "moq-dev drops extensions", which was the first
 conclusion here and was wrong. moq-dev does implement object extensions and
@@ -154,10 +135,9 @@ Consequences:
   extensions to be forwarded end to end.
 
 Until fixed, do not report a latency-gated capacity number for moq-dev, and say
-plainly that its latency is unmeasured rather than zero. The first 50ms run
-showed why: moqx and cf converged at the SLO boundary (489ms and 502ms against
-a 512ms budget) while moq-dev/quinn ran on to 2062 subscribers because nothing
-could stop it. That 2062 is the absence of a measurement, not a capacity.
+plainly that its latency is unmeasured rather than zero. Without a latency
+gate, a moq-dev run ramps on until something else stops it, and the count it
+reaches is the absence of a measurement, not a capacity.
 
 The workaround now in the harness is a **delivery-rate gate**: the publisher
 emits on a fixed clock (one object every OBJ_DELAY_MS), so each subscriber
@@ -166,29 +146,6 @@ keep up delivers fewer. It needs no extension, works for every relay, and is
 reported as `obj_per_sub`. It is coarser than latency - it catches falling
 behind, not queueing delay - so it complements the SLO rather than replacing
 it.
-
-## 7a. Four-way, Linode pair, 2026-08-24
-
-600 subscribers, 4 relay threads, fanout flavour (3788 B, ~0.9 Mbps/sub), moqx
-tuned with `--send-pkts 48`. Relay and client on the Linode pair,
-8 vCPU each, RTT 0.485 ms. Client peaked at 31% busy, so the relay is the limit.
-
-| relay | Mbps/core | proc cores | p99 | hottest core |
-|---|---|---|---|---|
-| moqx (mvfst) | 353.5 | 1.63 | 121 ms | 29% |
-| cf-moq-rs (quinn) | 295.7 | 2.25 | 154 ms | 36% |
-| moq-dev (quinn) | **451.0** | **1.19** | unmeasured (§8) | 24% |
-| moq-dev (quiche) | 205.0 | 2.71 | unmeasured (§8) | 68% |
-
-moq-dev/quinn is again the most CPU-efficient, matching the 2-core dev-pair result in §6
-(quinn 646 vs moqx 447 Mbps/core at 200 subs) on different hardware at a
-different load. Two independent observations now point the same way, so this is
-not noise - though §8 means moq-dev is doing less work than the others, and how
-much of the gap that explains is not yet known.
-
-quiche is the outlier in the other direction: 2.71 cores for the same traffic,
-with one core at 68% while the host averaged 35% - the single-core signature
-the per-core sampling was added to catch.
 
 ## 7. Trap found while wiring this up
 
