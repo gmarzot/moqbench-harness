@@ -171,7 +171,8 @@ def tarball_env(plan):
         path = Path(moqx)
         path = path if path.is_absolute() else ROOT / path
         for relay in plan.relays:
-            env[{'pgo': 'MOQX_PGO_TARBALL', 'reg': 'MOQX_REG_TARBALL'}[relay.partition(':')[2]]] = str(path)
+            if relay.startswith('moqx:'):
+                env[{'pgo': 'MOQX_PGO_TARBALL', 'reg': 'MOQX_REG_TARBALL'}[relay.partition(':')[2]]] = str(path)
     return env
 
 
@@ -241,6 +242,12 @@ def do_run(args):
                 provision['MOXYGEN_RELEASE'] = builds['moxygen']
             if call(['./bin/testbed-provision.sh'], env=provision, dry=dry):
                 raise SystemExit('provisioning failed')
+            for relay in plan.relays:
+                name = relay.partition(':')[0]
+                if name in config.SOURCE_RELAYS:
+                    ref = builds[config.SOURCE_RELAYS[name]]
+                    if call(['./bin/relay-build.sh', name, ref], env=hosts, dry=dry):
+                        raise SystemExit(f'building {name} failed')
             if call(['./bin/testbed-tune.sh'], env=dict(RPS=rps, **hosts), dry=dry):
                 raise SystemExit('tuning failed')
             if call(['./bin/bw-baseline.sh'], env=hosts, dry=dry):

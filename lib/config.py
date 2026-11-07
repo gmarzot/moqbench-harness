@@ -15,6 +15,8 @@ TOOLS = {'aiomoqt': 'aio', 'moqperf': 'mp'}
 TEST_TYPES = {'capacity': 'ramp until the latency SLO is crossed',
               'ceiling': 'ramp past the SLO to the egress plateau'}
 BUILDS = {'pgo', 'reg'}
+# Relays built from source on the relay host, and the plan's builds key for each one's git ref.
+SOURCE_RELAYS = {'moqdev': 'moqdev', 'cf': 'moq_rs'}
 # moq-rs closes the moqperf publisher's session at moxygen's 30 s keepalive.
 UNSUPPORTED = {('moqperf', 'cf')}
 GENERATED = '# Written by moqbench from deployments/'
@@ -196,7 +198,7 @@ def write_tfvars(deployment, root=ROOT):
 
 class Suite:
     KEYS = {'description', 'requires', 'test'}
-    TEST_KEYS = {'type', 'tool', 'video', 'max_per_box', 'seconds', 'suffix', 'subscriber_nodes', *SETTINGS}
+    TEST_KEYS = {'type', 'tool', 'video', 'max_per_box', 'seconds', 'suffix', 'subscriber_nodes', 'relay', *SETTINGS}
 
     def __init__(self, name, data):
         self.name = name
@@ -232,7 +234,7 @@ def load_suite(name, root=ROOT):
 
 class Plan:
     KEYS = {'description', 'deployment', 'relays', 'suites', 'tune', 'budget', 'teardown', 'builds', 'threads', 'slo_ms'}
-    BUILD_KEYS = {'moqx', 'aiomoqt', 'aiopquic', 'moxygen'}
+    BUILD_KEYS = {'moqx', 'aiomoqt', 'aiopquic', 'moxygen', *SOURCE_RELAYS.values()}
 
     def __init__(self, name, data, root=ROOT):
         self.name = name
@@ -254,8 +256,11 @@ class Plan:
         self.slo_ms = data.get('slo_ms', 500)
         for relay in self.relays:
             relay_name, _, build = relay.partition(':')
-            if relay_name != 'moqx' or build not in BUILDS:
-                raise ConfigError(f'{where}: relay {relay!r}: moqbench runs moqx:pgo and moqx:reg today; others go through bin/sweep.sh')
+            if relay_name in SOURCE_RELAYS and build == 'src':
+                if SOURCE_RELAYS[relay_name] not in self.builds:
+                    raise ConfigError(f'{where}: relay {relay!r} needs a git ref in builds.{SOURCE_RELAYS[relay_name]}')
+            elif relay_name != 'moqx' or build not in BUILDS:
+                raise ConfigError(f'{where}: relay {relay!r}: moqbench runs moqx:pgo, moqx:reg, moqdev:src and cf:src; others go through bin/sweep.sh')
         counts = self.deployment.role_counts()
         for suite in self.suites:
             for role, need in suite.requires.items():
@@ -277,6 +282,8 @@ class Plan:
         for relay in self.relays:
             relay_name, _, build = relay.partition(':')
             for test in suite.tests:
+                if test.get('relay', relay_name) != relay_name:
+                    continue
                 if (test['tool'], relay_name) in UNSUPPORTED:
                     raise ConfigError(f'suite {suite.name}: {test["tool"]} cannot run against {relay_name}')
                 sub_hosts = self.deployment.sub_hosts(test.get('subscriber_nodes'))
@@ -289,8 +296,11 @@ class Plan:
                 env['LATENCY_MS'] = (self.slo_ms, 'plan')
                 env['PUB_HOST'] = (self.deployment.pub_host(), 'deployment')
                 env['SUB_HOSTS'] = (sub_hosts, 'deployment' if 'subscriber_nodes' not in test else 'test')
+                if relay_name != 'moqx':
+                    env['RELAY'] = (relay_name, 'plan')
                 video = test['video'].removesuffix('p')
-                run = f'{TOOLS[test["tool"]]}-{build}{threads}-{boxes}b-{video}'
+                label = build if relay_name == 'moqx' else relay_name
+                run = f'{TOOLS[test["tool"]]}-{label}{threads}-{boxes}b-{video}'
                 for part in (self.deployment.tag, test.get('suffix')):
                     if part:
                         run += f'-{part}'

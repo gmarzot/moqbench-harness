@@ -1,0 +1,38 @@
+description = "moq-dev worker mode and moq-rs at draft 18, with the current load client"
+requires = { subscriber = 2, publisher = 1 }
+
+[[test]]
+relay = "moqdev"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 12000
+seconds = 600
+step_subs = 250
+join_s = 5
+stagger_s = 0.01
+stop_at_ceiling = 1
+
+[[test]]
+relay = "moqdev"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 8000
+seconds = 600
+step_subs = 250
+join_s = 5
+stagger_s = 0.01
+stop_at_ceiling = 1
+
+# moq-rs stalled at larger steps, and its one crossing on 11-04 recovered, so
+# this ramps slowly and runs on past a crossing.
+[[test]]
+relay = "cf"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 2000
+seconds = 400
+step_subs = 10
+join_s = 5
