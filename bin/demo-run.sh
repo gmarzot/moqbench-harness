@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Long sustained load: one relay, one continuous run, no search. 1280
-# subscribers of 8 KB objects (~2 Mbps each) is just under the knee on an
-# 8-core relay pair (1440 pushes p90 from 256ms to 1024ms), so it holds steady
-# for hours.
+# subscribers of 8 KB objects (~2 Mbps each) is chosen to sit below the knee
+# on an 8-core relay pair, so it holds steady for hours.
 #
 #   RELAY_HOST=<relay> CLIENT_HOSTS="<client> ..." ./bin/demo-run.sh   # 4 hours at 1280 subs
 #   SUBS=960 DUR=7200 ./bin/demo-run.sh

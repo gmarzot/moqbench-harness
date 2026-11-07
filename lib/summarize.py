@@ -44,9 +44,8 @@ SHED_PCT = float(os.environ.get("SHED_PCT", "95"))
 # works for every relay - including moq-dev, whose latency is unmeasurable
 # because moqtest carries its timestamp in a private extension (0xC000) that
 # moq-dev does not recognise. Set RATE_PCT=0 to disable.
-# Off by default: measured at a trivial 200-subscriber load, every relay
-# delivered 28.0 obj/s against a computed 30.3, so the publisher's real cadence
-# is slower than 1000/OBJ_DELAY_MS and a 95% gate fails everything. Enable only
+# Off by default: the publisher's real cadence is slower than 1000/OBJ_DELAY_MS,
+# so even at a trivial load a 95% gate fails everything. Enable only
 # with a threshold calibrated from a low-load run on the same hardware.
 RATE_PCT = float(os.environ.get("RATE_PCT", "0"))
 OBJ_DELAY_MS = float(os.environ.get("OBJ_DELAY_MS", "33"))

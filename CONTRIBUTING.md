@@ -31,8 +31,9 @@ bash -n <each changed shell script>
   `results/`, credentials, account or tenancy identifiers, or host addresses.
 - A relay that is not public belongs in your ignored `relays.local.sh`
   (see `relays.local.sh.example`); do not name it in tracked files.
-- Every published number states its testbed and the measured path ceiling
-  (see the README's one rule and `PARITY.md`).
+- Results stay out of the repo: no measured figures in files, commits or PR
+  text. A number reported elsewhere states its testbed and the measured path
+  ceiling (see the README's one rule and `PARITY.md`).
 - Testbeds bill by the hour: destroy what you create with
   `./bin/testbed.sh <deployment> destroy`.
 

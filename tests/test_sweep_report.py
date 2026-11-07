@@ -77,8 +77,8 @@ class SweepReport(unittest.TestCase):
     def test_adaptive_rows_parse(self):
         rows = sr.sub_rows(FIX / 'adaptive-sub0.log')
         self.assertEqual(len(rows), 15)
-        self.assertEqual(rows[0], {'t': 160, 'subs': 3750, 'target_gbps': 16.0, 'rx_gbps': 16.0, 'mean_ms': 79.0,
-                                   'p90_ms': 266.0, 'loss_pct': 0.0, 'action': 'ramp'})
+        self.assertEqual(rows[0], {'t': 160, 'subs': 1000, 'target_gbps': 2.0, 'rx_gbps': 2.0, 'mean_ms': 100.0,
+                                   'p90_ms': 200.0, 'loss_pct': 0.0, 'action': 'ramp'})
 
     def test_adaptive_run(self):
         # Sub threads grow by 100/s: 500 subscribers per box per 5 s row over the first row.
@@ -89,8 +89,8 @@ class SweepReport(unittest.TestCase):
         self.assertEqual(len(ds['latency']), 15)
         self.assertEqual(ds['latency'][0], {
             'run': 'aio-pgo60-2b-1080', 'run_name': 'PGO+LTO, 60 threads, 2 load boxes, 1080p, 500 ms', 't_s': 160,
-            'subs': 7500, 'p90_worst_ms': 266.0, 'mean_worst_ms': 79.0, 'target_gbps': 32.0,
-            'rx_reported_gbps': 34.0, 'loss_pct': 0.0})
+            'subs': 2000, 'p90_worst_ms': 200.0, 'mean_worst_ms': 100.0, 'target_gbps': 4.0,
+            'rx_reported_gbps': 4.2, 'loss_pct': 0.0})
         self.assertEqual(len(ds['sut']), 6)
         s = ds['sut'][0]
         self.assertEqual((s['t_s'], s['subs'], s['moqx_cores'], s['moqx_tx_gbps'], s['moqx_tx_mpps']),
@@ -105,8 +105,8 @@ class SweepReport(unittest.TestCase):
             'rss_gb': 2.0, 'mb_per_sub': 4.1, 'nic_rx_gbps': 10.0, 'cores_per_gbps': 0.15, 'busy_pct': 50.0,
             'busiest_cpu_pct': 60.0})
         run = ds['runs'][0]
-        # Plateau: table rows within 5% of the peak (8750), 180 s to 300 s.
-        self.assertEqual((run['subs_plateau'], run['p90_median_ms'], run['limit']), (8596, 420.0, 'relay'))
+        # Plateau: table rows within 5% of the peak (2500), 180 s to 300 s.
+        self.assertEqual((run['subs_plateau'], run['p90_median_ms'], run['limit']), (2438, 360.0, 'relay'))
         self.assertEqual((run['moqx_tx_gbps'], run['moqx_cores'], run['udp_buf_errors'], run['mbps_per_sub']),
                          (10.0, 2.0, 30, 4.3))
         self.assertEqual((run['tool'], run['moqx_threads'], run['load_boxes'], run['threshold_ms']),
@@ -119,13 +119,13 @@ class SweepReport(unittest.TestCase):
         self.assertEqual(len(ds['sut']), 2)
         a, b = ds['sut']
         self.assertEqual((a['subs'], a['mp_lat_avg_ms'], a['mp_lat_max_ms'], a['mp_rx_gbps'], a['mp_resets']),
-                         (9984, 50.2, 533.0, 38.04, 8909))
-        self.assertEqual((b['mp_lat_max_ms'], b['mp_resets'], b['mp_failures']), (555.0, 9539, 0))
+                         (4000, 29.1, 520.0, 7.5, 2230))
+        self.assertEqual((b['mp_lat_max_ms'], b['mp_resets'], b['mp_failures']), (540.0, 2350, 0))
         self.assertEqual([(x['box'], x['subs']) for x in ds['loadgen']],
-                         [('load-a', 4992), ('load-b', 4992)] * 2)
+                         [('load-a', 2000), ('load-b', 2000)] * 2)
         run = ds['runs'][0]
         self.assertEqual((run['subs_plateau'], run['mp_lat_max_median_ms'], run['resets_total'], run['limit']),
-                         (9984, 555.0, 9539, 'relay'))
+                         (4000, 540.0, 2350, 'relay'))
         self.assertEqual((run['tool'], run['p90_median_ms'], run['loss_pct_max']),
                          ('moqx perf (moqperf_test_client)', None, None))
 

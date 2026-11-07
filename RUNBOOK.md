@@ -140,8 +140,8 @@ Things worth knowing about this hardware:
   on the 8 OCPU hosts and `enp0s5` on the probe.
 - **One qdisc per queue.** `fq_codel` goes under `mq`, one instance per
   transmit queue, not as a single root. A single root qdisc makes every
-  sending core take one lock: on these NICs it cut 4-sender UDP from ~6.9 to
-  ~5.0 Gbps, and a QUIC relay sends from many cores.
+  sending core take one lock: on these NICs it cut 4-sender UDP throughput
+  sharply, and a QUIC relay sends from many cores.
 
 ---
 
@@ -210,8 +210,8 @@ badly, so it is not the metric.
 
 Search: climb x3 until something fails, bisect to `TOL_PCT`, then re-run the
 answer at `CONFIRM_DUR`. Latency near the knee varies a lot run to run — the
-same 900-subscriber point measured 420 ms and 1288 ms on consecutive runs — so
-the confirm matters and a single probe at the edge means little.
+same point can land well inside the bound on one run and far over it on the
+next — so the confirm matters and a single probe at the edge means little.
 
 Knobs:
 
@@ -447,7 +447,7 @@ default.
   and `setsid`, or the command never returns.
 - **Never quote Mbps/core** without stating object size, subscriber count,
   relay-vs-endpoint, loopback-vs-NIC, and host. The same moqx binary spans
-  325 to 1066 Mbps/core across those axes with no code change.
+  a several-fold range across those axes with no code change.
 
 ## Current moq-dev relay
 

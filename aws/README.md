@@ -3,7 +3,7 @@
 # AWS c7gn.12xlarge harness (aiomoqt load generator)
 
 Drives a moqx relay from aiomoqt's `adaptive_bench` split across two hosts.
-Public implementation findings are in `AIOMOQT-FINDINGS.md`; keep deployment-specific run journals local.
+Keep run journals and results local.
 
 Two hosts you provide: a relay and a client. Everything stays under
 `~/gmarzot-bench/` on each box. `run-bench.sh` takes `RELAY_PUB`, `RELAY_PRIV`

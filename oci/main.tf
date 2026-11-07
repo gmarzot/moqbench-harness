@@ -1,9 +1,8 @@
 // MoQ relay perf lab on OCI: one relay host + N load-generator hosts on a
 // private VCN, sized so the load generators cannot become the bottleneck.
 //
-// The Linode pair this replaces was 8 cores/box with a 7 Gbps link; the client
-// saturated before the relay did, which invalidated every high-end latency
-// number. Here the client fleet is deliberately over-provisioned.
+// On the Linode pair this replaces, the client saturated before the relay did,
+// which invalidated every high-end latency number. Here the client fleet is deliberately over-provisioned.
 //
 // One root module. An environment, envs/<env>.tfvars (shared, tracked) and/or
 // envs/<env>.local.tfvars (one tester's own settings, gitignored), says where
@@ -123,8 +122,8 @@ variable "network_type" {
 // are 48 cores — an x86 match needs 48 OCPU, not 24).
 //
 // Network is 1 Gbps/OCPU (cap 99), so cores buy headroom: 48 OCPU = 48 Gbps,
-// 64 = 64, 94 = 94. Size against ~850 Mbps/core of expected relay throughput,
-// NOT against our 8-core Linode ceiling.
+// 64 = 64, 94 = 94. Size against the relay's expected per-core
+// throughput, not against a smaller testbed's ceiling.
 variable "relay_shape" {
   type    = string
   default = "VM.Standard.E6.Flex"

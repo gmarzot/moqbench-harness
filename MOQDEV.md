@@ -171,9 +171,9 @@ the testbed.
 
 A local aiomoqt 0.14.0.dev677 + aiopquic 0.7.0.dev199 test used the installed
 launcher and performance config, with 16 verified QUIC worker threads and
-20 subscriptions at 2 Mbps each. After fill, eight reported samples met the
-36 Mbps delivery floor, zero reported loss, known latency and p90 below
-500 ms; the final Rx was 40.06 Mbps. The subscriber ran to its 25-second cap,
+20 subscriptions at 2 Mbps each. After fill, the reported samples met the
+36 Mbps delivery floor with zero reported loss, known latency and p90 below
+500 ms. The subscriber ran to its 25-second cap,
 the publisher finished, and the relay survived both then exited cleanly on
 SIGTERM. This is an interoperability/teardown smoke test, not a capacity claim.
 The laptop's socket-buffer sysctls clamped the 8 MiB request to 4 MiB; no host

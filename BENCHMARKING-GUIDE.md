@@ -8,8 +8,8 @@ live in the appendices. If you are setting up a new testbed, **read Part I §2
 before doing anything else** — most wasted benchmarking effort comes from
 skipping it.
 
-Numbers in this guide are labelled. **Measured** means we took it on a named
-host pair and it is reproducible from this repo. **Guidance** means it is
+Claims in this guide are labelled. **Measured** means we saw it in our own
+runs; the guide states the finding, not the figures. **Guidance** means it is
 ordinary engineering judgement, not something we measured. Protocol references
 are dated, because the drafts move.
 
@@ -40,14 +40,14 @@ State the objective before the run, not after. A usable form:
 Three parts of that matter more than they look:
 
 **p95 or p99, not mean.** Media breaks on tails. A mean of 30 ms with a p99 of
-1.5 s is a bad experience, and we have measured exactly that shape.
+1.5 s is a bad experience.
 
 **Over delivered objects.** If the relay drops or resets a subscriber, its
 objects leave the latency sample and the percentile *improves*. Latency must be
 read together with delivery and reset counts or it rewards shedding.
 
 **Sustained.** A 60 s confirm is optimistic. We have watched a load that passed
-60 s drift from 2.7 to 1.8 Gbps over the following minutes. Confirms run for
+60 s drift down over the following minutes. Confirms run for
 minutes; readiness runs for hours.
 
 ## 2. The measurement hierarchy
@@ -67,8 +67,8 @@ excluded in the path.**
 
 This is not theoretical. We spent a full day building a detailed causal story
 about QUIC per-packet cost, GSO, congestion control and Python overhead, all
-measured against a 1 Gbps link nobody had characterised. The load generator was
-at 88% of link capacity the whole time. The "ceiling" being explained did not
+measured against a link nobody had characterised. The load generator was
+near link capacity the whole time. The "ceiling" being explained did not
 exist. The signature that looked most diagnostic — throughput flat across RTT,
 object size, stream count and congestion control — was simply a saturated link.
 
@@ -92,13 +92,13 @@ iperf3 -c 127.0.0.1 -p <port> -u -b 0 -l 1400 -t 10
 Rules that follow:
 
 - **`-l 1400` is the only UDP number comparable to QUIC.** A QUIC packet must
-  fit the path MTU. `iperf3 -u -l 65000` reports huge figures (we measured
-  41–45 Gbps on loopback) that QUIC cannot reach by construction, because
+  fit the path MTU. `iperf3 -u -l 65000` reports huge figures on loopback
+  that QUIC cannot reach by construction, because
   loopback MTU is 64 KB and a real path will fragment. TCP's figure benefits
   from TSO/GSO in the kernel. Neither is a QUIC target.
 - **Read the receiver line.** UDP has no congestion control, so the sender line
-  reports what it pushed, not what arrived. We once reported a 2.4–2.6 Gbps
-  aggregate that was sender-side self-report across a link dropping 66%.
+  reports what it pushed, not what arrived. We once reported an
+  aggregate that was sender-side self-report across a link dropping most of it.
 - **Record the ceiling next to every later number.** Anything within ~85% of it
   is "link-limited", not a stack result.
 - **Check `max_mtu_sent`** before concluding that loopback is fast because its
@@ -107,16 +107,9 @@ Rules that follow:
 
 ### 2.2 What good looks like
 
-Measured, all at 1400 B datagrams:
-
-| path | UDP pps | UDP Gbps |
-|---|---|---|
-| laptop loopback, 16-core WSL2 | 305,318 | 3.42 |
-| Linode box loopback, 8-core EPYC 7713 | 236,800 | 2.65 |
-| Linode box ↔ box wire | 94,256 | 1.06 |
-
-The Linode pair is capped around 1 Gbps egress on the 8-core plan, so it cannot
-be used for throughput work above that at all. Advertised NIC bandwidth is no
+Record a loopback and a wire figure for every host, at 1400 B datagrams. A wire
+figure well below loopback means the path, not the host, sets the ceiling; some
+plans cap egress far below what the NIC suggests. Advertised NIC bandwidth is no
 guide to a path either: keep relay and load generators in one region for
 capacity work, and use cross-region only when you want realistic RTT.
 
@@ -207,18 +200,15 @@ state it next to any per-core or per-subscriber number.**
 
 ### 4.2 Object size dominates per-core throughput
 
-**Measured**, moqx, identical hardware, 240 subscribers held constant, object
-size swept 1 KB → 66 KB:
+**Measured**, moqx, identical hardware, subscribers held constant, object size
+swept 1 KB → 66 KB: per-core throughput rises several-fold. Near-linear for
+small objects, where per-object cost dominates; flat for large ones, where
+per-byte cost dominates; a knee in between.
 
-> **149 → 821 Mbps per core.**
-
-Near-linear below 4 KB, where per-object cost dominates; flat above 33 KB,
-where per-byte cost dominates; knee at 8–16 KB.
-
-A 5.5× swing from payload shape alone. This is why a per-core figure without a
+That swing comes from payload shape alone. This is why a per-core figure without a
 stated object size is not a measurement, and it reconciles otherwise
-contradictory published numbers — a relay quoting ~1.7 Gbps/core on large
-objects is not faster than one quoting 327 Mbps/core on small ones.
+contradictory published numbers — a relay quoting a high per-core figure on
+large objects is not faster than one quoting a low one on small objects.
 
 ### 4.3 Realistic profiles
 
@@ -291,7 +281,7 @@ production — or accepts that the controllers differ and says so. We chose the
 latter and labelled it. Pretending "BBR on both" is a parity claim is wrong;
 BBRv1 and BBRv2 are different algorithms.
 
-**Measured**, picoquic on loopback: bbr beat bbr1 by about 7%. Congestion
+**Measured**, picoquic on loopback: bbr beat bbr1, by a small margin. Congestion
 control matters, but it is rarely the dominant term — if throughput is flat
 across RTT, you are not congestion-window limited and CC is not your problem
 (§9.2).
@@ -432,8 +422,8 @@ overrun.
   The derivative is the interesting part — flat per-subscriber RSS means
   bounded state; a rising line means either a leak or unbounded queueing, and
   you will not distinguish them from a single sample. We watched a load
-  generator go from 22 GB to 89 GB of 92 GB inside a single run because receive
-  queues had no bound.
+  generator fill nearly all of its host's memory inside a single run because
+  receive queues had no bound.
 - **File descriptors and stream counts**, per process.
 - **Relay internals** — forwarder counters, streams opened/closed/reset, cache
   size and evictions, active sessions and subscriptions.
@@ -592,9 +582,8 @@ Almost every surprising benchmark result is a misattribution. Use these tells:
 | loss rising with `RcvbufErrors` | socket buffer, fix sysctls |
 | latency rising with zero loss and flat throughput | standing queue — bufferbloat, not capacity |
 
-**Every measurement we have taken, on every cloud and host pair, was
-client-bound, never relay-bound.** Assume you are measuring your load generator
-until you have proved otherwise, and refuse any point where the client host
+**Assume you are measuring your load generator until you have proved
+otherwise,** and refuse any point where the client host
 exceeds ~85% busy.
 
 ### 9.2 Window-limited or not
@@ -603,21 +592,16 @@ If throughput is **flat as RTT rises**, you are not congestion-window limited,
 and tuning windows or congestion control will not help. Throughput for a
 window-limited flow falls roughly as `cwnd/RTT`.
 
-**Measured:** flat from 0 to 50 ms emulated RTT while BDP grew to 5.6 MB — that
-was a saturated link, not a window. Conversely, on a genuine 45 ms path at
+**Measured:** flat from 0 to 50 ms emulated RTT while BDP grew several-fold —
+that was a saturated link, not a window. Conversely, on a genuine 45 ms path at
 multi-Gbps, windows become the dominant term (§12.3).
 
 ### 9.3 The collapse signature
 
 Healthy systems degrade: latency rises, throughput plateaus, loss creeps.
-Collapse looks different, and we have a measured example:
-
-```
- 36s   35Gbps   7000 target │ 35Gbps  6794 actual │ p90 31ms  │ ramp
- 43s   36Gbps   7200 target │ 37Gbps  6947 actual │ p90 66ms  │ ramp
- 57s   37Gbps   7400 target │ 1.7Gbps  400 actual │ p90 2.8s  │ collapse
- 74s   37Gbps   7400 target │ 2.9Gbps  598 actual │ p90 23s   │ collapse
-```
+Collapse looks different: within seconds the delivered subscriber count falls
+to a small fraction of the target, the target holds, and p90 jumps from tens of
+milliseconds to seconds.
 
 Mechanism: CPU-starved workers stopped servicing their event loops long enough
 to miss the peer's idle timeout; connections were dropped; on the next packet
@@ -672,25 +656,14 @@ and you have learned something either way.
 
 ### 10.3 Known load-generator ceilings
 
-**Measured**, aiomoqt `adaptive_bench` on a 48-core aarch64 host, 20,800 B
-objects at 5 Mbps per subscriber:
-
-> ~6,950 subscribers / 37 Gbps, p90 31 ms, 0% loss — then collapse (§9.3).
-
-The limiting behaviours are roughly one OS thread per subscription (~202
-threads per worker hosting 200 subscriptions) and unbounded receive queues.
+**Measured**, aiomoqt `adaptive_bench` on a 48-core aarch64 host: it ramped
+cleanly and then collapsed (§9.3). The limiting behaviours are roughly one OS
+thread per subscription and unbounded receive queues.
 Set `--max-queued-bytes` and `--max-inflight-bytes`; they have no defaults.
 
-**Measured**, stack cost on loopback at 1440 B, same host:
-
-| stack | pps | vs raw UDP |
-|---|---|---|
-| iperf3 raw UDP `sendto` | 236,800 | — |
-| picoquic native C | 199,566 | 84% |
-| aiopquic (Python binding) | ~171,000 | 72% |
-
-QUIC costs roughly 19% over raw `sendto`; a Python binding adds about 14% more.
-Neither is the order-of-magnitude penalty people assume, which is worth knowing
+**Measured**, stack cost on loopback at 1440 B, same host: QUIC costs a modest
+fraction over raw `sendto`, and a Python binding adds a little more. Neither is
+the order-of-magnitude penalty people assume, which is worth knowing
 before you rewrite a load generator that is not actually your problem.
 
 ## 11. Host tuning
@@ -709,8 +682,8 @@ sysctl -w net.core.rmem_max=134217728 net.core.wmem_max=134217728 \
 ```
 
 `netdev_max_backlog` defaults to 1000, which is drastically undersized at
-multi-Gbps. **Measured:** an untuned client box carried 10,559 `RcvbufErrors`
-while the tuned relay beside it had zero — the loss looked like the relay's.
+multi-Gbps. **Measured:** an untuned client box carried `RcvbufErrors`
+while the tuned relay beside it had none — the loss looked like the relay's.
 
 Many relays print their recommended sysctls at startup. Use those.
 
@@ -780,8 +753,8 @@ tuned now — and a box someone else tuned may carry settings you did not expect
 Beware wrapper scripts that contradict the compiled defaults. We found a
 launcher defaulting send/recv packet limits to 16/256 where the config header
 intended 48/64 — and since the wrapper wins, every benchmark ever run through
-it used the wrapper's values. The correct values measured ~14% better
-Mbps/core with 5× lower p99 on large objects.
+it used the wrapper's values. The correct values measured better
+Mbps/core and a much lower p99 on large objects.
 
 ### 12.2 Cache
 
@@ -1118,8 +1091,7 @@ crypto acceleration is not a side issue:
   in use via the TLS library; the thing to check is that the library is built to
   use them.
 - **Library version matters more than people expect.** **Measured:** OpenSSL
-  3.5.5 over 3.0.2 gave a reproducible **+6.8%** on a QUIC loopback workload
-  (three reps, no overlap between the groups). OpenSSL 3.0.x carries
+  3.5.5 over 3.0.2 gave a reproducible gain on a QUIC loopback workload. OpenSSL 3.0.x carries
   provider/fetch overhead on repeated small operations; 3.5 recovers much of
   it. Ubuntu 22.04 ships 3.0.2, so a stock box pays this.
 - **QAT** and similar offload devices exist but are oriented at bulk crypto;
@@ -1179,64 +1151,7 @@ flamegraph of a link-limited run tells you nothing.
 
 ---
 
-# Appendix B — Reference measurements
-
-Everything here was measured by us and is reproducible from this repo. Use it
-to sanity-check a new testbed, not as a target.
-
-## B.1 Path ceilings, 1400 B UDP datagrams
-
-| path | pps | Gbps | note |
-|---|---|---|---|
-| laptop loopback, 16-core WSL2 | 305,318 | 3.42 | 0% loss |
-| Linode box loopback, 8-core EPYC 7713 | 236,800 | 2.65 | 19% receiver loss at full rate |
-| Linode box ↔ box | 94,256 | 1.06 | 8-core plan egress cap; 4 flows do not raise it |
-
-## B.2 Stack cost on loopback, 1440 B
-
-Same host, same MTU on loopback and wire — a larger loopback MTU was checked
-for and did not apply.
-
-| stack | pps | vs raw UDP |
-|---|---|---|
-| iperf3 raw UDP `sendto` | 236,800 | — |
-| picoquic native C | 199,566 | 84% |
-| aiopquic (Python binding) | ~171,000 | 72% |
-
-## B.3 Relay capacity
-
-| relay | subscribers | aggregate | p90 | cores used | conditions |
-|---|---|---|---|---|---|
-| moqx/mvfst | **~6,950** | 37 Gbps | 31 ms | 15 of 48 | AWS c7gn.12xlarge pair, same subnet, 20,800 B objects, 5 Mbps/sub |
-
-This row was **client-bound, not relay-bound** — the relay sat at 15 of 48
-cores. It is a lower bound on the relay.
-
-Carry the caveats with the numbers: congestion controllers differ across
-stacks (§5.3).
-
-## B.4 Object size versus per-core throughput
-
-moqx, fixed hardware, 240 subscribers held constant:
-
-| object size | Mbps/core |
-|---|---|
-| 1 KB | 149 |
-| 66 KB | 821 |
-
-Near-linear below 4 KB, flat above 33 KB, knee at 8–16 KB.
-
-## B.5 Build and library
-
-| change | effect |
-|---|---|
-| OpenSSL 3.0.2 → 3.5.5 | **+6.8%**, three reps, no overlap |
-| send/recv packet limits 16/256 → 48/64 | ~14% better Mbps/core, 5× lower p99 on large objects |
-| picoquic bbr1 → bbr | ~7% |
-
----
-
-# Appendix C — Preflight and harness scripts
+# Appendix B — Preflight and harness scripts
 
 In `aws/` (named for where they were first used; they work against any host
 pair):
@@ -1245,7 +1160,7 @@ pair):
 |---|---|
 | `tune-client.sh` | sysctls and NIC rings; run on **both** hosts |
 | `start-relay.sh` | relay with tuned flags, jemalloc, THP, and the UDP sysctls it recommends |
-| `build-aiomoqt.sh` | load generator from source, handling the four silent build caches of Appendix D |
+| `build-aiomoqt.sh` | load generator from source, handling the four silent build caches of Appendix C |
 | `run-bench.sh` | one split-host run, fresh namespace per run |
 | `pub.sh` / `sub.sh` | publisher and subscriber halves |
 | `bdp-sweep.sh` | throughput versus emulated RTT, netem layered over fq_codel |
@@ -1255,20 +1170,18 @@ pair):
 | `start-pqperf.sh` | `picoquicdemo` QUIC-PERF server, the no-Python control |
 | `cleanup-perf.sh` | removes the footprint; **run it, and verify the qdisc afterwards** |
 
-Retained measurement CSVs are in `aws/data/`.
-
 ---
 
-# Appendix D — Pitfalls
+# Appendix C — Pitfalls
 
 Each of these cost us real time.
 
 ## Measurement
 
 - **An uncharacterised path explains everything and nothing.** A full day of
-  QUIC analysis against an unmeasured 1 Gbps link. Preflight first (§2.1).
-- **Sender-side counters lie under loss.** A 2.4–2.6 Gbps "aggregate" across a
-  link dropping 66%. Read the receiver.
+  QUIC analysis against an unmeasured link. Preflight first (§2.1).
+- **Sender-side counters lie under loss.** An "aggregate" counted by the sender
+  across a link dropping most of it. Read the receiver.
 - **Zero latency is not low latency.** A stripped timestamp extension reads as
   0 ms (§8.2).
 - **`NTPSynchronized=yes` is not a clock budget.** `timesyncd` does not report
@@ -1301,8 +1214,8 @@ Each of these cost us real time.
 - **`netem` left behind contaminates everyone's results.** An EXIT trap does
   not run when an outer `timeout` kills the script. Verify from a separate
   command and diff against a peer (§6.1).
-- **Client-side tuning is skipped and then blamed on the relay** — 10,559
-  `RcvbufErrors` on the untuned side, zero on the tuned one.
+- **Client-side tuning is skipped and then blamed on the relay** —
+  `RcvbufErrors` on the untuned side, none on the tuned one.
 - **`ulimit -n` set interactively does not reach a backgrounded daemon.**
 - **Wrapper script defaults can contradict compiled defaults, and the wrapper
   wins** (§12.1).
