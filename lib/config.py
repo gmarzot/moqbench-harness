@@ -25,6 +25,7 @@ SETTINGS = {
     'shortfall': ('SHORTFALL', 0.7), 'delivery_timeout_ms': ('DELIVERY_TIMEOUT', 500), 'mp_threads': ('MP_THREADS', 32),
     'mp_ramp': ('MP_RAMP', 64), 'moqx_send': ('MOQX_SEND', 16), 'moqx_recv': ('MOQX_RECV', 256), 'moqx_gro': ('MOQX_GRO', ''),
     'aiomoqt_env': ('AIOMOQT_ENV', ''),
+    'aiomoqt_extra': ('AIOMOQT_EXTRA', ''), 'stop_at_ceiling': ('STOP_AT_CEILING', 0),
 }
 
 

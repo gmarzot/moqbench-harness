@@ -1,0 +1,15 @@
+description = "720p against moqperf with one picoquic worker per process, stopping at each ceiling"
+deployment  = "aws-c7gn12x"
+relays      = ["moqx:pgo"]
+suites      = ["moqx-c7gn12x-720p-layouts"]
+threads     = "all"
+slo_ms      = 500
+tune        = { rps = 0 }
+budget      = { hours = 1 }
+teardown    = true
+
+[builds]
+moqx     = "patches/bin/moqx-v0.3.7-arm64-pgo-0783f501-linux-arm64.tar.gz"
+aiomoqt  = "5004105"
+aiopquic = "a22d089"
+moxygen  = "v0.3.7"
