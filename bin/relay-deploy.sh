@@ -60,6 +60,8 @@ deploy_moqx() {
   arch=$(moqx_arch "$($SSH -n "$RUSER@$RELAY" uname -m)") || exit 1
   if [[ -f $SOURCE ]]; then
     tarball=$SOURCE
+  elif [[ $SOURCE == */* ]]; then
+    echo "  no moqx tarball at $SOURCE" >&2; exit 1
   else
     tag=$SOURCE asset=$(moqx_asset "$arch")
     [[ -n $tag ]] || tag=$(curl -fsSL "https://api.github.com/repos/$MOQX_REPO/releases/latest" |
