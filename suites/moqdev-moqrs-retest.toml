@@ -48,3 +48,15 @@ max_per_box = 2000
 seconds = 400
 step_subs = 10
 join_s = 5
+
+# Whether moq-dev's crossings depend on the ramp: slower, and past any crossing.
+[[test]]
+relay = "moqdev"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 4000
+seconds = 400
+step_subs = 50
+join_s = 5
+suffix = "slow"
