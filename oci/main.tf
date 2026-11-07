@@ -16,7 +16,7 @@
 //   ./bin/testbed.sh fanout-1 up -y
 //
 // Bare metal BM.Standard.E6.256 (256 cores, 200 Gbps) is the "no excuses"
-// option and the only OCI shape that beats c7gn.12xlarge's 150 Gbps.
+// option.
 
 terraform {
   required_version = ">= 1.5"
@@ -102,6 +102,17 @@ variable "availability_domain" {
   type        = string
   default     = ""
   description = "Leave empty to use the first AD in the region."
+}
+
+// Networking launch type: VFIO (SR-IOV) or PARAVIRTUALIZED. Empty keeps the
+// image's default.
+variable "network_type" {
+  type    = string
+  default = ""
+  validation {
+    condition     = contains(["", "VFIO", "PARAVIRTUALIZED"], var.network_type)
+    error_message = "network_type must be VFIO or PARAVIRTUALIZED."
+  }
 }
 
 // Relay: the system under test. x86 by choice, so the existing x86-64/glibc-2.35
@@ -233,9 +244,16 @@ resource "oci_core_security_list" "sl" {
 
   // Unrestricted inside the VCN: this is where the benchmark traffic lives, and
   // per-port rules would only add a variable we do not want to measure.
+  // Stateless in both directions: a full connection-tracking table drops packets.
+  egress_security_rules {
+    destination = "10.42.0.0/16"
+    protocol    = "all"
+    stateless   = true
+  }
   ingress_security_rules {
-    source   = "10.42.0.0/16"
-    protocol = "all"
+    source    = "10.42.0.0/16"
+    protocol  = "all"
+    stateless = true
   }
 
   dynamic "ingress_security_rules" {
@@ -334,6 +352,13 @@ resource "oci_core_instance" "relay" {
     are_legacy_imds_endpoints_disabled = true
   }
 
+  dynamic "launch_options" {
+    for_each = var.network_type != "" ? [var.network_type] : []
+    content {
+      network_type = launch_options.value
+    }
+  }
+
   shape_config {
     ocpus         = var.relay_ocpus
     memory_in_gbs = var.relay_memory_gb
@@ -371,6 +396,13 @@ resource "oci_core_instance" "client" {
     are_legacy_imds_endpoints_disabled = true
   }
 
+  dynamic "launch_options" {
+    for_each = var.network_type != "" ? [var.network_type] : []
+    content {
+      network_type = launch_options.value
+    }
+  }
+
   shape_config {
     ocpus         = var.client_ocpus
     memory_in_gbs = var.client_memory_gb
@@ -404,6 +436,13 @@ resource "oci_core_instance" "probe" {
 
   instance_options {
     are_legacy_imds_endpoints_disabled = true
+  }
+
+  dynamic "launch_options" {
+    for_each = var.network_type != "" ? [var.network_type] : []
+    content {
+      network_type = launch_options.value
+    }
   }
 
   shape_config {

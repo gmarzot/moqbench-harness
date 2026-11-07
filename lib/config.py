@@ -54,7 +54,7 @@ def positive_int(where, key, value):
 
 class Deployment:
     NODE_KEYS = {'name', 'instance', 'roles', 'vcpus', 'ocpus', 'memory_gb', 'address'}
-    KEYS = {'provider', 'region', 'zone', 'arch', 'tag', 'nodes'}
+    KEYS = {'provider', 'region', 'zone', 'arch', 'tag', 'network_type', 'nodes'}
 
     def __init__(self, name, data, account=None, where=None):
         self.name, self.account = name, account or {}
@@ -65,6 +65,9 @@ class Deployment:
             raise ConfigError(f'{where}: provider must be one of {", ".join(sorted(PROVIDERS))}')
         self.region, self.zone, self.arch = data.get('region'), data.get('zone'), data.get('arch')
         self.tag = data.get('tag', '')
+        self.network_type = data.get('network_type')
+        if self.network_type and self.provider != 'oci':
+            raise ConfigError(f'{where}: network_type applies only to oci')
         self.nodes = data.get('nodes') or []
         if not self.nodes:
             raise ConfigError(f'{where}: no nodes')
@@ -146,6 +149,8 @@ class Deployment:
         elif self.provider == 'oci':
             if self.zone:
                 out['availability_domain'] = self.zone
+            if self.network_type:
+                out['network_type'] = self.network_type
             out.update(client_count=len(load), probe_count=len(probes))
             for prefix, node in (('relay', self.relay), ('client', load[0] if load else None), ('probe', probes[0] if probes else None)):
                 if node:

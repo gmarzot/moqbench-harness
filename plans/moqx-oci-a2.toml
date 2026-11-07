@@ -1,0 +1,15 @@
+description = "First OCI points: moqx on AmpereOne VMs, 48 io threads as on c7gn.12xlarge"
+deployment  = "oci-a2"
+relays      = ["moqx:pgo"]
+suites      = ["moqx-oci-a2"]
+threads     = 48
+slo_ms      = 500
+tune        = { rps = 0 }
+budget      = { hours = 1 }
+teardown    = true
+
+[builds]
+moqx     = "patches/bin/moqx-v0.3.7-arm64-pgo-0783f501-linux-arm64.tar.gz"
+aiomoqt  = "0c6cca5"
+aiopquic = "5711a08"
+moxygen  = "v0.3.7"

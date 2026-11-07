@@ -122,6 +122,8 @@ valid for lifecycle API calls.
 - **x86 on purpose.** The relay and moxygen binaries are x86-64 glibc 2.35
   and run unmodified on Ubuntu 22.04. A binary built on a newer distro will
   not load.
+- **Arm is a deployment.** `deployments/oci-a2.toml` runs AmpereOne hosts and
+  needs an Arm image. On A2 and A4, one OCPU is 2 cores.
 - **OCPU = 1 physical core = 2 vCPU** on x86. Graviton has no SMT, so matching
   48 Graviton vCPU takes 48 OCPU, not 24.
 - **E5.Flex sells 1 Gbps per OCPU, capped at 40.** Cores buy bandwidth: the 8
@@ -129,6 +131,9 @@ valid for lifecycle API calls.
   NIC binds before theirs do.
 - **Intra-region traffic is free**, cross-AD included, so long high-rate runs
   cost nothing in transfer.
+- **Traffic inside the VCN is stateless**, so it never fills a connection-tracking
+  table. A deployment's `network_type` picks `VFIO` (SR-IOV) over an image's
+  default; Arm images default to paravirtualized.
 - **Stop, don't terminate.** Stopping a standard VM halts compute billing; only
   boot volumes remain. An in-guest `shutdown` does **not** stop billing; only
   the API does (`./bin/testbed.sh <deployment> stop`).
