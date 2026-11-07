@@ -147,6 +147,12 @@ class Plans(unittest.TestCase):
         self.assertEqual([p['env']['STEP_SUBS'][0] for p in points], [250, 10])
         self.assertEqual({p['build'] for p in points}, {'src'})
 
+    def test_a_test_can_set_its_own_relay_threads(self):
+        plan = config.load_plan('moqdev-moqrs-retest')
+        cf = [p for p in plan.points(plan.suites[0]) if p['env']['RELAY'][0] == 'cf']
+        self.assertEqual([p['env']['THREADS'] for p in cf], [(48, 'relay vCPUs'), (3, 'test')])
+        self.assertEqual([p['run'] for p in cf], ['aio-cf48-2b-720-12x', 'aio-cf3-2b-720-12x'])
+
     def test_moqx_points_do_not_set_relay(self):
         plan = config.load_plan('moqx-c7gn12x-720p-sockets')
         self.assertNotIn('RELAY', plan.points(plan.suites[0])[0]['env'])

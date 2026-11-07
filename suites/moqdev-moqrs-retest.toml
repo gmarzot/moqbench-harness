@@ -36,3 +36,15 @@ max_per_box = 2000
 seconds = 400
 step_subs = 10
 join_s = 5
+
+# moq-rs only used about 3 cores on 11-04; more workers may just add context switches.
+[[test]]
+relay = "cf"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+threads = 3
+max_per_box = 2000
+seconds = 400
+step_subs = 10
+join_s = 5

@@ -198,7 +198,7 @@ def write_tfvars(deployment, root=ROOT):
 
 class Suite:
     KEYS = {'description', 'requires', 'test'}
-    TEST_KEYS = {'type', 'tool', 'video', 'max_per_box', 'seconds', 'suffix', 'subscriber_nodes', 'relay', *SETTINGS}
+    TEST_KEYS = {'type', 'tool', 'video', 'max_per_box', 'seconds', 'suffix', 'subscriber_nodes', 'relay', 'threads', *SETTINGS}
 
     def __init__(self, name, data):
         self.name = name
@@ -288,11 +288,11 @@ class Plan:
                     raise ConfigError(f'suite {suite.name}: {test["tool"]} cannot run against {relay_name}')
                 sub_hosts = self.deployment.sub_hosts(test.get('subscriber_nodes'))
                 boxes = 1 if sub_hosts.startswith('client:') else len(self.deployment.load_nodes)
-                threads = self.resolved_threads()
+                threads = test.get('threads') or self.resolved_threads()
                 env = {}
                 for key, (var, default) in SETTINGS.items():
                     env[var] = (test[key], 'test') if key in test else (default, 'default')
-                env['THREADS'] = (threads, 'plan' if self.threads != 'all' else 'relay vCPUs')
+                env['THREADS'] = (threads, 'test' if 'threads' in test else 'plan' if self.threads != 'all' else 'relay vCPUs')
                 env['LATENCY_MS'] = (self.slo_ms, 'plan')
                 env['PUB_HOST'] = (self.deployment.pub_host(), 'deployment')
                 env['SUB_HOSTS'] = (sub_hosts, 'deployment' if 'subscriber_nodes' not in test else 'test')
