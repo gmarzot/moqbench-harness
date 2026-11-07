@@ -25,8 +25,8 @@ mp      src    1080p   5000    420      mp-mdevsh60-3b-1080+g3
 MOQDEV_RUNTIME=uring
 aio     src    1080p   5000    600      aio-mdevur60-3b-1080+g3
 mp      src    1080p   5000    420      mp-mdevur60-3b-1080+g3
-# moq-rs stalls (SERVER_SETUP timeouts, minutes of latency) below the first
-# 250-per-host step without using more than ~3 cores, so it ramps by 10.
+# moq-rs stalls (SERVER_SETUP timeouts) below the first 250-per-host step,
+# so it ramps by 10.
 # moqperf is left out: moq-rs closes moqtest_server's session at moxygen's
 # 30 s PUBLISH_NAMESPACE "ping" keepalive.
 RELAY=cf
