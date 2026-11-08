@@ -78,6 +78,15 @@ class Deployments(unittest.TestCase):
         self.assertEqual((v['relay_shape'], v['relay_ocpus'], v['relay_memory_gb'], v['client_shape'], v['client_ocpus']),
                          ('VM.A', 8, 16, 'VM.A', 4))
 
+    def test_oci_picks_the_image_for_its_arch(self):
+        n = [dict(name='r', instance='VM.A', roles=['relay', 'subscriber', 'publisher'])]
+        account = dict(image_ocid='arm-image', image_ocid_amd64='x86-image')
+        x86 = config.Deployment('d', dict(provider='oci', arch='amd64', nodes=n), account).tfvars()
+        arm = config.Deployment('d', dict(provider='oci', arch='arm64', nodes=n), account).tfvars()
+        self.assertEqual((x86['image_ocid'], arm['image_ocid']), ('x86-image', 'arm-image'))
+        self.assertNotIn('image_ocid_amd64', x86)
+        self.assertNotIn('image_ocid_amd64', arm)
+
     def test_network_type_reaches_oci_only(self):
         n = [dict(name='r', instance='VM.Standard.A2.Flex', roles=['relay', 'subscriber', 'publisher'])]
         self.assertEqual(config.Deployment('d', dict(provider='oci', network_type='VFIO', nodes=n)).tfvars()['network_type'], 'VFIO')
@@ -203,6 +212,19 @@ class Plans(unittest.TestCase):
         with self.assertRaisesRegex(config.ConfigError, 'moqx'):
             config.load_plan('x', tree)
 
+    def test_aiomoqt_relay_needs_an_aiomoqt_ref(self):
+        tree = self.in_tree(self.DEPLOYMENT, self.SUITE % (1, 'aiomoqt'),
+                            'deployment = "x"\nsuites = ["x"]\nrelays = ["aiomoqt:src"]\n')
+        with self.assertRaisesRegex(config.ConfigError, 'builds.aiomoqt'):
+            config.load_plan('x', tree)
+
+    def test_the_aiomoqt_relay_plan(self):
+        plan = config.load_plan('aiomoqt-relay-e6')
+        points = plan.points(plan.suites[0])
+        self.assertEqual([p['run'] for p in points], ['aio-aiomoqt1-2b-720-e6', 'aio-aiomoqt1-2b-1080-e6'])
+        self.assertEqual({p['env']['RELAY'] for p in points}, {('aiomoqt', 'plan')})
+        self.assertEqual(points[0]['env']['THREADS'], (1, 'plan'))
+
     def test_threads_all_comes_from_the_relay_node(self):
         tree = self.in_tree(self.DEPLOYMENT, self.SUITE % (1, 'moqperf'), 'deployment = "x"\nsuites = ["x"]\n')
         plan = config.load_plan('x', tree)
@@ -236,6 +258,13 @@ class Command(unittest.TestCase):
                      'mp-pgo48-1b-1080-12x', 'THREADS=48  (relay vCPUs)', 'testbed.sh aws-c7gn12x destroy'):
             self.assertIn(text, run.stdout)
         self.assertEqual(subprocess.check_output(['git', 'status', '--short'], cwd=ROOT), before)
+
+    def test_aiomoqt_relay_is_built_by_provisioning(self):
+        run = self.moqbench('run', 'aiomoqt-relay-e6', '--dry-run', '--no-price')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        for text in ('AIOMOQT_SRC=1049da0', 'AIOPQUIC_SRC=84d137a', 'AIOMOQT_PYTHON=3.14', 'aio-aiomoqt1-2b-720-e6'):
+            self.assertIn(text, run.stdout)
+        self.assertNotIn('relay-build.sh', run.stdout)
 
     def test_a_config_problem_exits_2_without_a_traceback(self):
         run = self.moqbench('run', 'no-such-plan', '--dry-run')

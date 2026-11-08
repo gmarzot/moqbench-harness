@@ -240,11 +240,13 @@ def do_run(args):
                 provision['AIOPQUIC_SRC'] = builds['aiopquic']
             if 'moxygen' in builds:
                 provision['MOXYGEN_RELEASE'] = builds['moxygen']
+            if 'python' in builds:
+                provision['AIOMOQT_PYTHON'] = builds['python']
             if call(['./bin/testbed-provision.sh'], env=provision, dry=dry):
                 raise SystemExit('provisioning failed')
             for relay in plan.relays:
                 name = relay.partition(':')[0]
-                if name in config.SOURCE_RELAYS:
+                if name in config.SOURCE_RELAYS and name not in config.PROVISIONED_RELAYS:
                     ref = builds[config.SOURCE_RELAYS[name]]
                     if call(['./bin/relay-build.sh', name, ref], env=hosts, dry=dry):
                         raise SystemExit(f'building {name} failed')

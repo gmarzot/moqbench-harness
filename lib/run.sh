@@ -16,8 +16,8 @@ CSV_HEADER="config,threads,subs,mbps,obj_s,relay_proc_cores,relay_host_cores,mbp
 
 # Kernel truncates comm to 15 chars, so moq-relay-quiche only matches as
 # moq-relay-quich. pkill -f would match this script's own command line.
-declare -A PROC=( [moqdev]=moq-relay-dev [moqx]=moqx [cf]=moq-relay-ietf [quinn]=moq-relay-quinn [quiche]=moq-relay-quich )
-declare -A PATHS=( [moqdev]=/anon [moqx]=/moq-relay [cf]=/ [quinn]=/anon [quiche]=/anon )
+declare -A PROC=( [moqdev]=moq-relay-dev [moqx]=moqx [cf]=moq-relay-ietf [quinn]=moq-relay-quinn [quiche]=moq-relay-quich [aiomoqt]=aiomoqt-relay )
+declare -A PATHS=( [moqdev]=/anon [moqx]=/moq-relay [cf]=/ [quinn]=/anon [quiche]=/anon [aiomoqt]=/ )
 # Where each relay's binary lives under $RROOT: what bin/relay-deploy.sh
 # installs and versions.txt reports. moqx's is the release build's; moqx/moqx
 # launches it.
@@ -32,6 +32,7 @@ declare -A LABEL=(
   [cf]=cf-moq-rs/quinn
   [quinn]=moq-dev/quinn
   [quiche]=moq-dev/quiche
+  [aiomoqt]=aiomoqt/picoquic
 )
 
 # Line 1 is the host aggregate plus the named process; the rest are per-core.
@@ -76,6 +77,7 @@ record_versions() {
       printf "%-15s %s sha %s\n" "${kv%%=*}:" "${r:--}" "${c:0:16}"
     done
     echo "moqx:      $(./moqx/moqx --version 2>/dev/null | head -1)"
+    echo "aiomoqt-relay: $(aiomoqt/.venv/bin/python -c "import importlib.metadata as m; print(m.version(\"aiomoqt\"), \"aiopquic\", m.version(\"aiopquic\"))" 2>/dev/null || echo -)"
     echo "moqtest_server: $(sha256sum moxygen/bin/moqtest_server 2>/dev/null | cut -c1-16)"
     echo "kernel:    $(uname -r)"
     echo "relay-mtu: $(cat /sys/class/net/$(ip -o -4 route show to default | cut -d" " -f5 | head -1)/mtu)"
@@ -177,6 +179,8 @@ relay_cmd() {
         [[ -n ${kv#*=} ]] && inject+="; print \"    ${kv%%=*}: ${kv#*=}\""
       done
       echo "awk '/^  mvfst:/{print$inject; next} {print}' moqx/config.bench.yaml > /tmp/cfg.yaml && ${MOQX_MALLOC}MOQX_BIN=\$PWD/moqx/moqx MOQX_RESOLVED_CONFIG=/tmp/r.yaml LD_LIBRARY_PATH=$RROOT/moxygen/lib moqx/moqx-run.sh --config /tmp/cfg.yaml --insecure $MOQX_JFLAG --no-cache $MOQX_PMTU_FLAG --bind :: --port 4533 --admin-port 4500 --threads $threads --cc $MOQX_CC --send-pkts $MOQX_SEND --recv-pkts $MOQX_RECV --relay-thread --local-forwarders --udp-buffer 33554432 --moqt-versions $MOQX_VERSIONS" ;;
+    # The public relay's settings (aiomoqt deploy/aiomoqt-relay/relay.toml); one event loop, so threads is unused.
+    aiomoqt) echo "aiomoqt/.venv/bin/aiomoqt-relay --dual --bind 0.0.0.0 --port 4533 --cert bench/cert.pem --key bench/key.pem --draft 22,20,18,16,14 --watchdog 30 --cache-bytes 268435456 --admission-cpu 87 --cc-algo bbr" ;;
     cf)     echo "RUST_LOG=warn TOKIO_WORKER_THREADS=$threads MOQ_UDP_BUFFER_BYTES=33554432 moq-rs/moq-relay-ietf --bind 0.0.0.0:4533 --tls-cert bench/cert.pem --tls-key bench/key.pem --coordinator-file /tmp/c.json" ;;
     quinn)  echo "RUST_LOG=warn TOKIO_WORKER_THREADS=$threads MOQ_UDP_BUFFER_BYTES=33554432 moq-dev/moq-relay-quinn --server-bind 0.0.0.0:4533 --tls-generate localhost,$RPRIV --auth-public '' --log-level warn --server-quic-max-streams $MAX_STREAMS --server-quic-congestion-control $DEV_CC" ;;
     quiche) echo "RUST_LOG=warn TOKIO_WORKER_THREADS=$threads MOQ_QUICHE_SHARDS=$threads MOQ_UDP_BUFFER_BYTES=33554432 moq-dev/moq-relay-quiche --server-bind 0.0.0.0:4533 --tls-generate localhost,$RPRIV --auth-public '' --log-level warn --server-quic-max-streams $MAX_STREAMS --server-quic-congestion-control $DEV_CC" ;;

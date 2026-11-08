@@ -14,7 +14,7 @@
 #                    audiences
 #          moqperf-ramp  moqtest_server on the publishing host, a moqperf_test_client
 #                    ramp on every subscriber host, objects sized by SHAPE
-#   relay  moqdev | moqx | cf | quinn | quiche, or one relays.local.sh defines
+#   relay  moqdev | moqx | cf | quinn | quiche | aiomoqt, or one relays.local.sh defines
 #
 # Where things run:
 #   PUB_HOST=relay   (default) publisher beside the relay, so ingest stays off
@@ -45,7 +45,7 @@ SSH="ssh -i $KEY -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
 SCP="scp -q -i $KEY -o StrictHostKeyChecking=accept-new"
 
 TOOL=${1:?tool: moqperf|moqperf-ramp|moqbench|adaptive|fixed|loadsim}
-CFG=${2:?relay: moqdev|moqx|cf|quinn|quiche}
+CFG=${2:?relay: moqdev|moqx|cf|quinn|quiche|aiomoqt}
 DUR=${3:-${DUR:-60}}
 # Existing mode measures a separately managed relay without restarting it.
 EXISTING_RELAY=${EXISTING_RELAY:-0}
@@ -93,7 +93,7 @@ case $SUB_HOSTS in
 esac
 
 if [[ $DRAFT != 16 ]]; then
-  [[ $DRAFT == 18 && $CFG =~ ^(moqx|moqdev|cf)$ ]] || { echo "DRAFT=$DRAFT: only moqx, moqdev and cf are set up for it here" >&2; exit 2; }
+  [[ $DRAFT == 18 && $CFG =~ ^(moqx|moqdev|cf|aiomoqt)$ ]] || { echo "DRAFT=$DRAFT: only moqx, moqdev, cf and aiomoqt are set up for it here" >&2; exit 2; }
   [[ $CFG != moqx ]] || export MOQX_VERSIONS=16,18
 fi
 

@@ -1,0 +1,29 @@
+# One relay and two load hosts on small AMD Turin VMs, in one availability
+# domain. Your account settings go in deployments/oci.local.toml, with an amd64
+# image as image_ocid_amd64 when image_ocid is an Arm one.
+provider = "oci"
+region   = "us-chicago-1"
+arch     = "amd64"
+tag      = "e6"
+
+[[nodes]]
+name      = "relay"
+instance  = "VM.Standard.E6.Flex"
+ocpus     = 3
+memory_gb = 16
+vcpus     = 6
+roles     = ["relay"]
+
+[[nodes]]
+name      = "load-1"
+instance  = "VM.Standard.E6.Flex"
+ocpus     = 2
+memory_gb = 16
+roles     = ["subscriber"]
+
+[[nodes]]
+name      = "load-2"
+instance  = "VM.Standard.E6.Flex"
+ocpus     = 2
+memory_gb = 16
+roles     = ["subscriber", "publisher"]

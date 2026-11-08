@@ -135,6 +135,18 @@ class LiveDashboard(unittest.TestCase):
             facts = dict(live.point_info(out)['facts'])
         self.assertEqual((facts['Tool'], facts['Ramp']), ('aiomoqt, K=20 per worker', '10 subscribers/s'))
 
+    def test_an_aiomoqt_relay_reports_its_package_version(self):
+        with tempfile.TemporaryDirectory() as d:
+            sweep = Path(d) / 'sweep-p1-s1'
+            sweep.mkdir()
+            out = sweep_point(sweep, 'aio-aiomoqt1-2b-720', '1')
+            pt = json.loads((out / 'sweep-point.json').read_text())
+            (out / 'sweep-point.json').write_text(json.dumps(dict(pt, relay='aiomoqt')))
+            (out / 'run.txt').write_text('== adaptive vs aiomoqt/picoquic draft 18  600s\n')
+            (out / 'versions.txt').write_text('aiomoqt-relay: 0.15.0.dev9+g1049da0 aiopquic 0.8.0\naiomoqt:        aiomoqt: x\n')
+            facts = dict(live.point_info(out)['facts'])
+        self.assertEqual(facts['Relay'], 'aiomoqt/picoquic 0.15.0.dev9+g1049da0, 1 thread')
+
     def test_current_point_is_the_newest_unfinished_one(self):
         with tempfile.TemporaryDirectory() as d:
             sweep = Path(d) / 'sweep-p1-s1'
