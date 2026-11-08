@@ -225,6 +225,30 @@ class Plans(unittest.TestCase):
         self.assertEqual({p['env']['RELAY'] for p in points}, {('aiomoqt', 'plan')})
         self.assertEqual(points[0]['env']['THREADS'], (1, 'plan'))
 
+    def test_the_relay_efficiency_plan(self):
+        plan = config.load_plan('relay-efficiency-c7a')
+        points = plan.points(plan.suites[0])
+        # moqx points set no RELAY, so they come first in the sweep.
+        self.assertEqual([p['run'] for p in points], [
+            'aio-pgo4-2b-720-c7a4x', 'aio-pgo4-2b-1080-c7a4x', 'aio-moqdev4-2b-720-c7a4x', 'aio-moqdev4-2b-1080-c7a4x',
+            'aio-cf4-2b-720-c7a4x', 'aio-cf4-2b-1080-c7a4x', 'aio-aiomoqt1-2b-720-c7a4x', 'aio-aiomoqt1-2b-1080-c7a4x'])
+        self.assertEqual({p['env']['RELAY_CPUS'] for p in points}, {('4-7', 'test')})
+        self.assertEqual({p['env']['AIOMOQT_ADMISSION_CPU'][0] for p in points if p['env'].get('RELAY', ('',))[0] == 'aiomoqt'},
+                         {0})
+
+    def test_relay_cpus_must_be_a_cpu_list(self):
+        test = dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=10, seconds=10, relay_cpus='4 to 7')
+        with self.assertRaisesRegex(config.ConfigError, 'relay_cpus'):
+            config.Suite('s', dict(test=[test]))
+
+    def test_the_aiomoqt_relay_gate_follows_its_setting(self):
+        def cmd(**env):
+            with tempfile.TemporaryDirectory() as d:  # no relays.local.sh
+                return subprocess.run(['bash', '-c', f'source {ROOT}/lib/run.sh; relay_cmd aiomoqt 1'], cwd=d,
+                                      capture_output=True, text=True, env={'PATH': '/usr/bin:/bin', **env}).stdout
+        self.assertIn('--admission-cpu 87 ', cmd())
+        self.assertIn('--admission-cpu 0 ', cmd(AIOMOQT_ADMISSION_CPU='0'))
+
     def test_threads_all_comes_from_the_relay_node(self):
         tree = self.in_tree(self.DEPLOYMENT, self.SUITE % (1, 'moqperf'), 'deployment = "x"\nsuites = ["x"]\n')
         plan = config.load_plan('x', tree)

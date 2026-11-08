@@ -102,12 +102,32 @@ def point(d):
     if 'build' not in pt:
         m = re.search(r'-(pgo|reg)\d*-', d.name)
         pt['build'] = m.group(1) if m else '?'
+    m = re.search(r'relay_cpus=(\S+)', run_txt)
+    pt['relay_cpus'] = cpu_count(m.group(1)) if m else None
     m = re.search(r'^threads=(\d+)', run_txt, re.M)
     env = pt.get('env', {})
     pt['threads'] = int(env.get('THREADS') or (m.group(1) if m else 0))
     pt['threshold_ms'] = int(env.get('LATENCY_MS') or 500)
     pt['load_boxes'] = len(subs(d))
     return pt
+
+
+def cpu_count(spec):
+    """CPUs in a Linux CPU list such as 2-5,8; None for the default."""
+    if not re.fullmatch(r'\d+(-\d+)?(,\d+(-\d+)?)*', spec):
+        return None
+    return sum(int(b or a) - int(a) + 1 for a, _, b in (p.partition('-') for p in spec.split(',')))
+
+
+def efficiency(pt, pl, subs):
+    """The relay's cost at the plateau: per measured core of its process, and memory per subscriber."""
+    cores = sum(x['moqx_cores'] for x in pl) / len(pl)
+    gbps = sum(x['moqx_tx_gbps'] for x in pl) / len(pl)
+    rss = max(x['relay_rss_gb'] for x in pl)
+    return {'relay_cpus': pt.get('relay_cpus'), 'relay_rss_gb': rss,
+            'relay_mb_per_sub': round(1024 * rss / subs, 2) if subs else None,
+            'subs_per_core': round(subs / cores) if cores > 0 else None,
+            'mbps_per_core': round(1000 * gbps / cores) if cores > 0 else None}
 
 
 def subs(d):
@@ -208,6 +228,7 @@ def aio_run(d, pt, ds):
         'loadbox_busiest_cpu_pct': round(max(x['loadbox_busiest_cpu_pct'] for x in pl), 1),
         'udp_buf_errors': sum(x['udp_buf_errors'] for x in rs), 'loss_pct_max': max(x['loss_pct'] for x in latency),
         'limit': limit_of(pl, reached), 'tool': TOOLS['aio'], **relay_fields(pt)})
+    ds['runs'][-1].update(efficiency(pt, pl, ds['runs'][-1]['subs_plateau']))
 
 
 def mp_run(d, pt, ds):
@@ -267,6 +288,7 @@ def mp_run(d, pt, ds):
         'udp_buf_errors': sum(x['udp_buf_errors'] for x in rs), 'loss_pct_max': None,
         'resets_total': max(x['mp_resets'] for x in rs), 'failures_total': max(x['mp_failures'] for x in rs),
         'limit': limit_of(pl, reached), **relay_fields(pt)})
+    ds['runs'][-1].update(efficiency(pt, pl, ds['runs'][-1]['subs_plateau']))
 
 
 def run_dirs(sweep):
@@ -305,8 +327,9 @@ def main():
         print(k, len(v), (out / f'{k}.json').stat().st_size, 'bytes')
     for r in ds['runs']:
         print({k: r.get(k) for k in ('run', 'subs_plateau', 'p90_median_ms', 'mp_lat_max_median_ms', 'moqx_tx_gbps',
-                                     'moqx_tx_mpps', 'moqx_cores', 'relay_busiest_cpu_pct', 'loadbox_busy_max_pct',
-                                     'limit')})
+                                     'moqx_tx_mpps', 'moqx_cores', 'relay_cpus', 'subs_per_core', 'mbps_per_core',
+                                     'relay_rss_gb', 'relay_mb_per_sub', 'relay_busiest_cpu_pct',
+                                     'loadbox_busy_max_pct', 'limit')})
     for why in skipped:
         print('SKIPPED', why)
     return 1 if not ds['runs'] else 0
