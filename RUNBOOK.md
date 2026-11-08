@@ -317,7 +317,7 @@ Choose CPUs using the host's topology. `relay-affinity.txt` records every
 thread's initial allowed CPU list. This option supports this script's
 `fixed`, `adaptive`, `loadsim`, and `moqbench` paths. A suite test sets it
 with `relay_cpus`; `aiomoqt_admission_cpu` sets aiomoqt-relay's admission gate
-(default 87, the public relay's; 0 turns it off).
+(default 87, the public relay's; 0 turns it off). `moqx_stack = "picoquic"` runs moqx on its picoquic listener, with the bench certificate and picoquic's `bbr`.
 
 The report leads with the combined active count and received Mbps.
 `combined.csv` reports approximate sums with the whole timestamp span bounded to five seconds;

@@ -129,7 +129,10 @@ MOQX_PTI=${MOQX_PTI:-}
 # MOQX_JEMALLOC=0 drops -j; MOQX_THP=0 drops MALLOC_CONF.
 MOQX_JFLAG="-j"; [[ ${MOQX_JEMALLOC:-1} == 0 ]] && MOQX_JFLAG=""
 MOQX_MALLOC="MALLOC_CONF=thp:always "; [[ ${MOQX_THP:-1} == 0 ]] && MOQX_MALLOC=""
-MOQX_CC=${MOQX_CC:-bbr2}
+# Listener stack. picoquic needs a real certificate and has no bbr2.
+MOQX_STACK=${MOQX_STACK:-mvfst}
+LABEL[moqx]=moqx/$MOQX_STACK
+if [[ $MOQX_STACK == picoquic ]]; then MOQX_CC=${MOQX_CC:-bbr}; else MOQX_CC=${MOQX_CC:-bbr2}; fi
 # MoQT drafts moqx advertises. Every relay here runs draft 16; relay-load.sh adds 18
 # for the draft-18 moq-bench build, which only moqx can serve.
 MOQX_VERSIONS=${MOQX_VERSIONS:-16}
@@ -174,11 +177,12 @@ relay_cmd() {
       [[ $rt == workers || $rt == uring || $rt == shared ]] || return 2
       echo "MOQDEV_PIN=$pin MOQDEV_CC=$cc MOQDEV_AUX_THREADS=$aux MOQDEV_RUNTIME=$rt moq-dev/run.sh $threads" ;;
     moqx)
-      local kv inject=""
+      local kv inject="" tls="--insecure"
+      if [[ $MOQX_STACK == picoquic ]]; then tls="--quic-stack picoquic --cert \$PWD/bench/cert.pem --key \$PWD/bench/key.pem"; fi
       for kv in "num_gro_buffers=$MOQX_GRO" "write_limit_rtt_fraction=$MOQX_WLRF" "pacing_tick_interval_us=$MOQX_PTI"; do
         [[ -n ${kv#*=} ]] && inject+="; print \"    ${kv%%=*}: ${kv#*=}\""
       done
-      echo "awk '/^  mvfst:/{print$inject; next} {print}' moqx/config.bench.yaml > /tmp/cfg.yaml && ${MOQX_MALLOC}MOQX_BIN=\$PWD/moqx/moqx MOQX_RESOLVED_CONFIG=/tmp/r.yaml LD_LIBRARY_PATH=$RROOT/moxygen/lib moqx/moqx-run.sh --config /tmp/cfg.yaml --insecure $MOQX_JFLAG --no-cache $MOQX_PMTU_FLAG --bind :: --port 4533 --admin-port 4500 --threads $threads --cc $MOQX_CC --send-pkts $MOQX_SEND --recv-pkts $MOQX_RECV --relay-thread --local-forwarders --udp-buffer 33554432 --moqt-versions $MOQX_VERSIONS" ;;
+      echo "awk '/^  mvfst:/{print$inject; next} {print}' moqx/config.bench.yaml > /tmp/cfg.yaml && ${MOQX_MALLOC}MOQX_BIN=\$PWD/moqx/moqx MOQX_RESOLVED_CONFIG=/tmp/r.yaml LD_LIBRARY_PATH=$RROOT/moxygen/lib moqx/moqx-run.sh --config /tmp/cfg.yaml $tls $MOQX_JFLAG --no-cache $MOQX_PMTU_FLAG --bind :: --port 4533 --admin-port 4500 --threads $threads --cc $MOQX_CC --send-pkts $MOQX_SEND --recv-pkts $MOQX_RECV --relay-thread --local-forwarders --udp-buffer 33554432 --moqt-versions $MOQX_VERSIONS" ;;
     # The public relay's settings (aiomoqt deploy/aiomoqt-relay/relay.toml), gate from AIOMOQT_ADMISSION_CPU; one event loop, so threads is unused.
     aiomoqt) echo "aiomoqt/.venv/bin/aiomoqt-relay --dual --bind 0.0.0.0 --port 4533 --cert bench/cert.pem --key bench/key.pem --draft 22,20,18,16,14 --watchdog 30 --cache-bytes 268435456 --admission-cpu ${AIOMOQT_ADMISSION_CPU:-87} --cc-algo bbr" ;;
     cf)     echo "RUST_LOG=warn TOKIO_WORKER_THREADS=$threads MOQ_UDP_BUFFER_BYTES=33554432 moq-rs/moq-relay-ietf --bind 0.0.0.0:4533 --tls-cert bench/cert.pem --tls-key bench/key.pem --coordinator-file /tmp/c.json" ;;
