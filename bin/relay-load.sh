@@ -255,6 +255,8 @@ PER=$(( (SUBS + ${#SUBHOSTS[@]} - 1) / ${#SUBHOSTS[@]} ))
 # AIOMOQT_ENV: environment for every aiomoqt process, e.g. MALLOC_ARENA_MAX=2
 # STOP_AT_CEILING=1: adaptive ends at the first host's ceiling instead of running on to -t
 # HOLD=SEC: adaptive steps and holds (--hold SEC --confirm CONFIRM) instead of ramping
+# JOIN_SEARCH=B0: the first sub host searches the largest join batch (--join-burst) over its SEARCHER_SUBS;
+#   the others hold PER subscribers as the relay's base load
 PY="${AIOMOQT_ENV:+$AIOMOQT_ENV }aiomoqt/.venv/bin/python -u"
 AIOMOQT_EXTRA=${AIOMOQT_EXTRA:-}   # e.g. "--max-queued-bytes N --max-inflight-bytes N"
 
@@ -304,7 +306,12 @@ wait"
     BENCH="-m aiomoqt.tools.adaptive_bench"
     FIXED_FLAG=""
     SUB_EXIT="" SUB_HOLD=""
-    if [[ ${HOLD:-0} != 0 ]]; then
+    if [[ -n ${JOIN_SEARCH:-} ]]; then
+      [[ $TOOL == adaptive && $JOIN_SEARCH =~ ^[1-9][0-9]*$ && ${SEARCHER_SUBS:-} =~ ^[1-9][0-9]*$ ]] || {
+        echo "JOIN_SEARCH and SEARCHER_SUBS: positive counts, for the adaptive tool" >&2; exit 2;
+      }
+      JOIN_FLAGS="--join-burst $JOIN_SEARCH --join-max ${JOIN_MAX:-$SEARCHER_SUBS} --join-bound ${JOIN_BOUND:-1000} --trial-gap ${TRIAL_GAP:-5} --base-s ${BASE_S:-45}"
+    elif [[ ${HOLD:-0} != 0 ]]; then
       [[ $TOOL == adaptive && $HOLD =~ ^[0-9]+([.][0-9]+)?$ && ${CONFIRM:-30} =~ ^[0-9]+([.][0-9]+)?$ ]] || {
         echo "HOLD: seconds, for the adaptive tool" >&2; exit 2;
       }
@@ -325,11 +332,21 @@ wait"
       FIXED_FLAG=--fixed-subs
     fi
     PUB_CMD="$PY $BENCH moqt://$PUB_ADDR:$RELAY_PORT$URLPATH $COMMON --role pub -t $(( DUR + 30 ))"
-    sub_cmd() {
+    sub_cmd() {  # <first id> <count> <host index>
+      local count=$2 filter=$SUB_FILTER limits=$SUB_LIMITS role=$SUB_HOLD
+      if [[ -n ${JOIN_SEARCH:-} ]]; then
+        if (( $3 == 0 )); then
+          # The searcher: join latency is judged on the first object, so no wait for a group start.
+          count=$SEARCHER_SUBS filter=latest-object role=$JOIN_FLAGS
+        else
+          # Base load: holds its subscribers whatever the latency; the searcher's watchers judge the relay.
+          limits="--latency-threshold 1000000" role=""
+        fi
+      fi
       # Background jobs start with SIGINT ignored; the first host's ceiling ends the others with it.
       echo "env --default-signal=INT $PY $BENCH moqt://$RPRIV:$RELAY_PORT$URLPATH $COMMON --role sub \
---start-subs $STEP_SUBS --step-subs $STEP_SUBS --max-subs $2 $FIXED_FLAG -j $JOIN -S $STAGGER \
---sub-filter $SUB_FILTER $SUB_LIMITS $SUB_HOLD $SUB_EXIT --report /tmp/loadreport.csv -t $DUR"
+--start-subs $STEP_SUBS --step-subs $STEP_SUBS --max-subs $count $FIXED_FLAG -j $JOIN --stagger $STAGGER \
+--sub-filter $filter $limits $role $SUB_EXIT --report /tmp/loadreport.csv -t $DUR"
     }
     WAIT=$(( DUR + 60 ))
     ;;
@@ -489,7 +506,7 @@ sleep 3
 cpu_snap a
 i=0
 for h in "${SUBHOSTS[@]}"; do
-  remote_bg "$h" loadsub "$(sub_cmd $(( i * PER + 1 )) "$PER")" || exit 1
+  remote_bg "$h" loadsub "$(sub_cmd $(( i * PER + 1 )) "$PER" "$i")" || exit 1
   i=$((i + 1))
 done
 WAITERS=()

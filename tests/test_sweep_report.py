@@ -151,6 +151,44 @@ class SweepReport(unittest.TestCase):
             self.assertEqual((run['subs_sustained'], run['subs_per_core'], run['p90_median_ms']), (None, None, None))
             shutil.rmtree(self.tmp / 'aio-pgo60-2b-1080')
 
+    def join_run(self, searcher, relay_log=''):
+        d = self.run_dir('aio-pgo60-2b-1080', 'aio', ['adaptive-sub0.log', 'adaptive-sub1.log'], 31,
+                         threads=lambda t: 10 + 100 * t)
+        with (d / 'sub0.log').open('a') as f:
+            f.writelines(f'  {line}\n' for line in searcher)
+        (d / 'relay.log').write_text(relay_log)
+        return sr.report(self.tmp)[0]
+
+    TRIAL = ('Join trial:  B={} {}, {}/{} joined within 1000 ms, SUBSCRIBE_OK p50/p99 3/{} ms, '
+             'first object p50/p99 40/{} ms, burst {} ms')
+
+    def test_join_search_rows_and_confirmed_batch(self):
+        ds = self.join_run([self.TRIAL.format(5, 'passed', 5, 5, 9, 80, 120), self.TRIAL.format(8, 'passed', 8, 8, 12, 95, 140),
+                            self.TRIAL.format(12, 'failed (joins late)', 10, 12, 30, 1400, 1600),
+                            self.TRIAL.format(10, 'passed', 10, 10, 15, 300, 380),
+                            'Join burst:  10 subscribers at once (confirmed 3x)'])
+        run = ds['runs'][0]
+        self.assertEqual({k: run[k] for k in ('join_burst', 'join_burst_confirmed', 'join_burst_floor', 'relay_crashed')},
+                         {'join_burst': 10, 'join_burst_confirmed': 3, 'join_burst_floor': False, 'relay_crashed': False})
+        self.assertEqual([(r['batch'], r['passed'], r['joined'], r['first_p99_ms'], r['burst_ms']) for r in ds['joins']],
+                         [(5, True, 5, 80, 120), (8, True, 8, 95, 140), (12, False, 10, 1400, 1600), (10, True, 10, 300, 380)])
+        self.assertEqual(ds['joins'][2]['reason'], 'joins late')
+
+    def test_join_burst_at_a_cap_is_a_floor_and_a_crash_is_flagged(self):
+        ds = self.join_run([self.TRIAL.format(5, 'passed', 5, 5, 9, 80, 120), 'Join burst:  5 subscribers at once (confirmed 3x) (pool-limited)'],
+                           relay_log='*** Signal 11 (SIGSEGV) (0x0) received by PID 1\nSegmentation fault (core dumped)\n')
+        run = ds['runs'][0]
+        self.assertEqual((run['join_burst'], run['join_burst_floor'], run['relay_crashed']), (5, True, True))
+
+    def test_a_clean_sigterm_is_not_a_crash(self):
+        ds = self.join_run([], relay_log='*** Aborted at 1794172406 ***\n*** Signal 15 (SIGTERM) (0x363433) received by PID 1\n')
+        self.assertFalse(ds['runs'][0]['relay_crashed'])
+
+    def test_join_burst_not_demonstrated(self):
+        ds = self.join_run(['Join burst:  not demonstrated (relay did not recover after B=5)'])
+        run = ds['runs'][0]
+        self.assertEqual((run['join_burst'], run['join_burst_note'], ds['joins']), (None, 'relay did not recover after B=5', []))
+
     def test_cpu_count(self):
         self.assertEqual([sr.cpu_count(s) for s in ('4-7', '2-5,8', '0', 'default')], [4, 5, 1, None])
 
