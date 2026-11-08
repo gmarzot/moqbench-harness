@@ -189,7 +189,7 @@ def sustained(d, confirm_s):
 
 
 def join_search(d, rid):
-    """adaptive_bench --join-search: each trial's batch and join latency, and the confirmed batch the relay absorbs."""
+    """adaptive_bench --join-burst: each trial's batch and join latency, and the confirmed batch the relay absorbs."""
     trials, burst = [], {'join_burst': None, 'join_burst_confirmed': None, 'join_burst_floor': None,
                          'join_burst_note': None}
     for f in subs(d):

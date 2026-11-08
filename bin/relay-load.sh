@@ -255,7 +255,7 @@ PER=$(( (SUBS + ${#SUBHOSTS[@]} - 1) / ${#SUBHOSTS[@]} ))
 # AIOMOQT_ENV: environment for every aiomoqt process, e.g. MALLOC_ARENA_MAX=2
 # STOP_AT_CEILING=1: adaptive ends at the first host's ceiling instead of running on to -t
 # HOLD=SEC: adaptive steps and holds (--hold SEC --confirm CONFIRM) instead of ramping
-# JOIN_SEARCH=B0: the first sub host searches the largest join batch (--join-search) over its SEARCHER_SUBS;
+# JOIN_SEARCH=B0: the first sub host searches the largest join batch (--join-burst) over its SEARCHER_SUBS;
 #   the others hold PER subscribers as the relay's base load
 PY="${AIOMOQT_ENV:+$AIOMOQT_ENV }aiomoqt/.venv/bin/python -u"
 AIOMOQT_EXTRA=${AIOMOQT_EXTRA:-}   # e.g. "--max-queued-bytes N --max-inflight-bytes N"
@@ -310,7 +310,7 @@ wait"
       [[ $TOOL == adaptive && $JOIN_SEARCH =~ ^[1-9][0-9]*$ && ${SEARCHER_SUBS:-} =~ ^[1-9][0-9]*$ ]] || {
         echo "JOIN_SEARCH and SEARCHER_SUBS: positive counts, for the adaptive tool" >&2; exit 2;
       }
-      JOIN_FLAGS="--join-search $JOIN_SEARCH --join-max ${JOIN_MAX:-$SEARCHER_SUBS} --join-bound ${JOIN_BOUND:-1000} --trial-gap ${TRIAL_GAP:-5} --base-s ${BASE_S:-45}"
+      JOIN_FLAGS="--join-burst $JOIN_SEARCH --join-max ${JOIN_MAX:-$SEARCHER_SUBS} --join-bound ${JOIN_BOUND:-1000} --trial-gap ${TRIAL_GAP:-5} --base-s ${BASE_S:-45}"
     elif [[ ${HOLD:-0} != 0 ]]; then
       [[ $TOOL == adaptive && $HOLD =~ ^[0-9]+([.][0-9]+)?$ && ${CONFIRM:-30} =~ ^[0-9]+([.][0-9]+)?$ ]] || {
         echo "HOLD: seconds, for the adaptive tool" >&2; exit 2;
