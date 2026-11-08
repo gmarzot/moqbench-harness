@@ -1,7 +1,7 @@
 description = "aiomoqt-relay on a 3-OCPU E6 VM, the build and settings of the public relay"
 deployment  = "oci-e6-small"
 relays      = ["aiomoqt:src"]
-suites      = ["aiomoqt-relay-e6"]
+suites      = ["aiomoqt-relay-small"]
 threads     = 1
 slo_ms      = 500
 budget      = { hours = 1.5 }

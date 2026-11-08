@@ -1,0 +1,24 @@
+# One relay and two load hosts on AMD Genoa (one core per vCPU), in one cluster
+# placement group. 2xlarge for its 3.125 Gbps network baseline; xlarge's 1.56
+# would cap 1080p. Your account settings go in deployments/aws.local.toml.
+provider = "aws"
+region   = "us-west-2"
+zone     = "us-west-2a"
+arch     = "amd64"
+tag      = "c7a"
+
+[[nodes]]
+name     = "relay"
+instance = "c7a.2xlarge"
+vcpus    = 8
+roles    = ["relay"]
+
+[[nodes]]
+name     = "load-1"
+instance = "c7a.2xlarge"
+roles    = ["subscriber"]
+
+[[nodes]]
+name     = "load-2"
+instance = "c7a.2xlarge"
+roles    = ["subscriber", "publisher"]
