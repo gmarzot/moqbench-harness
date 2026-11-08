@@ -1153,22 +1153,7 @@ flamegraph of a link-limited run tells you nothing.
 
 # Appendix B — Preflight and harness scripts
 
-In `aws/` (named for where they were first used; they work against any host
-pair):
-
-| script | does |
-|---|---|
-| `tune-client.sh` | sysctls and NIC rings; run on **both** hosts |
-| `start-relay.sh` | relay with tuned flags, jemalloc, THP, and the UDP sysctls it recommends |
-| `build-aiomoqt.sh` | load generator from source, handling the four silent build caches of Appendix C |
-| `run-bench.sh` | one split-host run, fresh namespace per run |
-| `pub.sh` / `sub.sh` | publisher and subscriber halves |
-| `bdp-sweep.sh` | throughput versus emulated RTT, netem layered over fq_codel |
-| `obj-sweep.sh` / `pub-sweep.sh` | object size and parallel stream sweeps |
-| `conc-pub.sh` | separates per-connection from per-host limits |
-| `loopback-sweep.sh` | same-host control, no NIC in the path |
-| `start-pqperf.sh` | `picoquicdemo` QUIC-PERF server, the no-Python control |
-| `cleanup-perf.sh` | removes the footprint; **run it, and verify the qdisc afterwards** |
+In `bin/`: `testbed-provision.sh` builds the tools, `testbed-tune.sh` applies and checks host tuning, `bw-baseline.sh` measures the path, and `relay-load.sh` runs one point. `moqbench` drives them from a plan; see `RUNBOOK.md`.
 
 ---
 

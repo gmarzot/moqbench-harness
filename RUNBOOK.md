@@ -99,10 +99,7 @@ Dashboards, without exposing anything publicly:
 
 `:9100` is node_exporter (both hosts), `:4500` is moqx's admin server when the
 relay is up — `/metrics`, `/state`, `/info`, `/config`, `/logs`. Point the local
-Prometheus/Grafana stack (moqx PR #539) at them. For moqx's single-file
-dashboard (`tools/metrics-dashboard.html`) use `bin/dash.py`, which proxies `/metrics` from the same
-origin — moqx's admin server sends no CORS header, so a browser pointed
-straight at it fails.
+Prometheus/Grafana stack (moqx PR #539) at them.
 
 ---
 
@@ -229,60 +226,6 @@ Statuses: `ok`, `SLO_<n>ms`, `SHED_<n>`, `RESETS_<n>`, `CLIENT_BOUND`,
 `CLIENT_CORE_BOUND`, `PUBLISH_FAILED`, `NO_DATA`.
 
 ---
-
-### Start moqx alongside an existing relay
-
-This installs the checksum-pinned v0.3.6 Linux x86-64 release into
-`~/Projects/moqx-standalone/v0.3.6` and starts only the `moqx-4433` systemd
-service. Run from the harness directory on your laptop:
-
-```bash
-./bin/testbed-ssh.sh relay 'bash -s' < bin/moqx-standalone-host.sh
-```
-
-The host script uses passwordless sudo for its service and, only if missing,
-`libjemalloc2`. It preserves the listener on UDP 4533 and checks that its
-process identity and existing thread affinities remain unchanged. It refuses
-occupied moqx ports, CPU overlap, or insufficient kernel socket-buffer limits;
-it never changes another relay's affinity or host-wide sysctls. This is a
-standalone path: do not use `testbed-provision.sh` or `relay-load.sh` to start
-it alongside another running relay, since those scripts stop other relays.
-
-Configuration:
-
-- UDP 4433, raw QUIC and WebTransport (`/moq-relay`), draft 16, development TLS.
-- Admin HTTP on **127.0.0.1:4501**, avoiding the other relay's admin port.
-- mvfst/BBR2 with pacing, GSO, 8 GRO buffers, 48 send packets and 64 receive
-  packets per loop, 32 MiB socket buffers, and PMTU probing disabled.
-- Three IO workers plus a dedicated relay execution thread; local forwarders
-  enabled and object caching disabled. jemalloc is preloaded and verified.
-- Four separate cores, default logical CPUs `0,10,12,14`. This default suits
-  a 16-vCPU host whose other relay is pinned to `2,4,6,8`; actual topology and
-  the existing listener's affinities are checked before installation. Override
-  with a remote environment assignment when needed:
-  `./bin/testbed-ssh.sh relay 'MOQX_CPUS=0,2,4,6 bash -s' < bin/moqx-standalone-host.sh`.
-
-Review the exact config locally with
-`bash bin/moqx-standalone-host.sh --print-config`. The pinned release lacks
-`write_limit_rtt_fraction` and `pacing_tick_interval_us`; this profile omits
-those fields and validates with `--strict_config` before launch.
-
-On the relay host:
-
-```bash
-systemctl status moqx-4433 --no-pager
-journalctl -u moqx-4433 -f
-curl -fsS http://127.0.0.1:4501/info
-sudo systemctl stop moqx-4433     # stops only this service
-sudo systemctl start moqx-4433
-```
-
-The installer does not enable the service at boot and refuses to overwrite
-an active service. Configuration and artifact hashes are recorded in
-`~/Projects/moqx-standalone/build-4433.txt`; the resolved config is
-`config-4433.yaml` beside it. This is a performance-oriented starting profile,
-not a measured optimum. For comparable scaling measurements, load only one
-relay at a time: separate cores still share the NIC and memory bandwidth.
 
 ### Fixed subscriber population
 
