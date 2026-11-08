@@ -315,7 +315,9 @@ source and temporary script hashes. No package rebuild is needed.
 `RELAY_CPUS` applies affinity before relay startup, inherited by its threads.
 Choose CPUs using the host's topology. `relay-affinity.txt` records every
 thread's initial allowed CPU list. This option supports this script's
-`fixed`, `adaptive`, `loadsim`, and `moqbench` paths.
+`fixed`, `adaptive`, `loadsim`, and `moqbench` paths. A suite test sets it
+with `relay_cpus`; `aiomoqt_admission_cpu` passes aiomoqt-relay's admission gate
+(`--admission-cpu`) only when set, for relays that still have it; unset leaves the relay's own default. `moqx_stack = "picoquic"` runs moqx on its picoquic listener, with the bench certificate and picoquic's `bbr`.
 
 The report leads with the combined active count and received Mbps.
 `combined.csv` reports approximate sums with the whole timestamp span bounded to five seconds;

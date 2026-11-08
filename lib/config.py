@@ -6,6 +6,7 @@ builds and tuning of one series, and is what `moqbench run` executes.
 """
 import json
 from pathlib import Path
+import re
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +31,8 @@ SETTINGS = {
     'mp_ramp': ('MP_RAMP', 64), 'moqx_send': ('MOQX_SEND', 16), 'moqx_recv': ('MOQX_RECV', 256), 'moqx_gro': ('MOQX_GRO', ''),
     'aiomoqt_env': ('AIOMOQT_ENV', ''),
     'aiomoqt_extra': ('AIOMOQT_EXTRA', ''), 'stop_at_ceiling': ('STOP_AT_CEILING', 0),
+    'relay_cpus': ('RELAY_CPUS', ''), 'aiomoqt_admission_cpu': ('AIOMOQT_ADMISSION_CPU', ''),
+    'moqx_stack': ('MOQX_STACK', 'mvfst'),
 }
 
 
@@ -232,6 +235,10 @@ class Suite:
                 raise ConfigError(f'{at}: video must be one of {", ".join(sorted(shapes))}')
             if test['type'] == 'ceiling' and test['tool'] != 'moqperf':
                 raise ConfigError(f'{at}: a ceiling test needs moqperf; aiomoqt backs off at the SLO')
+            if not re.fullmatch(r'(\d+(-\d+)?)(,\d+(-\d+)?)*', str(test.get('relay_cpus', '0'))):
+                raise ConfigError(f'{at}: relay_cpus must be a Linux CPU list such as "0-3"')
+            if test.get('moqx_stack', 'mvfst') not in ('mvfst', 'picoquic'):
+                raise ConfigError(f'{at}: moqx_stack must be mvfst or picoquic')
             positive_int(at, 'max_per_box', test.get('max_per_box'))
             positive_int(at, 'seconds', test.get('seconds'))
 

@@ -1,0 +1,132 @@
+description = "Each relay on the same 4 pinned cores, aiomoqt load from two hosts, ending at the latency SLO"
+requires = { subscriber = 2, publisher = 1 }
+
+[[test]]
+relay = "moqx"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 1600
+seconds = 300
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+
+[[test]]
+relay = "moqx"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 800
+seconds = 240
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+
+[[test]]
+relay = "moqx"
+suffix = "pico"
+note = "moqx's picoquic listener, with the bench certificate and picoquic's bbr"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 1600
+seconds = 300
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+moqx_stack = "picoquic"
+
+[[test]]
+relay = "moqx"
+suffix = "pico"
+note = "moqx's picoquic listener, with the bench certificate and picoquic's bbr"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 800
+seconds = 240
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+moqx_stack = "picoquic"
+
+[[test]]
+relay = "moqdev"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 1600
+seconds = 300
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+
+[[test]]
+relay = "moqdev"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 800
+seconds = 240
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+
+[[test]]
+relay = "cf"
+note = "Ramps slowly, since moq-rs stalled at larger steps"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 1600
+seconds = 400
+step_subs = 10
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+
+[[test]]
+relay = "cf"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 800
+seconds = 400
+step_subs = 10
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+
+[[test]]
+relay = "aiomoqt"
+note = "Admission gate off, so it ends at the SLO like the others; one event loop uses at most 2 of the 4 cores"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 1600
+seconds = 300
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+threads = 1
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 800
+seconds = 240
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+threads = 1

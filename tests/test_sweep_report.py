@@ -112,6 +112,19 @@ class SweepReport(unittest.TestCase):
         self.assertEqual((run['tool'], run['moqx_threads'], run['load_boxes'], run['threshold_ms']),
                          ('aiomoqt adaptive_bench', 60, 2, 500))
 
+    def test_efficiency_per_core(self):
+        d = self.run_dir('aio-pgo60-2b-1080', 'aio', ['adaptive-sub0.log', 'adaptive-sub1.log'], 31,
+                         threads=lambda t: 10 + 100 * t)
+        (d / 'run.txt').write_text('threads=4 relay_cpus=4-7 subscribers_per_host=5000\n')
+        run = sr.report(self.tmp)[0]['runs'][0]
+        self.assertEqual({k: run[k] for k in ('relay_cpus', 'subs_per_core', 'mbps_per_core', 'relay_rss_gb',
+                                              'relay_mb_per_sub')},
+                         {'relay_cpus': 4, 'subs_per_core': 1219, 'mbps_per_core': 5000, 'relay_rss_gb': 3.0,
+                          'relay_mb_per_sub': 1.26})
+
+    def test_cpu_count(self):
+        self.assertEqual([sr.cpu_count(s) for s in ('4-7', '2-5,8', '0', 'default')], [4, 5, 1, None])
+
     def test_moqperf_run(self):
         self.run_dir('mp-pgo60-2b-1080', 'mp', ['moqperf-sub0.log', 'moqperf-sub1.log'], 11)
         ds, skipped = sr.report(self.tmp)
