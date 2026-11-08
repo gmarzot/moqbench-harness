@@ -258,6 +258,17 @@ class Plans(unittest.TestCase):
             with self.assertRaisesRegex(config.ConfigError, why):
                 config.Suite('s', dict(test=[test]))
 
+    def test_the_graviton_plan(self):
+        plan = config.load_plan('relay-efficiency-c7gn')
+        self.assertEqual(plan.deployment.arch, 'arm64')
+        self.assertEqual([p['run'] for p in plan.points(plan.suites[0])], [
+            'aio-cf4-2b-720-c7gn4x-ramp', 'aio-cf4-2b-1080-c7gn4x-ramp', 'aio-aiomoqt1-2b-720-c7gn4x-ramp',
+            'aio-aiomoqt1-2b-1080-c7gn4x-ramp'])
+        held = plan.points(plan.suites[1])
+        self.assertEqual([p['run'] for p in held], ['aio-cf4-2b-720-c7gn4x', 'aio-cf4-2b-1080-c7gn4x',
+                                                    'aio-aiomoqt1-2b-720-c7gn4x', 'aio-aiomoqt1-2b-1080-c7gn4x'])
+        self.assertEqual({p['env']['HOLD'][0] for p in held}, {20})
+
     def test_hold_needs_seconds_and_the_aiomoqt_tool(self):
         base = dict(type='capacity', video='720p', max_per_box=10, seconds=10)
         for test, why in ((dict(base, tool='aiomoqt', hold_s=-1), 'hold_s must be seconds'),
