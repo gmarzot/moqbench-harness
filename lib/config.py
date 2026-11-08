@@ -33,8 +33,8 @@ SETTINGS = {
     'aiomoqt_extra': ('AIOMOQT_EXTRA', ''), 'stop_at_ceiling': ('STOP_AT_CEILING', 0),
     'relay_cpus': ('RELAY_CPUS', ''), 'aiomoqt_admission_cpu': ('AIOMOQT_ADMISSION_CPU', ''),
     'moqx_stack': ('MOQX_STACK', 'mvfst'), 'hold_s': ('HOLD', 0), 'confirm_s': ('CONFIRM', 30),
-    'join_steps': ('JOIN_STEPS', ''), 'join_step_s': ('JOIN_STEP_S', 15), 'base_s': ('BASE_S', 30),
-    'join_bound_ms': ('JOIN_BOUND', 1000),
+    'join_search': ('JOIN_SEARCH', ''), 'join_max': ('JOIN_MAX', ''), 'searcher_subs': ('SEARCHER_SUBS', ''),
+    'join_bound_ms': ('JOIN_BOUND', 1000), 'trial_gap_s': ('TRIAL_GAP', 5), 'base_s': ('BASE_S', 45),
 }
 
 
@@ -246,13 +246,12 @@ class Suite:
                     raise ConfigError(f'{at}: {key} must be seconds')
             if test.get('hold_s') and test['tool'] != 'aiomoqt':
                 raise ConfigError(f'{at}: hold_s needs the aiomoqt tool')
-            steps = str(test.get('join_steps', '')).split(',') if test.get('join_steps') else []
-            if steps:
-                if not all(re.fullmatch(r'\d+(\.\d+)?', s) and float(s) > 0 for s in steps) or \
-                        [float(s) for s in steps] != sorted(float(s) for s in steps):
-                    raise ConfigError(f'{at}: join_steps must be ascending joins per second, such as "10,25,50"')
+            if 'join_search' in test:
+                for key in ('join_search', 'searcher_subs'):
+                    if not isinstance(test.get(key), int) or test[key] < 1:
+                        raise ConfigError(f'{at}: join_search needs join_search and searcher_subs as positive counts')
                 if test['tool'] != 'aiomoqt' or test.get('hold_s'):
-                    raise ConfigError(f'{at}: join_steps needs the aiomoqt tool and no hold_s')
+                    raise ConfigError(f'{at}: join_search needs the aiomoqt tool and no hold_s')
             positive_int(at, 'max_per_box', test.get('max_per_box'))
             positive_int(at, 'seconds', test.get('seconds'))
 

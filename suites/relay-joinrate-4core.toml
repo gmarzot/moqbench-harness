@@ -1,4 +1,4 @@
-description = "Each relay on the same 4 pinned cores holding half its load while new subscribers join at rising rates, at 720p and 1080p"
+description = "Each relay on the same 4 pinned cores under a base load, while one host finds the largest batch of new subscribers it admits at once, at 720p and 1080p"
 requires = { subscriber = 2, publisher = 1 }
 
 [[test]]
@@ -7,13 +7,15 @@ suffix = "join"
 type = "capacity"
 tool = "aiomoqt"
 video = "720p"
-max_per_box = 600
-seconds = 300
+max_per_box = 750
+seconds = 400
 step_subs = 50
 join_s = 2
 stop_at_ceiling = 1
 relay_cpus = "4-7"
-join_steps = "10,25,50,100,200"
+searcher_subs = 400
+join_search = 5
+join_max = 296
 
 [[test]]
 relay = "moqx"
@@ -22,12 +24,14 @@ type = "capacity"
 tool = "aiomoqt"
 video = "1080p"
 max_per_box = 400
-seconds = 300
+seconds = 400
 step_subs = 50
 join_s = 2
 stop_at_ceiling = 1
 relay_cpus = "4-7"
-join_steps = "10,25,50,100,200"
+searcher_subs = 400
+join_search = 5
+join_max = 296
 
 [[test]]
 relay = "moqx"
@@ -36,13 +40,15 @@ moqx_stack = "picoquic"
 type = "capacity"
 tool = "aiomoqt"
 video = "720p"
-max_per_box = 550
-seconds = 300
+max_per_box = 700
+seconds = 400
 step_subs = 50
 join_s = 2
 stop_at_ceiling = 1
 relay_cpus = "4-7"
-join_steps = "10,25,50,100,200"
+searcher_subs = 400
+join_search = 5
+join_max = 296
 
 [[test]]
 relay = "moqx"
@@ -52,12 +58,14 @@ type = "capacity"
 tool = "aiomoqt"
 video = "1080p"
 max_per_box = 300
-seconds = 300
+seconds = 400
 step_subs = 50
 join_s = 2
 stop_at_ceiling = 1
 relay_cpus = "4-7"
-join_steps = "10,25,50,100,200"
+searcher_subs = 300
+join_search = 5
+join_max = 222
 
 [[test]]
 relay = "moqdev"
@@ -65,13 +73,15 @@ suffix = "join"
 type = "capacity"
 tool = "aiomoqt"
 video = "720p"
-max_per_box = 450
-seconds = 300
+max_per_box = 550
+seconds = 400
 step_subs = 50
 join_s = 2
 stop_at_ceiling = 1
 relay_cpus = "4-7"
-join_steps = "10,25,50,100,200"
+searcher_subs = 400
+join_search = 5
+join_max = 296
 
 [[test]]
 relay = "moqdev"
@@ -80,27 +90,31 @@ type = "capacity"
 tool = "aiomoqt"
 video = "1080p"
 max_per_box = 350
-seconds = 300
+seconds = 400
 step_subs = 50
 join_s = 2
 stop_at_ceiling = 1
 relay_cpus = "4-7"
-join_steps = "10,25,50,100,200"
+searcher_subs = 350
+join_search = 5
+join_max = 259
 
 [[test]]
 relay = "cf"
 suffix = "join"
-note = "Smaller groups, since moq-rs stalled at larger join steps"
+note = "Groups of 10, since moq-rs stalled at larger join steps"
 type = "capacity"
 tool = "aiomoqt"
 video = "720p"
-max_per_box = 400
-seconds = 300
+max_per_box = 380
+seconds = 400
 step_subs = 10
-join_s = 1
+join_s = 2
 stop_at_ceiling = 1
 relay_cpus = "4-7"
-join_steps = "10,25,50,100,200"
+searcher_subs = 400
+join_search = 5
+join_max = 280
 
 [[test]]
 relay = "cf"
@@ -108,13 +122,15 @@ suffix = "join"
 type = "capacity"
 tool = "aiomoqt"
 video = "1080p"
-max_per_box = 280
-seconds = 300
+max_per_box = 270
+seconds = 400
 step_subs = 10
-join_s = 1
+join_s = 2
 stop_at_ceiling = 1
 relay_cpus = "4-7"
-join_steps = "10,25,50,100,200"
+searcher_subs = 300
+join_search = 5
+join_max = 210
 
 [[test]]
 relay = "aiomoqt"
@@ -124,12 +140,14 @@ type = "capacity"
 tool = "aiomoqt"
 video = "720p"
 max_per_box = 300
-seconds = 300
+seconds = 400
 step_subs = 25
 join_s = 2
 stop_at_ceiling = 1
 relay_cpus = "4-7"
-join_steps = "10,25,50,100,200"
+searcher_subs = 300
+join_search = 5
+join_max = 216
 
 [[test]]
 relay = "aiomoqt"
@@ -138,10 +156,12 @@ threads = 1
 type = "capacity"
 tool = "aiomoqt"
 video = "1080p"
-max_per_box = 175
-seconds = 300
+max_per_box = 150
+seconds = 400
 step_subs = 25
 join_s = 2
 stop_at_ceiling = 1
 relay_cpus = "4-7"
-join_steps = "10,25,50,100,200"
+searcher_subs = 200
+join_search = 5
+join_max = 144

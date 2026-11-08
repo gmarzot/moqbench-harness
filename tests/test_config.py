@@ -254,13 +254,14 @@ class Plans(unittest.TestCase):
         self.assertEqual([p['run'] for p in points], [f'aio-{r}-2b-{v}-c7a4x{s}' for r, s in (
             ('pgo4', '-join'), ('pgo4', '-pico-join'), ('moqdev4', '-join'), ('cf4', '-join'), ('aiomoqt1', '-join'))
             for v in ('720', '1080')])
-        self.assertEqual({p['env']['JOIN_STEPS'] for p in points}, {('10,25,50,100,200', 'test')})
+        self.assertEqual({p['env']['JOIN_SEARCH'] for p in points}, {(5, 'test')})
+        self.assertEqual(points[0]['env']['SEARCHER_SUBS'], (400, 'test'))
         self.assertEqual({p['env']['HOLD'][0] for p in points}, {0})
 
-    def test_join_steps_must_ascend_and_use_aiomoqt(self):
+    def test_join_search_needs_counts_and_aiomoqt(self):
         base = dict(type='capacity', video='720p', max_per_box=10, seconds=10, tool='aiomoqt')
-        for test, why in ((dict(base, join_steps='50,10'), 'ascending'), (dict(base, join_steps='10,x'), 'ascending'),
-                          (dict(base, join_steps='10,20', hold_s=20), 'no hold_s')):
+        for test, why in ((dict(base, join_search=5), 'positive counts'), (dict(base, join_search=0, searcher_subs=50), 'positive counts'),
+                          (dict(base, join_search=5, searcher_subs=50, hold_s=20), 'no hold_s')):
             with self.assertRaisesRegex(config.ConfigError, why):
                 config.Suite('s', dict(test=[test]))
 

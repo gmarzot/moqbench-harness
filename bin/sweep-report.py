@@ -25,8 +25,10 @@ SHAPES = json.loads((ROOT / 'scenarios/shapes.json').read_text())
 BUILDS = {'pgo': 'PGO+LTO', 'reg': 'regular'}
 TOOLS = {'aio': 'aiomoqt adaptive_bench', 'mp': 'moqx perf (moqperf_test_client)'}
 STRIDE = 5  # monitor samples are 1 s apart; dataset rows are 5 s apart
-JOIN_STEP = re.compile(r'\s*Join step:\s+([\d.]+)/s (passed|failed)(?: \((.*)\))?, (\d+) joins, (\d+) failed, '
-                       r'SUBSCRIBE_OK p50/p99 (\d+)/(\d+) ms, first object p50/p99 (\d+)/(\d+) ms')
+JOIN_TRIAL = re.compile(r'\s*Join trial:\s+B=(\d+) (passed|failed)(?: \((.*?)\))?, (\d+)/(\d+) joined within ([\d.]+) ms, '
+                        r'SUBSCRIBE_OK p50/p99 (\d+)/(\d+) ms, first object p50/p99 (\d+)/(\d+) ms, burst (\d+) ms')
+JOIN_BURST = re.compile(r'\s*Join burst:\s+(?:(\d+) subscribers at once \(confirmed (\d+)x\)( \((?:at --join-max|pool-limited)\))?'
+                        r'|not demonstrated \((.*)\))')
 SUSTAINED = re.compile(r'\s*Sustained:\s+(?:(\d+) subs, held (\d+) s, p90 max (\d+) ms|not demonstrated)')
 
 
@@ -186,35 +188,33 @@ def sustained(d, confirm_s):
             'sustained_hosts': [h[0] if h else None for h in hosts]}
 
 
-def join_steps(d, rid):
-    """adaptive_bench --join-steps: each step over all hosts, the highest total rate every host passed, and whether
-    that rate is only a floor: every step passed, or the first failure was the load hosts' joiner pool running out."""
-    hosts = []
+def join_search(d, rid):
+    """adaptive_bench --join-search: each trial's batch and join latency, and the confirmed batch the relay absorbs."""
+    trials, burst = [], {'join_burst': None, 'join_burst_confirmed': None, 'join_burst_floor': None,
+                         'join_burst_note': None}
     for f in subs(d):
-        steps = []
-        for m in filter(None, map(JOIN_STEP.match, f.open(errors='replace'))):
-            g = m.groups()
-            steps.append({'rate': float(g[0]), 'passed': g[1] == 'passed', 'reason': g[2] or '', 'joins': int(g[3]),
-                          'failed': int(g[4]), 'sub': (int(g[5]), int(g[6])), 'first': (int(g[7]), int(g[8]))})
-        hosts.append(steps)
-    if not any(hosts):
-        return [], None, None
-    rows, supported, floor = [], None, True
-    for i in range(max(map(len, hosts))):
-        at = [h[i] for h in hosts if len(h) > i]
-        passed = len(at) == len(hosts) and all(s['passed'] for s in at)
-        reason = next((s['reason'] for s in at if not s['passed']), '' if passed else 'a host did not reach this step')
-        rate = at[0]['rate'] * len(hosts)
-        # p50 and p99 per host cannot merge exactly; the worst host's stands for the step.
-        rows.append({'run': rid, 'join_rate': round(rate, 1), 'passed': passed, 'reason': reason,
-                     'joins': sum(s['joins'] for s in at), 'failed': sum(s['failed'] for s in at),
-                     'sub_p50_ms': max(s['sub'][0] for s in at), 'sub_p99_ms': max(s['sub'][1] for s in at),
-                     'first_p50_ms': max(s['first'][0] for s in at), 'first_p99_ms': max(s['first'][1] for s in at)})
-        if not passed:
-            floor = all(s['passed'] or s['reason'] == 'joiner pool exhausted' for s in at) and len(at) == len(hosts)
-            break
-        supported = round(rate, 1)
-    return rows, supported, floor
+        for line in f.open(errors='replace'):
+            m = JOIN_TRIAL.match(line)
+            if m:
+                g = m.groups()
+                trials.append({'run': rid, 'trial': len(trials) + 1, 'batch': int(g[0]), 'passed': g[1] == 'passed',
+                               'reason': g[2] or '', 'joined': int(g[3]), 'bound_ms': float(g[5]),
+                               'sub_p50_ms': int(g[6]), 'sub_p99_ms': int(g[7]), 'first_p50_ms': int(g[8]),
+                               'first_p99_ms': int(g[9]), 'burst_ms': int(g[10])})
+                continue
+            m = JOIN_BURST.match(line)
+            if m:
+                b, n, cap, why = m.groups()
+                burst = {'join_burst': int(b) if b else None, 'join_burst_confirmed': int(n) if n else None,
+                         'join_burst_floor': bool(cap) if b else None, 'join_burst_note': why}
+    return trials, burst
+
+
+def relay_crashed(d):
+    """Whether the relay process died during the run, from its log."""
+    log = d / 'relay.log'
+    return bool(log.exists() and re.search(r'Segmentation fault|Aborted at|core dumped|SIGSEGV|SIGABRT|panicked at',
+                                           log.read_text(errors='replace')))
 
 
 def held_window(rs, held, subs_now, mbps):
@@ -285,8 +285,9 @@ def aio_run(d, pt, ds):
         'udp_buf_errors': sum(x['udp_buf_errors'] for x in rs), 'loss_pct_max': max(x['loss_pct'] for x in latency),
         'limit': limit_of(pl, reached), 'tool': TOOLS['aio'], **relay_fields(pt)})
     run = ds['runs'][-1]
-    jrows, run['join_rate_supported'], run['join_rate_floor'] = join_steps(d, rid)
+    jrows, burst = join_search(d, rid)
     ds['joins'] += jrows
+    run.update(burst, relay_crashed=relay_crashed(d))
     hold = float(pt.get('env', {}).get('HOLD') or 0)
     if not hold:
         run.update(efficiency(pt, pl, run['subs_plateau']))
@@ -398,7 +399,7 @@ def main():
         (out / f'{k}.json').write_text(json.dumps(v, separators=(',', ':')))
         print(k, len(v), (out / f'{k}.json').stat().st_size, 'bytes')
     for r in ds['runs']:
-        print({k: r.get(k) for k in ('run', 'subs_plateau', 'subs_sustained', 'sustained_held_s', 'join_rate_supported', 'p90_median_ms', 'mp_lat_max_median_ms', 'moqx_tx_gbps',
+        print({k: r.get(k) for k in ('run', 'subs_plateau', 'subs_sustained', 'sustained_held_s', 'join_burst', 'relay_crashed', 'p90_median_ms', 'mp_lat_max_median_ms', 'moqx_tx_gbps',
                                      'moqx_tx_mpps', 'moqx_cores', 'relay_cpus', 'subs_per_core', 'mbps_per_core',
                                      'relay_rss_gb', 'relay_mb_per_sub', 'relay_busiest_cpu_pct',
                                      'loadbox_busy_max_pct', 'limit')})
