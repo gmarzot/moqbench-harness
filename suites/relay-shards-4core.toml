@@ -1,0 +1,147 @@
+description = "aiomoqt-relay with 1, 2 and 3 picoquic workers on the same 4 pinned cores, aiomoqt load from two hosts: per-thread CPU at a fixed load, then stepped and held to its equilibrium"
+requires = { subscriber = 2, publisher = 1 }
+
+[[test]]
+relay = "aiomoqt"
+note = "Capped at 300 viewers and held, for per-thread CPU"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 150
+seconds = 300
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 1
+suffix = "w1-300"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 150
+seconds = 300
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 2
+suffix = "w2-300"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 150
+seconds = 300
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 3
+suffix = "w3-300"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 1600
+seconds = 1200
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 1
+suffix = "w1"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 1600
+seconds = 1200
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 2
+suffix = "w2"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 1600
+seconds = 1200
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 3
+suffix = "w3"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 800
+seconds = 900
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 1
+suffix = "w1"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 800
+seconds = 900
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 2
+suffix = "w2"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 800
+seconds = 900
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+relay_cpus = "4-7"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 3
+suffix = "w3"

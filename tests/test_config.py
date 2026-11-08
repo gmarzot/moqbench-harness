@@ -308,6 +308,8 @@ class Plans(unittest.TestCase):
                                       capture_output=True, text=True, env={'PATH': '/usr/bin:/bin', **env}).stdout
         self.assertNotIn('--admission-cpu', cmd())
         self.assertIn(' --admission-cpu 87 ', cmd(AIOMOQT_ADMISSION_CPU='87'))
+        self.assertNotIn('--workers', cmd())
+        self.assertIn(' --workers 3', cmd(AIOMOQT_WORKERS='3'))
 
     def test_threads_all_comes_from_the_relay_node(self):
         tree = self.in_tree(self.DEPLOYMENT, self.SUITE % (1, 'moqperf'), 'deployment = "x"\nsuites = ["x"]\n')

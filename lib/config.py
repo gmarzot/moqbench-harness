@@ -31,7 +31,7 @@ SETTINGS = {
     'mp_ramp': ('MP_RAMP', 64), 'moqx_send': ('MOQX_SEND', 16), 'moqx_recv': ('MOQX_RECV', 256), 'moqx_gro': ('MOQX_GRO', ''),
     'aiomoqt_env': ('AIOMOQT_ENV', ''),
     'aiomoqt_extra': ('AIOMOQT_EXTRA', ''), 'stop_at_ceiling': ('STOP_AT_CEILING', 0),
-    'relay_cpus': ('RELAY_CPUS', ''), 'aiomoqt_admission_cpu': ('AIOMOQT_ADMISSION_CPU', ''),
+    'relay_cpus': ('RELAY_CPUS', ''), 'aiomoqt_admission_cpu': ('AIOMOQT_ADMISSION_CPU', ''), 'aiomoqt_workers': ('AIOMOQT_WORKERS', ''),
     'moqx_stack': ('MOQX_STACK', 'mvfst'), 'hold_s': ('HOLD', 0), 'confirm_s': ('CONFIRM', 30),
     'join_search': ('JOIN_SEARCH', ''), 'join_max': ('JOIN_MAX', ''), 'searcher_subs': ('SEARCHER_SUBS', ''),
     'join_bound_ms': ('JOIN_BOUND', 1000), 'trial_gap_s': ('TRIAL_GAP', 5), 'base_s': ('BASE_S', 45),
@@ -252,6 +252,8 @@ class Suite:
                         raise ConfigError(f'{at}: join_search needs join_search and searcher_subs as positive counts')
                 if test['tool'] != 'aiomoqt' or test.get('hold_s'):
                     raise ConfigError(f'{at}: join_search needs the aiomoqt tool and no hold_s')
+            if 'aiomoqt_workers' in test:
+                positive_int(at, 'aiomoqt_workers', test['aiomoqt_workers'])
             positive_int(at, 'max_per_box', test.get('max_per_box'))
             positive_int(at, 'seconds', test.get('seconds'))
 

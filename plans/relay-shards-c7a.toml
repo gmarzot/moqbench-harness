@@ -1,0 +1,13 @@
+description = "aiomoqt-relay with 1, 2 and 3 picoquic workers on the same 4 cores of a c7a.4xlarge"
+deployment  = "aws-c7a-4x"
+relays      = ["aiomoqt:src"]
+suites      = ["relay-shards-4core"]
+threads     = 4
+slo_ms      = 500
+budget      = { hours = 4 }
+teardown    = true
+
+[builds]
+aiomoqt  = "9d64a78"
+aiopquic = "36b175b"
+python   = "3.14"
