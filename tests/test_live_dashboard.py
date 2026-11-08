@@ -160,6 +160,25 @@ class LiveDashboard(unittest.TestCase):
             self.assertIsNone(live.current_point(d))
         self.assertIsNone(live.current_point(d))
 
+    def test_the_plan_heads_the_page_until_a_point_starts(self):
+        with tempfile.TemporaryDirectory() as d:
+            results, inventory = Path(d) / 'results', Path(d) / 'inventory.json'
+            (results / 'moqbench' / 'p1').mkdir(parents=True)
+            (results / 'moqbench' / 'p1' / 'plan.toml').write_text(
+                'description = "Why"\ndeployment = "aws-c7a-small"\nrelays = ["aiomoqt:src"]\nsuites = ["s1"]\n'
+                '[builds]\naiomoqt = "1049da0"\n')
+            inventory.write_text(json.dumps(dict(deployment='aws-c7a-small')))
+            store = live.Store()
+            info = live.header(store, inventory, results)
+            facts = dict(info['facts'])
+            self.assertEqual((info['title'], info['purpose'], facts['Relays'], facts['Builds']),
+                             ('p1', 'Why', 'aiomoqt:src', 'aiomoqt 1049da0'))
+            self.assertIn('relay c7a.2xlarge', facts['Hosts'])
+            store.set_point(dict(run='aio-x'))
+            self.assertIsNone(live.header(store, inventory, results))
+            inventory.write_text(json.dumps(dict(deployment='other')))
+            self.assertIsNone(live.header(live.Store(), inventory, results))
+
     def test_a_new_run_keeps_the_point(self):
         store = live.Store()
         store.set_point(dict(run='x'))
