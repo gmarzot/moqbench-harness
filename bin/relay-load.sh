@@ -345,7 +345,7 @@ wait"
       fi
       # Background jobs start with SIGINT ignored; the first host's ceiling ends the others with it.
       echo "env --default-signal=INT $PY $BENCH moqt://$RPRIV:$RELAY_PORT$URLPATH $COMMON --role sub \
---start-subs $STEP_SUBS --step-subs $STEP_SUBS --max-subs $count $FIXED_FLAG -j $JOIN -S $STAGGER \
+--start-subs $STEP_SUBS --step-subs $STEP_SUBS --max-subs $count $FIXED_FLAG -j $JOIN --stagger $STAGGER \
 --sub-filter $filter $limits $role $SUB_EXIT --report /tmp/loadreport.csv -t $DUR"
     }
     WAIT=$(( DUR + 60 ))
