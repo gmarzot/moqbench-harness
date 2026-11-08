@@ -28,38 +28,6 @@ relay_cpus = "4-7"
 hold_s = 20
 
 [[test]]
-relay = "moqx"
-suffix = "pico"
-note = "moqx's picoquic listener, with the bench certificate and picoquic's bbr"
-type = "capacity"
-tool = "aiomoqt"
-video = "720p"
-max_per_box = 1600
-seconds = 1200
-step_subs = 50
-join_s = 5
-stop_at_ceiling = 1
-relay_cpus = "4-7"
-hold_s = 20
-moqx_stack = "picoquic"
-
-[[test]]
-relay = "moqx"
-suffix = "pico"
-note = "moqx's picoquic listener, with the bench certificate and picoquic's bbr"
-type = "capacity"
-tool = "aiomoqt"
-video = "1080p"
-max_per_box = 800
-seconds = 900
-step_subs = 50
-join_s = 5
-stop_at_ceiling = 1
-relay_cpus = "4-7"
-hold_s = 20
-moqx_stack = "picoquic"
-
-[[test]]
 relay = "moqdev"
 type = "capacity"
 tool = "aiomoqt"
