@@ -34,40 +34,6 @@ join_search = 5
 join_max = 296
 
 [[test]]
-relay = "moqx"
-suffix = "pico-join"
-moqx_stack = "picoquic"
-type = "capacity"
-tool = "aiomoqt"
-video = "720p"
-max_per_box = 700
-seconds = 400
-step_subs = 50
-join_s = 2
-stop_at_ceiling = 1
-relay_cpus = "4-7"
-searcher_subs = 400
-join_search = 5
-join_max = 296
-
-[[test]]
-relay = "moqx"
-suffix = "pico-join"
-moqx_stack = "picoquic"
-type = "capacity"
-tool = "aiomoqt"
-video = "1080p"
-max_per_box = 300
-seconds = 400
-step_subs = 50
-join_s = 2
-stop_at_ceiling = 1
-relay_cpus = "4-7"
-searcher_subs = 300
-join_search = 5
-join_max = 222
-
-[[test]]
 relay = "moqdev"
 suffix = "join"
 type = "capacity"
