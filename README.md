@@ -82,7 +82,7 @@ and record the ceiling beside every number.
 | `moqbench/` | moq-bench track profiles. |
 | `relays.local.sh.example` | How to add a relay that is kept out of this repo (gitignored `relays.local.sh`). |
 | `.env.example` | Personal defaults every command reads from a gitignored `.env`, such as `TESTBED_ENV` (the environment for new deployments). Shell variables override it. |
-| `aws/` | The AWS testbed: `main.tf`, `testbed.sh` and `envs/`, like `oci/`. The other `aws/*.sh` and `bin/run-linode.sh` are the older c7gn and Linode setups, driven via `RELAY_HOST`/`CLIENT_HOSTS`. |
+| `aws/` | The AWS testbed: `main.tf`, `testbed.sh` and `envs/`, like `oci/`. |
 
 The commands take their hosts from `.testbed/inventory.json`, a cloud-neutral
 host list that `./bin/testbed.sh <deployment> up|start|output|use` writes for
