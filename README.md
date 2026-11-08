@@ -1,7 +1,7 @@
 # moqbench-harness
 
 Benchmark harness for MoQ relays — moqx/mvfst, cf-moq-rs/quinn, moq-dev
-(current `moq-quic`, plus historical quinn and quiche) — driven by three independent load generators (moxygen's
+(current `moq-quic`, plus historical quinn and quiche), aiomoqt-relay — driven by three independent load generators (moxygen's
 moqperf, aiomoqt on picoquic, Quicr's moq-bench on libquicr), plus the
 picoquic and iperf3 controls used to keep the numbers honest.
 

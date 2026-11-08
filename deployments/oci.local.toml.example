@@ -6,6 +6,7 @@ auth                = "APIKey"
 tenancy_ocid        = "<tenancy OCID>"
 compartment_ocid    = "<compartment OCID>"
 image_ocid          = "<image OCID>"
+# image_ocid_amd64  = "<image OCID>"   # optional: replaces image_ocid on arch = "amd64" deployments
 ssh_key_file        = "~/.ssh/id_ed25519"
 allowed_cidrs       = ["<your egress IP>/32"]
 owner               = "<your name>"

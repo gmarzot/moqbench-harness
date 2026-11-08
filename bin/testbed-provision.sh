@@ -19,6 +19,7 @@
 #             or a local build: AIOMOQT_WHEEL=path/to/aiomoqt-*.whl
 #             or git refs built on each host: AIOMOQT_SRC=<ref> [AIOPQUIC_SRC=<ref>]
 #             (AIOMOQT_SRC=1 takes the dev heads origin/gmarzot-0.15.0 and -0.8.0)
+#             AIOMOQT_PYTHON picks the venv's Python for a new venv (default 3.13)
 #   moqbench  Quicr moq-bench on libquicr, built for MOQBENCH_DRAFT (16 or 18)
 #
 # SRC=user@host[:dir] also pulls a whole prebuilt tree (dir, default Projects
@@ -73,6 +74,7 @@ AIOMOQT_SPEC="aiomoqt==$AIOMOQT_VERSION"
 # (not editable) package in the same venv, so an aiomoqt/ directory where the
 # tools run cannot shadow it.
 AIOMOQT_SRC=${AIOMOQT_SRC:-}
+AIOMOQT_PYTHON=${AIOMOQT_PYTHON:-3.13}
 [[ $AIOMOQT_SRC == 1 ]] && AIOMOQT_SRC=origin/gmarzot-0.15.0
 AIOPQUIC_SRC=${AIOPQUIC_SRC:-origin/gmarzot-0.8.0}
 if [[ -n $AIOMOQT_SRC && -n $AIOMOQT_WHEEL ]]; then
@@ -128,7 +130,7 @@ has aiomoqt && for H in "$RELAY" "${LOADHOSTS[@]}"; do
     printf -v native_cmd 'bash /tmp/testbed-aiomoqt-install.sh %q' "$AIOMOQT_SPEC"
     $SSH ubuntu@"$H" "$native_cmd" || exit 1
   fi
-  $SSH ubuntu@"$H" "WANT=$AIOMOQT_VERSION SPEC=$AIOMOQT_SPEC PQ_REF=$AIOPQUIC_SRC MOQ_REF=$AIOMOQT_SRC"'; set -e
+  $SSH ubuntu@"$H" "WANT=$AIOMOQT_VERSION SPEC=$AIOMOQT_SPEC PQ_REF=$AIOPQUIC_SRC MOQ_REF=$AIOMOQT_SRC PYV=$AIOMOQT_PYTHON"'; set -e
     export PATH=$HOME/.local/bin:$PATH
     command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | sh >/dev/null 2>&1
     export PATH=$HOME/.local/bin:$PATH
@@ -146,7 +148,7 @@ has aiomoqt && for H in "$RELAY" "${LOADHOSTS[@]}"; do
       git -C $K/aiopquic checkout -q -f --detach "$PQ_REF"
       git -C $K/aiopquic submodule update -q --init --recursive
       git -C $K/aiomoqt checkout -q -f --detach "$MOQ_REF"
-      [ -x $PY ] || uv venv --python 3.13 ~/Projects/aiomoqt/.venv >/dev/null 2>&1
+      [ -x $PY ] || uv venv --python $PYV ~/Projects/aiomoqt/.venv >/dev/null 2>&1
       uv pip install --python $PY -q pip cython==3.3.0 setuptools==84.2.1 setuptools-scm==10.3.4 \
         wheel build certifi sortedcontainers
       (cd $K/aiopquic && PATH=$(dirname $PY):$PATH VIRTUAL_ENV=$(dirname $(dirname $PY)) PYTHON=$PY \
@@ -155,7 +157,7 @@ has aiomoqt && for H in "$RELAY" "${LOADHOSTS[@]}"; do
       echo "  $(hostname): aiopquic $(git -C $K/aiopquic log --oneline -1 | cut -c1-50)"
       echo "  $(hostname): aiomoqt  $(git -C $K/aiomoqt log --oneline -1 | cut -c1-50)"
     elif [ "$HAVE" != "$WANT" ]; then
-      [ -x $PY ] || uv venv --python 3.13 ~/Projects/aiomoqt/.venv >/dev/null 2>&1
+      [ -x $PY ] || uv venv --python $PYV ~/Projects/aiomoqt/.venv >/dev/null 2>&1
       uv pip install --python $PY "$SPEC" >/dev/null 2>&1
     fi
     [ -f ~/Projects/bench/cert.pem ] || openssl req -x509 -newkey ec \

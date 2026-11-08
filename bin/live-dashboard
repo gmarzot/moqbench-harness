@@ -189,7 +189,8 @@ def point_info(run_dir):
     purpose = header.get('plan') or (description('plan', header['plan_name']) if 'plan_name' in header else '')
     relay = pt.get('relay', 'moqx')
     label = match(run_dir / 'run.txt', r'^== \S+ vs (\S+)') or relay
-    version = match(run_dir / 'versions.txt', rf'^{re.escape(relay)}:[ \t]*(\S+)')
+    key = 'aiomoqt-relay' if relay == 'aiomoqt' else relay
+    version = match(run_dir / 'versions.txt', rf'^{re.escape(key)}:[ \t]*(\S+)')
     if relay == 'moqx' and not version:
         version = Path(pt.get('moqx_source') or 'release').name
     boxes, shape, bound = pt.get('load_boxes', 1), pt.get('shape', ''), env.get('LATENCY_MS', '500')
@@ -210,7 +211,7 @@ def point_info(run_dir):
             'the first ceiling ends the run' if env.get('STOP_AT_CEILING') == '1' else 'runs to the time limit')
     facts = [
         ('Plan', f'{plan}, point {index + 1} of {len(points)}' if index is not None else plan),
-        ('Relay', ' '.join(filter(None, (label, version))) + (f', {env["THREADS"]} threads' if env.get('THREADS') else '')),
+        ('Relay', ' '.join(filter(None, (label, version))) + (f', {env["THREADS"]} thread' + ('s' if env['THREADS'] != '1' else '') if env.get('THREADS') else '')),
         ('Tool', tool),
         ('Video', f'{shape}, {mbps:g} Mbps per subscriber' if mbps else shape),
         ('Draft', env.get('DRAFT', '16')),

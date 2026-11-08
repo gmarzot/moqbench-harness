@@ -1,0 +1,13 @@
+description = "aiomoqt-relay on an AWS c7a.2xlarge, the build and settings of the public relay"
+deployment  = "aws-c7a-small"
+relays      = ["aiomoqt:src"]
+suites      = ["aiomoqt-relay-small"]
+threads     = 1
+slo_ms      = 500
+budget      = { hours = 1.5 }
+teardown    = true
+
+[builds]
+aiomoqt  = "1049da0"
+aiopquic = "84d137a"
+python   = "3.14"

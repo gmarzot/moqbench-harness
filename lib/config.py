@@ -16,7 +16,9 @@ TEST_TYPES = {'capacity': 'ramp until the latency SLO is crossed',
               'ceiling': 'ramp past the SLO to the egress plateau'}
 BUILDS = {'pgo', 'reg'}
 # Relays built from source on the relay host, and the plan's builds key for each one's git ref.
-SOURCE_RELAYS = {'moqdev': 'moqdev', 'cf': 'moq_rs'}
+SOURCE_RELAYS = {'moqdev': 'moqdev', 'cf': 'moq_rs', 'aiomoqt': 'aiomoqt'}
+# Source relays that provisioning installs with the load tools, so no relay-build.sh step.
+PROVISIONED_RELAYS = {'aiomoqt'}
 # moq-rs closes the moqperf publisher's session at moxygen's 30 s keepalive.
 UNSUPPORTED = {('moqperf', 'cf')}
 GENERATED = '# Written by moqbench from deployments/'
@@ -150,6 +152,10 @@ class Deployment:
             if probes:
                 out['probe_instance_type'] = probes[0]['instance']
         elif self.provider == 'oci':
+            # image_ocid_<arch> in the account settings overrides image_ocid for that arch.
+            images = {k: out.pop(k) for k in list(out) if k.startswith('image_ocid_')}
+            if f'image_ocid_{self.arch}' in images:
+                out['image_ocid'] = images[f'image_ocid_{self.arch}']
             if self.zone:
                 out['availability_domain'] = self.zone
             if self.network_type:
@@ -236,7 +242,7 @@ def load_suite(name, root=ROOT):
 
 class Plan:
     KEYS = {'description', 'deployment', 'relays', 'suites', 'tune', 'budget', 'teardown', 'builds', 'threads', 'slo_ms'}
-    BUILD_KEYS = {'moqx', 'aiomoqt', 'aiopquic', 'moxygen', *SOURCE_RELAYS.values()}
+    BUILD_KEYS = {'moqx', 'aiomoqt', 'aiopquic', 'moxygen', 'python', *SOURCE_RELAYS.values()}
 
     def __init__(self, name, data, root=ROOT):
         self.name = name
@@ -262,7 +268,7 @@ class Plan:
                 if SOURCE_RELAYS[relay_name] not in self.builds:
                     raise ConfigError(f'{where}: relay {relay!r} needs a git ref in builds.{SOURCE_RELAYS[relay_name]}')
             elif relay_name != 'moqx' or build not in BUILDS:
-                raise ConfigError(f'{where}: relay {relay!r}: moqbench runs moqx:pgo, moqx:reg, moqdev:src and cf:src; others go through bin/sweep.sh')
+                raise ConfigError(f'{where}: relay {relay!r}: moqbench runs moqx:pgo, moqx:reg, moqdev:src, cf:src and aiomoqt:src; others go through bin/sweep.sh')
         counts = self.deployment.role_counts()
         for suite in self.suites:
             for role, need in suite.requires.items():

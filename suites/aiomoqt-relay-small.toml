@@ -1,0 +1,24 @@
+description = "aiomoqt-relay with its public settings, aiomoqt load from two hosts, ending at each ceiling"
+requires = { subscriber = 2, publisher = 1 }
+
+[[test]]
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 800
+seconds = 600
+step_subs = 25
+join_s = 5
+stop_at_ceiling = 1
+note = "Where the single event loop crosses the bound on a dedicated core"
+
+[[test]]
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 800
+seconds = 600
+step_subs = 25
+join_s = 5
+stop_at_ceiling = 1
+note = "The same at 1080p, about twice the bytes per subscriber"
