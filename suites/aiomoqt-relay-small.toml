@@ -10,7 +10,7 @@ seconds = 600
 step_subs = 25
 join_s = 5
 stop_at_ceiling = 1
-note = "Where the single event loop crosses the bound on a dedicated Turin core"
+note = "Where the single event loop crosses the bound on a dedicated core"
 
 [[test]]
 type = "capacity"
