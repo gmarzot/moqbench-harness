@@ -240,6 +240,13 @@ class Plans(unittest.TestCase):
         self.assertEqual({p['env']['AIOMOQT_ADMISSION_CPU'][0] for p in points if p['env'].get('RELAY', ('',))[0] == 'aiomoqt'},
                          {''})
 
+    def test_hold_needs_seconds_and_the_aiomoqt_tool(self):
+        base = dict(type='capacity', video='720p', max_per_box=10, seconds=10)
+        for test, why in ((dict(base, tool='aiomoqt', hold_s=-1), 'hold_s must be seconds'),
+                          (dict(base, tool='moqperf', type='ceiling', hold_s=20), 'hold_s needs the aiomoqt tool')):
+            with self.assertRaisesRegex(config.ConfigError, why):
+                config.Suite('s', dict(test=[test]))
+
     def test_moqx_stack_must_be_known(self):
         test = dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=10, seconds=10, moqx_stack='quiche')
         with self.assertRaisesRegex(config.ConfigError, 'moqx_stack'):
