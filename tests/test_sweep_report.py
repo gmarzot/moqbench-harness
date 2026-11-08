@@ -180,6 +180,10 @@ class SweepReport(unittest.TestCase):
         run = ds['runs'][0]
         self.assertEqual((run['join_burst'], run['join_burst_floor'], run['relay_crashed']), (5, True, True))
 
+    def test_a_clean_sigterm_is_not_a_crash(self):
+        ds = self.join_run([], relay_log='*** Aborted at 1794172406 ***\n*** Signal 15 (SIGTERM) (0x363433) received by PID 1\n')
+        self.assertFalse(ds['runs'][0]['relay_crashed'])
+
     def test_join_burst_not_demonstrated(self):
         ds = self.join_run(['Join burst:  not demonstrated (relay did not recover after B=5)'])
         run = ds['runs'][0]

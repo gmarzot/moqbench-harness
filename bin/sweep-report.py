@@ -213,7 +213,7 @@ def join_search(d, rid):
 def relay_crashed(d):
     """Whether the relay process died during the run, from its log."""
     log = d / 'relay.log'
-    return bool(log.exists() and re.search(r'Segmentation fault|Aborted at|core dumped|SIGSEGV|SIGABRT|panicked at',
+    return bool(log.exists() and re.search(r'Segmentation fault|core dumped|SIGSEGV|SIGABRT|SIGBUS|SIGILL|SIGFPE|panicked at',
                                            log.read_text(errors='replace')))
 
 
