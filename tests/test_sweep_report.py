@@ -122,6 +122,35 @@ class SweepReport(unittest.TestCase):
                          {'relay_cpus': 4, 'subs_per_core': 1219, 'mbps_per_core': 5000, 'relay_rss_gb': 3.0,
                           'relay_mb_per_sub': 1.26})
 
+    def hold_run(self, *sustained):
+        d = self.run_dir('aio-pgo60-2b-1080', 'aio', ['adaptive-sub0.log', 'adaptive-sub1.log'], 31,
+                         threads=lambda t: 10 + 100 * t)
+        for i, line in enumerate(sustained):
+            with (d / f'sub{i}.log').open('a') as f:
+                f.write(f'  Sustained:   {line}\n')
+        pt = json.loads((d / 'sweep-point.json').read_text())
+        pt['env'].update(HOLD='20', CONFIRM='30')
+        (d / 'sweep-point.json').write_text(json.dumps(pt))
+        return sr.report(self.tmp)[0]['runs'][0]
+
+    def test_hold_run_sums_the_hosts_that_held(self):
+        run = self.hold_run('1200 subs, held 95 s, p90 max 410 ms, 0 objects lost',
+                            '1125 subs, held 60 s, p90 max 455 ms, 0 objects lost')
+        self.assertEqual({k: run[k] for k in ('hold_s', 'subs_sustained', 'sustained_held_s', 'sustained_p90_max_ms',
+                                              'sustained_hosts')},
+                         {'hold_s': 20.0, 'subs_sustained': 2325, 'sustained_held_s': 60, 'sustained_p90_max_ms': 455,
+                          'sustained_hosts': [1200, 1125]})
+        # Relay egress stays at 10 Gbps on 2 cores, so the held window costs that at 2325 subscribers.
+        self.assertEqual((run['subs_per_core'], run['mbps_per_core']), (1162, 5000))
+
+    def test_hold_run_counts_only_when_every_host_held(self):
+        for lines in (('1200 subs, held 95 s, p90 max 410 ms, 0 objects lost', 'not demonstrated'),
+                      ('1200 subs, held 95 s, p90 max 410 ms, 0 objects lost',
+                       '1125 subs, held 20 s, p90 max 455 ms, 0 objects lost')):
+            run = self.hold_run(*lines)
+            self.assertEqual((run['subs_sustained'], run['subs_per_core'], run['p90_median_ms']), (None, None, None))
+            shutil.rmtree(self.tmp / 'aio-pgo60-2b-1080')
+
     def test_cpu_count(self):
         self.assertEqual([sr.cpu_count(s) for s in ('4-7', '2-5,8', '0', 'default')], [4, 5, 1, None])
 

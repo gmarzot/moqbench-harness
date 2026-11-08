@@ -254,6 +254,7 @@ NS="bench-$(date +%H%M%S)"          # fresh per run: a relay can hold a stale re
 PER=$(( (SUBS + ${#SUBHOSTS[@]} - 1) / ${#SUBHOSTS[@]} ))
 # AIOMOQT_ENV: environment for every aiomoqt process, e.g. MALLOC_ARENA_MAX=2
 # STOP_AT_CEILING=1: adaptive ends at the first host's ceiling instead of running on to -t
+# HOLD=SEC: adaptive steps and holds (--hold SEC --confirm CONFIRM) instead of ramping
 PY="${AIOMOQT_ENV:+$AIOMOQT_ENV }aiomoqt/.venv/bin/python -u"
 AIOMOQT_EXTRA=${AIOMOQT_EXTRA:-}   # e.g. "--max-queued-bytes N --max-inflight-bytes N"
 
@@ -302,8 +303,17 @@ wait"
     COMMON="-k --draft $DRAFT --mode subs -N $NS -T subs-ramp $RATE_FLAGS -g $GROUP $AIOMOQT_EXTRA $PUB_FLAG"
     BENCH="-m aiomoqt.tools.adaptive_bench"
     FIXED_FLAG=""
-    SUB_EXIT=""
-    [[ ${STOP_AT_CEILING:-0} != 1 ]] || SUB_EXIT="--exit max"
+    SUB_EXIT="" SUB_HOLD=""
+    if [[ ${HOLD:-0} != 0 ]]; then
+      [[ $TOOL == adaptive && $HOLD =~ ^[0-9]+([.][0-9]+)?$ && ${CONFIRM:-30} =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+        echo "HOLD: seconds, for the adaptive tool" >&2; exit 2;
+      }
+      # Each host holds its confirmed level to -t, so hosts side by side end together.
+      SUB_HOLD="--hold $HOLD --confirm ${CONFIRM:-30}"
+      (( ${#SUBHOSTS[@]} > 1 )) || [[ ${STOP_AT_CEILING:-0} != 1 ]] || SUB_EXIT="--exit sustained"
+    elif [[ ${STOP_AT_CEILING:-0} == 1 ]]; then
+      SUB_EXIT="--exit max"
+    fi
     if [[ $TOOL == fixed ]]; then
       [[ $SUBS =~ ^[1-9][0-9]*$ && $STEP_SUBS =~ ^[1-9][0-9]*$ && $DUR =~ ^[1-9][0-9]*$ ]] || {
         echo "fixed requires positive integer SUBS, STEP_SUBS and duration" >&2; exit 2;
@@ -319,7 +329,7 @@ wait"
       # Background jobs start with SIGINT ignored; the first host's ceiling ends the others with it.
       echo "env --default-signal=INT $PY $BENCH moqt://$RPRIV:$RELAY_PORT$URLPATH $COMMON --role sub \
 --start-subs $STEP_SUBS --step-subs $STEP_SUBS --max-subs $2 $FIXED_FLAG -j $JOIN -S $STAGGER \
---sub-filter $SUB_FILTER $SUB_LIMITS $SUB_EXIT --report /tmp/loadreport.csv -t $DUR"
+--sub-filter $SUB_FILTER $SUB_LIMITS $SUB_HOLD $SUB_EXIT --report /tmp/loadreport.csv -t $DUR"
     }
     WAIT=$(( DUR + 60 ))
     ;;

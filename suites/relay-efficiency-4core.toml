@@ -1,4 +1,4 @@
-description = "Each relay on the same 4 pinned cores, aiomoqt load from two hosts, ending at the latency SLO"
+description = "Each relay on the same 4 pinned cores, aiomoqt load from two hosts, stepped and held to its equilibrium"
 requires = { subscriber = 2, publisher = 1 }
 
 [[test]]
@@ -7,11 +7,12 @@ type = "capacity"
 tool = "aiomoqt"
 video = "720p"
 max_per_box = 1600
-seconds = 300
+seconds = 1200
 step_subs = 50
 join_s = 5
 stop_at_ceiling = 1
 relay_cpus = "4-7"
+hold_s = 20
 
 [[test]]
 relay = "moqx"
@@ -19,11 +20,12 @@ type = "capacity"
 tool = "aiomoqt"
 video = "1080p"
 max_per_box = 800
-seconds = 240
+seconds = 900
 step_subs = 50
 join_s = 5
 stop_at_ceiling = 1
 relay_cpus = "4-7"
+hold_s = 20
 
 [[test]]
 relay = "moqx"
@@ -33,11 +35,12 @@ type = "capacity"
 tool = "aiomoqt"
 video = "720p"
 max_per_box = 1600
-seconds = 300
+seconds = 1200
 step_subs = 50
 join_s = 5
 stop_at_ceiling = 1
 relay_cpus = "4-7"
+hold_s = 20
 moqx_stack = "picoquic"
 
 [[test]]
@@ -48,11 +51,12 @@ type = "capacity"
 tool = "aiomoqt"
 video = "1080p"
 max_per_box = 800
-seconds = 240
+seconds = 900
 step_subs = 50
 join_s = 5
 stop_at_ceiling = 1
 relay_cpus = "4-7"
+hold_s = 20
 moqx_stack = "picoquic"
 
 [[test]]
@@ -61,11 +65,12 @@ type = "capacity"
 tool = "aiomoqt"
 video = "720p"
 max_per_box = 1600
-seconds = 300
+seconds = 1200
 step_subs = 50
 join_s = 5
 stop_at_ceiling = 1
 relay_cpus = "4-7"
+hold_s = 20
 
 [[test]]
 relay = "moqdev"
@@ -73,11 +78,12 @@ type = "capacity"
 tool = "aiomoqt"
 video = "1080p"
 max_per_box = 800
-seconds = 240
+seconds = 900
 step_subs = 50
 join_s = 5
 stop_at_ceiling = 1
 relay_cpus = "4-7"
+hold_s = 20
 
 [[test]]
 relay = "cf"
@@ -86,11 +92,12 @@ type = "capacity"
 tool = "aiomoqt"
 video = "720p"
 max_per_box = 1600
-seconds = 400
+seconds = 1500
 step_subs = 10
 join_s = 5
 stop_at_ceiling = 1
 relay_cpus = "4-7"
+hold_s = 20
 
 [[test]]
 relay = "cf"
@@ -98,24 +105,26 @@ type = "capacity"
 tool = "aiomoqt"
 video = "1080p"
 max_per_box = 800
-seconds = 400
+seconds = 1500
 step_subs = 10
 join_s = 5
 stop_at_ceiling = 1
 relay_cpus = "4-7"
+hold_s = 20
 
 [[test]]
 relay = "aiomoqt"
-note = "Admission gate off, so it ends at the SLO like the others; one event loop uses at most 2 of the 4 cores"
+note = "Admission gate off, so the bound alone limits it like the others; one event loop uses at most 2 of the 4 cores"
 type = "capacity"
 tool = "aiomoqt"
 video = "720p"
 max_per_box = 1600
-seconds = 300
+seconds = 900
 step_subs = 50
 join_s = 5
 stop_at_ceiling = 1
 relay_cpus = "4-7"
+hold_s = 20
 threads = 1
 aiomoqt_admission_cpu = 0
 
@@ -125,10 +134,11 @@ type = "capacity"
 tool = "aiomoqt"
 video = "1080p"
 max_per_box = 800
-seconds = 240
+seconds = 600
 step_subs = 50
 join_s = 5
 stop_at_ceiling = 1
 relay_cpus = "4-7"
+hold_s = 20
 threads = 1
 aiomoqt_admission_cpu = 0
