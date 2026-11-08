@@ -126,7 +126,6 @@ stop_at_ceiling = 1
 relay_cpus = "4-7"
 hold_s = 20
 threads = 1
-aiomoqt_admission_cpu = 0
 
 [[test]]
 relay = "aiomoqt"
@@ -141,4 +140,3 @@ stop_at_ceiling = 1
 relay_cpus = "4-7"
 hold_s = 20
 threads = 1
-aiomoqt_admission_cpu = 0

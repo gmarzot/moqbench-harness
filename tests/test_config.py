@@ -224,6 +224,7 @@ class Plans(unittest.TestCase):
         self.assertEqual([p['run'] for p in points], ['aio-aiomoqt1-2b-720-e6', 'aio-aiomoqt1-2b-1080-e6'])
         self.assertEqual({p['env']['RELAY'] for p in points}, {('aiomoqt', 'plan')})
         self.assertEqual(points[0]['env']['THREADS'], (1, 'plan'))
+        self.assertEqual({p['env']['AIOMOQT_ADMISSION_CPU'] for p in points}, {(87, 'test')})
 
     def test_the_relay_efficiency_plan(self):
         plan = config.load_plan('relay-efficiency-c7a')
@@ -237,7 +238,7 @@ class Plans(unittest.TestCase):
         self.assertEqual({p['env']['HOLD'] for p in points}, {(20, 'test')})
         self.assertEqual({p['env']['CONFIRM'] for p in points}, {(30, 'default')})
         self.assertEqual({p['env']['AIOMOQT_ADMISSION_CPU'][0] for p in points if p['env'].get('RELAY', ('',))[0] == 'aiomoqt'},
-                         {0})
+                         {''})
 
     def test_the_moqx_stack_plan(self):
         plan = config.load_plan('relay-efficiency-c7a-moqx')
@@ -283,8 +284,8 @@ class Plans(unittest.TestCase):
             with tempfile.TemporaryDirectory() as d:  # no relays.local.sh
                 return subprocess.run(['bash', '-c', f'source {ROOT}/lib/run.sh; relay_cmd aiomoqt 1'], cwd=d,
                                       capture_output=True, text=True, env={'PATH': '/usr/bin:/bin', **env}).stdout
-        self.assertIn('--admission-cpu 87 ', cmd())
-        self.assertIn('--admission-cpu 0 ', cmd(AIOMOQT_ADMISSION_CPU='0'))
+        self.assertNotIn('--admission-cpu', cmd())
+        self.assertIn(' --admission-cpu 87 ', cmd(AIOMOQT_ADMISSION_CPU='87'))
 
     def test_threads_all_comes_from_the_relay_node(self):
         tree = self.in_tree(self.DEPLOYMENT, self.SUITE % (1, 'moqperf'), 'deployment = "x"\nsuites = ["x"]\n')
