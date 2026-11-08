@@ -25,6 +25,7 @@ SHAPES = json.loads((ROOT / 'scenarios/shapes.json').read_text())
 BUILDS = {'pgo': 'PGO+LTO', 'reg': 'regular'}
 TOOLS = {'aio': 'aiomoqt adaptive_bench', 'mp': 'moqx perf (moqperf_test_client)'}
 STRIDE = 5  # monitor samples are 1 s apart; dataset rows are 5 s apart
+SUSTAINED = re.compile(r'\s*Sustained:\s+(?:(\d+) subs, held (\d+) s, p90 max (\d+) ms|not demonstrated)')
 
 
 def relay_fields(pt):
@@ -170,6 +171,28 @@ def loadgen_row(rid, h, t_s, k, r):
             'busy_pct': r['busy'], 'busiest_cpu_pct': r['max_cpu']}
 
 
+def sustained(d, confirm_s):
+    """adaptive_bench --hold: each host's level held to the end, summed only when every host held it for confirm_s."""
+    hosts = []
+    for f in subs(d):
+        m = next((m for m in map(SUSTAINED.match, f.open(errors='replace')) if m), None)
+        hosts.append((int(m.group(1)), int(m.group(2)), int(m.group(3))) if m and m.group(1) else None)
+    ok = bool(hosts) and all(h and h[1] >= confirm_s for h in hosts)
+    return {'subs_sustained': sum(h[0] for h in hosts) if ok else None,
+            'sustained_held_s': min(h[1] for h in hosts) if ok else None,
+            'sustained_p90_max_ms': max(h[2] for h in hosts) if ok else None,
+            'sustained_hosts': [h[0] if h else None for h in hosts]}
+
+
+def held_window(rs, held, subs_now, mbps):
+    """Relay rows over the last held seconds before its egress fell under 80% of the held level's."""
+    full = [x for x in rs if x['moqx_tx_gbps'] >= 0.8 * subs_now * mbps / 1000]
+    if not full:
+        return []
+    end = full[-1]['t_s']
+    return [x for x in rs if end - held + 5 <= x['t_s'] <= end]
+
+
 def near(rows, t):
     return min(rows, key=lambda r: abs(r['t'] - t))
 
@@ -228,7 +251,21 @@ def aio_run(d, pt, ds):
         'loadbox_busiest_cpu_pct': round(max(x['loadbox_busiest_cpu_pct'] for x in pl), 1),
         'udp_buf_errors': sum(x['udp_buf_errors'] for x in rs), 'loss_pct_max': max(x['loss_pct'] for x in latency),
         'limit': limit_of(pl, reached), 'tool': TOOLS['aio'], **relay_fields(pt)})
-    ds['runs'][-1].update(efficiency(pt, pl, ds['runs'][-1]['subs_plateau']))
+    run = ds['runs'][-1]
+    hold = float(pt.get('env', {}).get('HOLD') or 0)
+    if not hold:
+        run.update(efficiency(pt, pl, run['subs_plateau']))
+        return
+    # Step and hold: the result is the level held to the end, and its cost over that window.
+    run.update({'hold_s': hold, **sustained(d, float(pt.get('env', {}).get('CONFIRM') or 30))})
+    window = run['subs_sustained'] and held_window(rs, run['sustained_held_s'], run['subs_sustained'],
+                                                   run['mbps_per_sub'] or 0)
+    end = max(x['t_s'] for x in latency)
+    held = [x['p90_worst_ms'] for x in latency if run['subs_sustained'] and x['p90_worst_ms'] is not None
+            and x['t_s'] >= end - run['sustained_held_s'] + 5]
+    run['p90_median_ms'] = sorted(held)[len(held) // 2] if held else None
+    run.update(efficiency(pt, window, run['subs_sustained']) if window else
+               {k: None for k in ('relay_cpus', 'relay_rss_gb', 'relay_mb_per_sub', 'subs_per_core', 'mbps_per_core')})
 
 
 def mp_run(d, pt, ds):
@@ -326,7 +363,7 @@ def main():
         (out / f'{k}.json').write_text(json.dumps(v, separators=(',', ':')))
         print(k, len(v), (out / f'{k}.json').stat().st_size, 'bytes')
     for r in ds['runs']:
-        print({k: r.get(k) for k in ('run', 'subs_plateau', 'p90_median_ms', 'mp_lat_max_median_ms', 'moqx_tx_gbps',
+        print({k: r.get(k) for k in ('run', 'subs_plateau', 'subs_sustained', 'sustained_held_s', 'p90_median_ms', 'mp_lat_max_median_ms', 'moqx_tx_gbps',
                                      'moqx_tx_mpps', 'moqx_cores', 'relay_cpus', 'subs_per_core', 'mbps_per_core',
                                      'relay_rss_gb', 'relay_mb_per_sub', 'relay_busiest_cpu_pct',
                                      'loadbox_busy_max_pct', 'limit')})

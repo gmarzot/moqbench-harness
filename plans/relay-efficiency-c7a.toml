@@ -4,7 +4,7 @@ relays      = ["moqx:pgo", "moqdev:src", "cf:src", "aiomoqt:src"]
 suites      = ["relay-efficiency-4core"]
 threads     = 4
 slo_ms      = 500
-budget      = { hours = 2 }
+budget      = { hours = 4 }
 teardown    = true
 
 [builds]
@@ -13,6 +13,6 @@ moqx     = "patches/bin/moqx-v0.3.7-linux-amd64.tar.gz"
 moxygen  = "v0.3.7"
 moqdev   = "738c82bfbb93fe3bf6ba45a0e09a03203b895fd9"
 moq_rs   = "14f2eb11da41355d6d8753a6551d912895da4475"
-aiomoqt  = "9813cd5"
+aiomoqt  = "f94032d"
 aiopquic = "84d137a"
 python   = "3.14"

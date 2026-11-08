@@ -231,19 +231,21 @@ class Plans(unittest.TestCase):
         points = plan.points(plan.suites[0])
         # moqx points set no RELAY, so they come first in the sweep.
         self.assertEqual([p['run'] for p in points], [
-            'aio-pgo4-2b-720-c7a4x', 'aio-pgo4-2b-1080-c7a4x', 'aio-pgo4-2b-720-c7a4x-pico', 'aio-pgo4-2b-1080-c7a4x-pico',
+            'aio-pgo4-2b-720-c7a4x', 'aio-pgo4-2b-1080-c7a4x',
             'aio-moqdev4-2b-720-c7a4x', 'aio-moqdev4-2b-1080-c7a4x',
             'aio-cf4-2b-720-c7a4x', 'aio-cf4-2b-1080-c7a4x', 'aio-aiomoqt1-2b-720-c7a4x', 'aio-aiomoqt1-2b-1080-c7a4x'])
         self.assertEqual({p['env']['RELAY_CPUS'] for p in points}, {('4-7', 'test')})
+        self.assertEqual({p['env']['HOLD'] for p in points}, {(20, 'test')})
+        self.assertEqual({p['env']['CONFIRM'] for p in points}, {(30, 'default')})
         self.assertEqual({p['env']['AIOMOQT_ADMISSION_CPU'][0] for p in points if p['env'].get('RELAY', ('',))[0] == 'aiomoqt'},
                          {''})
 
-    def test_the_moqx_stack_plan(self):
-        plan = config.load_plan('relay-efficiency-c7a-moqx')
-        points = plan.points(plan.suites[0])
-        self.assertEqual([p['run'] for p in points], ['aio-pgo4-2b-720-c7a4x', 'aio-pgo4-2b-1080-c7a4x',
-                                                     'aio-pgo4-2b-720-c7a4x-pico', 'aio-pgo4-2b-1080-c7a4x-pico'])
-        self.assertEqual([p['env']['MOQX_STACK'][0] for p in points], ['mvfst', 'mvfst', 'picoquic', 'picoquic'])
+    def test_hold_needs_seconds_and_the_aiomoqt_tool(self):
+        base = dict(type='capacity', video='720p', max_per_box=10, seconds=10)
+        for test, why in ((dict(base, tool='aiomoqt', hold_s=-1), 'hold_s must be seconds'),
+                          (dict(base, tool='moqperf', type='ceiling', hold_s=20), 'hold_s needs the aiomoqt tool')):
+            with self.assertRaisesRegex(config.ConfigError, why):
+                config.Suite('s', dict(test=[test]))
 
     def test_moqx_stack_must_be_known(self):
         test = dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=10, seconds=10, moqx_stack='quiche')

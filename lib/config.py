@@ -32,7 +32,7 @@ SETTINGS = {
     'aiomoqt_env': ('AIOMOQT_ENV', ''),
     'aiomoqt_extra': ('AIOMOQT_EXTRA', ''), 'stop_at_ceiling': ('STOP_AT_CEILING', 0),
     'relay_cpus': ('RELAY_CPUS', ''), 'aiomoqt_admission_cpu': ('AIOMOQT_ADMISSION_CPU', ''),
-    'moqx_stack': ('MOQX_STACK', 'mvfst'),
+    'moqx_stack': ('MOQX_STACK', 'mvfst'), 'hold_s': ('HOLD', 0), 'confirm_s': ('CONFIRM', 30),
 }
 
 
@@ -239,6 +239,11 @@ class Suite:
                 raise ConfigError(f'{at}: relay_cpus must be a Linux CPU list such as "0-3"')
             if test.get('moqx_stack', 'mvfst') not in ('mvfst', 'picoquic'):
                 raise ConfigError(f'{at}: moqx_stack must be mvfst or picoquic')
+            for key in ('hold_s', 'confirm_s'):
+                if not isinstance(test.get(key, 0), (int, float)) or test.get(key, 0) < 0:
+                    raise ConfigError(f'{at}: {key} must be seconds')
+            if test.get('hold_s') and test['tool'] != 'aiomoqt':
+                raise ConfigError(f'{at}: hold_s needs the aiomoqt tool')
             positive_int(at, 'max_per_box', test.get('max_per_box'))
             positive_int(at, 'seconds', test.get('seconds'))
 
