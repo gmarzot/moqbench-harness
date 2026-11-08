@@ -236,9 +236,42 @@ def current_point(results=RESULTS):
     return point_info(newest.parent)
 
 
-def follow_points(store, stop, results=RESULTS):
+def plan_info(inventory, results=RESULTS):
+    """The newest moqbench plan, if it targets this testbed, for the header before its first point."""
+    try:
+        import tomllib
+        import config
+        deployment = json.loads(Path(inventory).read_text()).get('deployment')
+        path = max(Path(results).glob('moqbench/*/plan.toml'), key=lambda p: p.stat().st_mtime)
+        data = tomllib.loads(path.read_text())
+    except (ImportError, OSError, ValueError):
+        return None
+    if not deployment or data.get('deployment') != deployment:
+        return None
+    facts = [('Plan', path.parent.name), ('Deployment', deployment)]
+    try:
+        nodes = config.load_deployment(deployment).nodes
+        facts.append(('Hosts', ', '.join(f'{n["name"]} {n["instance"]}' for n in nodes)))
+    except (config.ConfigError, OSError, ValueError, KeyError):
+        pass
+    facts += [('Relays', ', '.join(data.get('relays', []))), ('Suites', ', '.join(data.get('suites', [])))]
+    if data.get('builds'):
+        facts.append(('Builds', ', '.join(f'{k} {v}' for k, v in data['builds'].items())))
+    return dict(run=None, title=path.parent.name, purpose=data.get('description', ''),
+                note='Setting up; the first point has not started', seconds=None, facts=facts)
+
+
+def header(store, inventory, results=RESULTS):
+    """The running point; before any point of this session, the plan setting up the testbed."""
+    info = current_point(results)
+    if not info and not (store.meta.get('point') or {}).get('run'):
+        info = plan_info(inventory, results)
+    return info
+
+
+def follow_points(store, stop, inventory, results=RESULTS):
     while not stop.is_set():
-        info = current_point(results)
+        info = header(store, inventory, results)
         if info and info != store.meta.get('point'):
             store.set_point(info)
         stop.wait(5)
@@ -328,7 +361,7 @@ def attach(inventory, store, stop, control):
     hosts = [('relay', 'relay', inv['relay']['public'])]
     hosts += [(f'load-{i + 1}', 'load', c['public']) for i, c in enumerate(inv['clients'])]
     store.meta['hosts'] = [dict(name=n, role=r) for n, r, _ in hosts]
-    threading.Thread(target=follow_points, args=(store, stop), daemon=True).start()
+    threading.Thread(target=follow_points, args=(store, stop, inventory), daemon=True).start()
     for name, role, address in hosts:
         Host(name, role, address, ssh, store, stop).start()
 
