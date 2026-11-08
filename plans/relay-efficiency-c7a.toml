@@ -1,10 +1,10 @@
-description = "moqx, moq-dev, moq-rs and aiomoqt-relay on the same 4 cores of a c7a.4xlarge: subscribers, latency, bandwidth and memory per core"
+description = "moqx, moq-dev, moq-rs and aiomoqt-relay on the same 4 cores of a c7a.4xlarge: held load, latency, bandwidth and memory per core, and join rate"
 deployment  = "aws-c7a-4x"
 relays      = ["moqx:pgo", "moqdev:src", "cf:src", "aiomoqt:src"]
-suites      = ["relay-efficiency-4core"]
+suites      = ["relay-efficiency-4core", "relay-joinrate-4core"]
 threads     = 4
 slo_ms      = 500
-budget      = { hours = 4 }
+budget      = { hours = 6 }
 teardown    = true
 
 [builds]
@@ -13,6 +13,6 @@ moqx     = "patches/bin/moqx-v0.3.7-linux-amd64.tar.gz"
 moxygen  = "v0.3.7"
 moqdev   = "738c82bfbb93fe3bf6ba45a0e09a03203b895fd9"
 moq_rs   = "14f2eb11da41355d6d8753a6551d912895da4475"
-aiomoqt  = "f94032d"
+aiomoqt  = "73824f9"
 aiopquic = "84d137a"
 python   = "3.14"

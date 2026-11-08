@@ -317,7 +317,7 @@ Choose CPUs using the host's topology. `relay-affinity.txt` records every
 thread's initial allowed CPU list. This option supports this script's
 `fixed`, `adaptive`, `loadsim`, and `moqbench` paths. A suite test sets it
 with `relay_cpus`; `aiomoqt_admission_cpu` passes aiomoqt-relay's admission gate
-(`--admission-cpu`) only when set, for relays that still have it; unset leaves the relay's own default. `moqx_stack = "picoquic"` runs moqx on its picoquic listener, with the bench certificate and picoquic's `bbr`. `hold_s` runs adaptive_bench step and hold (`--hold`): each step is held that long and each host holds its confirmed level to the end of the run; the report's `subs_sustained` sums the hosts' levels only when every host held its own for `confirm_s` (30 s).
+(`--admission-cpu`) only when set, for relays that still have it; unset leaves the relay's own default. `moqx_stack = "picoquic"` runs moqx on its picoquic listener, with the bench certificate and picoquic's `bbr`. `hold_s` runs adaptive_bench step and hold (`--hold`): each step is held that long and each host holds its confirmed level to the end of the run; the report's `subs_sustained` sums the hosts' levels only when every host held its own for `confirm_s` (30 s). `join_steps` (total joins per second, ascending) holds the test's audience as a base and steps the rate at which subscribers leave and rejoin; `join_rate_supported` is the highest rate every host passed, with join latency per step in the `joins` dataset; `join_rate_floor` marks it a lower bound when every step passed or the load hosts ran out of free joiners.
 
 The report leads with the combined active count and received Mbps.
 `combined.csv` reports approximate sums with the whole timestamp span bounded to five seconds;

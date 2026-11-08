@@ -151,6 +151,40 @@ class SweepReport(unittest.TestCase):
             self.assertEqual((run['subs_sustained'], run['subs_per_core'], run['p90_median_ms']), (None, None, None))
             shutil.rmtree(self.tmp / 'aio-pgo60-2b-1080')
 
+    def join_run(self, *hosts):
+        d = self.run_dir('aio-pgo60-2b-1080', 'aio', ['adaptive-sub0.log', 'adaptive-sub1.log'], 31,
+                         threads=lambda t: 10 + 100 * t)
+        for i, lines in enumerate(hosts):
+            with (d / f'sub{i}.log').open('a') as f:
+                f.writelines(f'  Join step:   {line}\n' for line in lines)
+        return sr.report(self.tmp)[0]
+
+    def test_join_rate_is_the_highest_step_every_host_passed(self):
+        ok = 'passed, {} joins, 0 failed, SUBSCRIBE_OK p50/p99 {}/{} ms, first object p50/p99 {}/{} ms'
+        ds = self.join_run(['5/s ' + ok.format(75, 20, 40, 900, 1900), '25/s ' + ok.format(375, 30, 80, 950, 2000),
+                            '50/s failed (SUBSCRIBE_OK p99 over the bound), 740 joins, 3 failed, '
+                            'SUBSCRIBE_OK p50/p99 400/1800 ms, first object p50/p99 1400/3500 ms'],
+                           ['5/s ' + ok.format(75, 22, 45, 880, 1950), '25/s ' + ok.format(374, 35, 90, 990, 2100),
+                            '50/s ' + ok.format(750, 60, 300, 1000, 2400)])
+        self.assertEqual((ds['runs'][0]['join_rate_supported'], ds['runs'][0]['join_rate_floor']), (50.0, False))
+        self.assertEqual([(r['join_rate'], r['passed'], r['joins'], r['sub_p99_ms']) for r in ds['joins']],
+                         [(10.0, True, 150, 45), (50.0, True, 749, 90), (100.0, False, 1490, 1800)])
+        self.assertEqual(ds['joins'][2]['reason'], 'SUBSCRIBE_OK p99 over the bound')
+
+    def test_no_join_steps_means_no_join_rate(self):
+        ds = self.join_run()
+        self.assertEqual((ds['runs'][0]['join_rate_supported'], ds['joins']), (None, []))
+
+    def test_join_rate_is_a_floor_when_the_joiner_pool_ran_out_or_every_step_passed(self):
+        ok = 'passed, 75 joins, 0 failed, SUBSCRIBE_OK p50/p99 20/40 ms, first object p50/p99 900/1900 ms'
+        pool = ('failed (joiner pool exhausted), 300 joins, 0 failed, SUBSCRIBE_OK p50/p99 20/40 ms, '
+                'first object p50/p99 900/1900 ms')
+        ds = self.join_run(['5/s ' + ok, '25/s ' + pool], ['5/s ' + ok, '25/s ' + ok])
+        self.assertEqual((ds['runs'][0]['join_rate_supported'], ds['runs'][0]['join_rate_floor']), (10.0, True))
+        shutil.rmtree(self.tmp / 'aio-pgo60-2b-1080')
+        ds = self.join_run(['5/s ' + ok, '25/s ' + ok], ['5/s ' + ok, '25/s ' + ok])
+        self.assertEqual((ds['runs'][0]['join_rate_supported'], ds['runs'][0]['join_rate_floor']), (50.0, True))
+
     def test_cpu_count(self):
         self.assertEqual([sr.cpu_count(s) for s in ('4-7', '2-5,8', '0', 'default')], [4, 5, 1, None])
 

@@ -11,6 +11,6 @@ teardown    = true
 # moqx's v0.3.7 release tarball, moqx-linux-amd64.tar.gz (PGO+LTO)
 moqx     = "patches/bin/moqx-v0.3.7-linux-amd64.tar.gz"
 moxygen  = "v0.3.7"
-aiomoqt  = "f94032d"
+aiomoqt  = "73824f9"
 aiopquic = "84d137a"
 python   = "3.14"

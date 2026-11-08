@@ -247,6 +247,23 @@ class Plans(unittest.TestCase):
                                                      'aio-pgo4-2b-720-c7a4x-pico', 'aio-pgo4-2b-1080-c7a4x-pico'])
         self.assertEqual([p['env']['MOQX_STACK'][0] for p in points], ['mvfst', 'mvfst', 'picoquic', 'picoquic'])
 
+    def test_the_join_rate_suite(self):
+        plan = config.load_plan('relay-efficiency-c7a')
+        self.assertEqual([s.name for s in plan.suites], ['relay-efficiency-4core', 'relay-joinrate-4core'])
+        points = plan.points(plan.suites[1])
+        self.assertEqual([p['run'] for p in points], [f'aio-{r}-2b-{v}-c7a4x{s}' for r, s in (
+            ('pgo4', '-join'), ('pgo4', '-pico-join'), ('moqdev4', '-join'), ('cf4', '-join'), ('aiomoqt1', '-join'))
+            for v in ('720', '1080')])
+        self.assertEqual({p['env']['JOIN_STEPS'] for p in points}, {('10,25,50,100,200', 'test')})
+        self.assertEqual({p['env']['HOLD'][0] for p in points}, {0})
+
+    def test_join_steps_must_ascend_and_use_aiomoqt(self):
+        base = dict(type='capacity', video='720p', max_per_box=10, seconds=10, tool='aiomoqt')
+        for test, why in ((dict(base, join_steps='50,10'), 'ascending'), (dict(base, join_steps='10,x'), 'ascending'),
+                          (dict(base, join_steps='10,20', hold_s=20), 'no hold_s')):
+            with self.assertRaisesRegex(config.ConfigError, why):
+                config.Suite('s', dict(test=[test]))
+
     def test_hold_needs_seconds_and_the_aiomoqt_tool(self):
         base = dict(type='capacity', video='720p', max_per_box=10, seconds=10)
         for test, why in ((dict(base, tool='aiomoqt', hold_s=-1), 'hold_s must be seconds'),

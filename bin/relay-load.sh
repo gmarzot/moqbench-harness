@@ -255,6 +255,7 @@ PER=$(( (SUBS + ${#SUBHOSTS[@]} - 1) / ${#SUBHOSTS[@]} ))
 # AIOMOQT_ENV: environment for every aiomoqt process, e.g. MALLOC_ARENA_MAX=2
 # STOP_AT_CEILING=1: adaptive ends at the first host's ceiling instead of running on to -t
 # HOLD=SEC: adaptive steps and holds (--hold SEC --confirm CONFIRM) instead of ramping
+# JOIN_STEPS=R1,R2,...: adaptive holds its base audience and steps total join rates (--join-steps)
 PY="${AIOMOQT_ENV:+$AIOMOQT_ENV }aiomoqt/.venv/bin/python -u"
 AIOMOQT_EXTRA=${AIOMOQT_EXTRA:-}   # e.g. "--max-queued-bytes N --max-inflight-bytes N"
 
@@ -304,7 +305,12 @@ wait"
     BENCH="-m aiomoqt.tools.adaptive_bench"
     FIXED_FLAG=""
     SUB_EXIT="" SUB_HOLD=""
-    if [[ ${HOLD:-0} != 0 ]]; then
+    if [[ -n ${JOIN_STEPS:-} ]]; then
+      [[ $TOOL == adaptive && $JOIN_STEPS =~ ^[0-9.]+(,[0-9.]+)*$ ]] || { echo "JOIN_STEPS: joins per second, for the adaptive tool" >&2; exit 2; }
+      # Each host takes its share of every step's join rate.
+      JOIN_PER=$(python3 -c "import sys; print(','.join('%g' % (float(r) / int(sys.argv[2])) for r in sys.argv[1].split(',')))" "$JOIN_STEPS" "${#SUBHOSTS[@]}")
+      SUB_HOLD="--join-steps $JOIN_PER --step-s ${JOIN_STEP_S:-15} --base-s ${BASE_S:-30} --join-bound ${JOIN_BOUND:-1000}"
+    elif [[ ${HOLD:-0} != 0 ]]; then
       [[ $TOOL == adaptive && $HOLD =~ ^[0-9]+([.][0-9]+)?$ && ${CONFIRM:-30} =~ ^[0-9]+([.][0-9]+)?$ ]] || {
         echo "HOLD: seconds, for the adaptive tool" >&2; exit 2;
       }
