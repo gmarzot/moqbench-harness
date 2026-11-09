@@ -10,7 +10,6 @@ seconds = 600
 step_subs = 25
 join_s = 5
 stop_at_ceiling = 1
-aiomoqt_admission_cpu = 87
 note = "Where the single event loop crosses the bound on a dedicated core"
 
 [[test]]
@@ -22,5 +21,4 @@ seconds = 600
 step_subs = 25
 join_s = 5
 stop_at_ceiling = 1
-aiomoqt_admission_cpu = 87
 note = "The same at 1080p, about twice the bytes per subscriber"

@@ -67,7 +67,7 @@ import json, os, sys
 out, relay, tool, build, shape, mx, dur, run, boxes, source = sys.argv[1:]
 env = {k: os.environ[k] for k in ('PUB_HOST', 'DRAFT', 'THREADS', 'LATENCY_MS', 'SHORTFALL', 'STEP_SUBS',
                                   'DELIVERY_TIMEOUT', 'MP_THREADS', 'MP_RAMP', 'MOQDEV_RUNTIME', 'SUB_HOSTS', 'AIOMOQT_ENV', 'AIOMOQT_EXTRA', 'AIOMOQT_WORKERS', 'STOP_AT_CEILING',
-                                  'RELAY_CPUS', 'AIOMOQT_ADMISSION_CPU', 'MOQX_STACK', 'HOLD', 'CONFIRM', 'JOIN_SEARCH', 'JOIN_MAX', 'SEARCHER_SUBS', 'TRIAL_GAP', 'BASE_S', 'JOIN_BOUND') if k in os.environ}
+                                  'RELAY_CPUS', 'MOQX_STACK', 'HOLD', 'CONFIRM', 'JOIN_SEARCH', 'JOIN_MAX', 'SEARCHER_SUBS', 'TRIAL_GAP', 'BASE_S', 'JOIN_BOUND') if k in os.environ}
 json.dump(dict(run=run, relay=relay, tool=tool, build=build, shape=shape, max_per_box=int(mx), duration_s=int(dur),
                load_boxes=int(boxes), moqx_source=source or 'release', env=env), open(out, 'w'), indent=1)
 PY

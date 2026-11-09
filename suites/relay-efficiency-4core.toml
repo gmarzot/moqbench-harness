@@ -82,7 +82,7 @@ hold_s = 20
 
 [[test]]
 relay = "aiomoqt"
-note = "Admission gate off, so the bound alone limits it like the others; one event loop uses at most 2 of the 4 cores"
+note = "The bound alone limits it like the others; one event loop uses at most 2 of the 4 cores"
 type = "capacity"
 tool = "aiomoqt"
 video = "720p"
