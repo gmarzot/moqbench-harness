@@ -46,7 +46,7 @@ failed=() built=""
 while read -r line; do
   line=${line%%#*}
   [[ -n ${line// } ]] || continue
-  if [[ $line =~ ^[[:space:]]*([A-Z_][A-Z0-9_]*)=([^[:space:]]*)[[:space:]]*$ ]]; then
+  if [[ $line =~ ^[[:space:]]*([A-Z_][A-Z0-9_]*)=(.*[^[:space:]])?[[:space:]]*$ ]]; then
     export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
     [[ ${BASH_REMATCH[1]} != RELAY ]] || RELAY_NAME=${BASH_REMATCH[2]}
     continue

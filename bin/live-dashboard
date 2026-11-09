@@ -139,7 +139,7 @@ def sweep_plan(path):
             elif written:
                 header['plan_name'], header['suite_name'] = written.groups()
             continue
-        setting = re.match(r'([A-Z_][A-Z0-9_]*)=(\S*)$', line)
+        setting = re.match(r'([A-Z_][A-Z0-9_]*)=(.*)$', line)
         fields = line.split('#')[0].split()
         if setting:
             env[setting[1]] = setting[2]
