@@ -4,7 +4,7 @@ relays      = ["moqx:pgo", "moqdev:src", "cf:src", "aiomoqt:src"]
 suites      = ["av-viewers-4ocpu"]
 threads     = 8
 slo_ms      = 500
-budget      = { hours = 4 }
+budget      = { hours = 7 }
 teardown    = true
 
 [builds]
