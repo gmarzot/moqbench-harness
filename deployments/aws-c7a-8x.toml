@@ -1,0 +1,19 @@
+# A c7a.8xlarge relay for its 12.5 Gbps network baseline and one load host with
+# the same baseline, which also publishes. AMD Genoa, one core per vCPU, one
+# cluster placement group. Your account settings go in deployments/aws.local.toml.
+provider = "aws"
+region   = "us-west-2"
+zone     = "us-west-2a"
+arch     = "amd64"
+tag      = "c7a8x"
+
+[[nodes]]
+name     = "relay"
+instance = "c7a.8xlarge"
+vcpus    = 32
+roles    = ["relay"]
+
+[[nodes]]
+name     = "load-1"
+instance = "c7a.8xlarge"
+roles    = ["subscriber", "publisher"]
