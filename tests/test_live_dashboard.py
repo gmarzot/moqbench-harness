@@ -109,8 +109,9 @@ class LiveDashboard(unittest.TestCase):
         self.assertEqual((info['title'], info['purpose'], info['note'], info['seconds']),
                          ('cf-moq-rs/quinn, 720p', 'Why this plan runs', 'Fewer workers than vCPUs', 400))
         self.assertEqual(facts['Plan'], 'p1, point 2 of 2')
-        self.assertEqual(facts['Relay'], 'cf-moq-rs/quinn moq-rs-14f2eb11da41, 3 threads')
-        self.assertEqual(facts['Tool'], 'aiomoqt, K=10 per worker')
+        self.assertEqual(facts['Relay'], 'cf-moq-rs/quinn moq-rs-14f2eb11da41')
+        self.assertEqual(facts['Threads'], '3 threads')
+        self.assertEqual(facts['Tool'], 'aiomoqt, K=10 viewers per load process')
         self.assertEqual(facts['Video'], '720p, 2.19 Mbps per subscriber')
         self.assertEqual(facts['Draft'], '18')
         self.assertEqual(facts['Ramp'], '4 subscribers/s')  # JOIN from the plan: 10 per 5 s on each of 2 hosts
@@ -133,7 +134,7 @@ class LiveDashboard(unittest.TestCase):
             out = sweep_point(sweep, 'aio-cf3-2b-720', '3')
             (out / 'run-settings.txt').write_text('publisher_command=x -j 9\nsubscriber_command_per_host=y --step-subs 20 -j 4 -S 1\n')
             facts = dict(live.point_info(out)['facts'])
-        self.assertEqual((facts['Tool'], facts['Ramp']), ('aiomoqt, K=20 per worker', '10 subscribers/s'))
+        self.assertEqual((facts['Tool'], facts['Ramp']), ('aiomoqt, K=20 viewers per load process', '10 subscribers/s'))
 
     def test_an_aiomoqt_relay_reports_its_package_version(self):
         with tempfile.TemporaryDirectory() as d:
@@ -145,7 +146,24 @@ class LiveDashboard(unittest.TestCase):
             (out / 'run.txt').write_text('== adaptive vs aiomoqt/picoquic draft 18  600s\n')
             (out / 'versions.txt').write_text('aiomoqt-relay: 0.15.0.dev9+g1049da0 aiopquic 0.8.0\naiomoqt:        aiomoqt: x\n')
             facts = dict(live.point_info(out)['facts'])
-        self.assertEqual(facts['Relay'], 'aiomoqt/picoquic 0.15.0.dev9+g1049da0, 1 thread')
+        self.assertEqual(facts['Relay'], 'aiomoqt/picoquic 0.15.0.dev9+g1049da0 on aiopquic 0.8.0')
+        self.assertEqual(facts['Threads'], '1 picoquic worker + 1 Python event loop')
+
+    def test_an_aiomoqt_relay_states_its_workers_and_cpus(self):
+        with tempfile.TemporaryDirectory() as d:
+            sweep = Path(d) / 'sweep-p1-s1'
+            sweep.mkdir()
+            out = sweep_point(sweep, 'aio-aiomoqt1-2b-720', '1')
+            pt = json.loads((out / 'sweep-point.json').read_text())
+            pt['env'].update(AIOMOQT_WORKERS='3', RELAY_CPUS='4-7')
+            (out / 'sweep-point.json').write_text(json.dumps(dict(pt, relay='aiomoqt')))
+            (out / 'run.txt').write_text('== adaptive vs aiomoqt/picoquic draft 18  600s\n')
+            (out / 'versions.txt').write_text('relay-cpu: 32 vcpu, AMD EPYC 9R14\n')
+            info = live.point_info(out)
+        facts = dict(info['facts'])
+        self.assertEqual(facts['Threads'], '3 picoquic workers + 1 Python event loop')
+        self.assertEqual(facts['CPUs'], 'cores 4-7 (4 of 32 vCPU), AMD EPYC 9R14')
+        self.assertTrue(info['title'].endswith(', 3 workers'))
 
     def test_current_point_is_the_newest_unfinished_one(self):
         with tempfile.TemporaryDirectory() as d:
