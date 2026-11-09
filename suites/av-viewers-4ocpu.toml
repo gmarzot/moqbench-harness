@@ -1,0 +1,319 @@
+description = "Each relay on the same 4 pinned OCPUs at 1080p, one aiomoqt load host: video only, then catalog and audio beside video with audio on streams or datagrams, stepped to its equilibrium, confirmed for 60 s"
+requires = { subscriber = 1, publisher = 1 }
+
+[[test]]
+relay = "moqx"
+note = "Whether this relay carries the audio datagrams, at 100 viewers"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 100
+seconds = 120
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 30
+relay_cpus = "4-11"
+hold_s = 20
+aiomoqt_extra = "--audio --catalog -D"
+suffix = "smoke-dgram"
+
+[[test]]
+relay = "moqdev"
+note = "Whether this relay carries the audio datagrams, at 100 viewers"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 100
+seconds = 120
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 30
+relay_cpus = "4-11"
+hold_s = 20
+aiomoqt_extra = "--audio --catalog -D"
+suffix = "smoke-dgram"
+
+[[test]]
+relay = "cf"
+note = "Whether this relay carries the audio datagrams, at 100 viewers"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 100
+seconds = 120
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 30
+relay_cpus = "4-11"
+hold_s = 20
+aiomoqt_extra = "--audio --catalog -D"
+suffix = "smoke-dgram"
+
+[[test]]
+relay = "aiomoqt"
+note = "Whether this relay carries the audio datagrams, at 100 viewers"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 100
+seconds = 120
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 30
+relay_cpus = "4-11"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 1
+aiomoqt_extra = "--audio --catalog -D"
+suffix = "w1-smoke-dgram"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 1
+suffix = "w1-video"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 1
+aiomoqt_extra = "--audio --catalog"
+suffix = "w1-av-stream"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 1
+aiomoqt_extra = "--audio --catalog -D"
+suffix = "w1-av-dgram"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 3
+suffix = "w3-video"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 3
+aiomoqt_extra = "--audio --catalog"
+suffix = "w3-av-stream"
+
+[[test]]
+relay = "aiomoqt"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+threads = 1
+aiomoqt_workers = 3
+aiomoqt_extra = "--audio --catalog -D"
+suffix = "w3-av-dgram"
+
+[[test]]
+relay = "moqx"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+suffix = "video"
+
+[[test]]
+relay = "moqx"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+aiomoqt_extra = "--audio --catalog"
+suffix = "av-stream"
+
+[[test]]
+relay = "moqx"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+aiomoqt_extra = "--audio --catalog -D"
+suffix = "av-dgram"
+
+[[test]]
+relay = "moqdev"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+suffix = "video"
+
+[[test]]
+relay = "moqdev"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+aiomoqt_extra = "--audio --catalog"
+suffix = "av-stream"
+
+[[test]]
+relay = "moqdev"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+aiomoqt_extra = "--audio --catalog -D"
+suffix = "av-dgram"
+
+[[test]]
+relay = "cf"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+suffix = "video"
+
+[[test]]
+relay = "cf"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+aiomoqt_extra = "--audio --catalog"
+suffix = "av-stream"
+
+[[test]]
+relay = "cf"
+type = "capacity"
+tool = "aiomoqt"
+video = "1080p"
+max_per_box = 2400
+seconds = 1200
+step_subs = 100
+join_s = 5
+stop_at_ceiling = 1
+confirm_s = 60
+relay_cpus = "4-11"
+hold_s = 20
+aiomoqt_extra = "--audio --catalog -D"
+suffix = "av-dgram"

@@ -165,6 +165,12 @@ class LiveDashboard(unittest.TestCase):
         self.assertEqual(facts['CPUs'], 'cores 4-7 (4 of 32 vCPU), AMD EPYC 9R14')
         self.assertTrue(info['title'].endswith(', 3 workers'))
 
+    def test_an_aiomoqt_load_states_its_viewer_tracks(self):
+        for extra, want in (('', 'video'),
+                            ('--audio --catalog', 'video, audio on streams, catalog'),
+                            ('--audio --catalog -D', 'video, audio on datagrams, catalog')):
+            self.assertEqual(live.viewer_tracks({'AIOMOQT_EXTRA': extra}), want)
+
     def test_current_point_is_the_newest_unfinished_one(self):
         with tempfile.TemporaryDirectory() as d:
             sweep = Path(d) / 'sweep-p1-s1'
