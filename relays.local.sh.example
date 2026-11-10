@@ -1,5 +1,6 @@
-# Copy to relays.local.sh (untracked, gitignored) to benchmark a relay whose
-# launch and build details do not belong in this repo. lib/run.sh sources it,
+# Copy to relays.local.sh (untracked, gitignored), or into a MOQBENCH_CONFIG
+# folder, to benchmark a relay whose launch and build details do not belong in
+# this repo. lib/run.sh sources it,
 # so the relay then works with relay-deploy.sh, relay-load.sh and
 # relay-capacity.sh like the built-in ones:
 #

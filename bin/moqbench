@@ -10,8 +10,9 @@
 
 A deployment (deployments/) is the nodes and their roles, a suite (suites/) is
 the tests, and a plan (plans/) pairs them with the relays, builds and budget of
-one series. run, test, up and down take --dry-run, which prints what they would
-do and changes nothing.
+one series. MOQBENCH_CONFIG lists folders, separated by ':', searched for these
+before the repo. run, test, up and down take --dry-run, which prints what they
+would do and changes nothing.
 """
 import argparse
 import datetime
@@ -227,7 +228,7 @@ def do_run(args):
     folder = ROOT / 'results' / 'moqbench' / plan.name
     if not dry:
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / 'plan.toml').write_text((ROOT / 'plans' / f'{plan.name}.toml').read_text())
+        (folder / 'plan.toml').write_text(plan.path.read_text())
     keep = args.keep or not plan.teardown
     try:
         if not args.no_setup:
@@ -298,10 +299,8 @@ def do_status(_args):
         print('no hosts selected')
     now = datetime.datetime.now(datetime.timezone.utc)
     seen = set()
-    for path in sorted((ROOT / 'deployments').glob('*.toml')):
-        if path.name.endswith('.local.toml') and path.stem.removesuffix('.local') in config.PROVIDERS:
-            continue
-        dep = config.load_deployment(path.stem.removesuffix('.local'))
+    for name in config.deployment_names():
+        dep = config.load_deployment(name)
         if dep.provider != 'aws' or (dep.account.get('profile'), dep.region) in seen:
             continue
         seen.add((dep.account.get('profile'), dep.region))

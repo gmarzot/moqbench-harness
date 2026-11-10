@@ -5,6 +5,7 @@ which tests to run, with no hardware in it. A plan pairs them with the relays,
 builds and tuning of one series, and is what `moqbench run` executes.
 """
 import json
+import os
 from pathlib import Path
 import re
 import tomllib
@@ -49,6 +50,47 @@ def read_toml(path):
         raise ConfigError(f'{path}: {exc.strerror}') from exc
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f'{path}: {exc}') from exc
+
+
+def config_dirs(root=ROOT):
+    """Folders holding deployments/, suites/ and plans/: each MOQBENCH_CONFIG folder in order, then root."""
+    extra = [Path(p).expanduser() for p in os.environ.get('MOQBENCH_CONFIG', '').split(os.pathsep) if p]
+    return [*extra, Path(root)]
+
+
+def find(kind, names, root=ROOT):
+    """The first <folder>/<kind>/<name> over config_dirs(root), trying names in order in each folder; None if absent."""
+    for folder in config_dirs(root):
+        for name in names:
+            if (folder / kind / name).is_file():
+                return folder / kind / name
+    return None
+
+
+def need(kind, names, root=ROOT):
+    path = find(kind, names, root)
+    if path is None:
+        raise ConfigError(f'no {kind}/{names[0]} in {", ".join(map(str, config_dirs(root)))}')
+    return path
+
+
+def shown(path, root=ROOT):
+    """A config file's path, relative to root when it is inside it."""
+    try:
+        return str(Path(path).relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def deployment_names(root=ROOT):
+    """Every deployment over config_dirs(root), leaving out the account files."""
+    names = set()
+    for folder in config_dirs(root):
+        for path in (folder / 'deployments').glob('*.toml'):
+            name = path.stem.removesuffix('.local')
+            if not (path.name.endswith('.local.toml') and name in PROVIDERS):
+                names.add(name)
+    return sorted(names)
 
 
 def only_keys(where, data, allowed):
@@ -179,16 +221,13 @@ class Deployment:
 
 def load_deployment(name, root=ROOT):
     """deployments/<name>.toml, or <name>.local.toml; deployments/<provider>.local.toml adds account settings."""
-    folder = Path(root) / 'deployments'
-    path = folder / f'{name}.toml'
-    if not path.exists():
-        path = folder / f'{name}.local.toml'
+    path = need('deployments', [f'{name}.toml', f'{name}.local.toml'], root)
     data = read_toml(path)
     account = {}
-    account_file = folder / f'{data.get("provider")}.local.toml'
-    if account_file.exists():
+    account_file = find('deployments', [f'{data.get("provider")}.local.toml'], root)
+    if account_file:
         account = read_toml(account_file).get('account', {})
-    return Deployment(name, data, account, where=str(path.relative_to(root)))
+    return Deployment(name, data, account, where=shown(path, root))
 
 
 def render_tfvars(deployment):
@@ -259,16 +298,17 @@ class Suite:
 
 
 def load_suite(name, root=ROOT):
-    return Suite(name, read_toml(Path(root) / 'suites' / f'{name}.toml'))
+    return Suite(name, read_toml(need('suites', [f'{name}.toml'], root)))
 
 
 class Plan:
     KEYS = {'description', 'deployment', 'relays', 'suites', 'tune', 'budget', 'teardown', 'builds', 'threads', 'slo_ms'}
     BUILD_KEYS = {'moqx', 'aiomoqt', 'aiopquic', 'moxygen', 'python', *SOURCE_RELAYS.values()}
 
-    def __init__(self, name, data, root=ROOT):
+    def __init__(self, name, data, root=ROOT, path=None):
         self.name = name
-        where = f'plans/{name}.toml'
+        self.path = path
+        where = shown(path, root) if path else f'plans/{name}.toml'
         only_keys(where, data, self.KEYS)
         self.description = data.get('description', '')
         self.deployment = load_deployment(data.get('deployment') or '', root)
@@ -355,4 +395,5 @@ class Plan:
 
 
 def load_plan(name, root=ROOT):
-    return Plan(name, read_toml(Path(root) / 'plans' / f'{name}.toml'), root)
+    path = need('plans', [f'{name}.toml'], root)
+    return Plan(name, read_toml(path), root, path)

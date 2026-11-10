@@ -32,6 +32,18 @@ The test types are `capacity` (ramp until the latency SLO is crossed) and `ceili
 (ramp past it to the egress plateau, moqperf only). The commands below it remain
 available and are what `moqbench` calls.
 
+Your own deployments, suites and plans belong outside this repo. `MOQBENCH_CONFIG`
+lists folders, separated by `:`, each holding any of `deployments/`, `suites/`,
+`plans/` and a `relays.local.sh`. moqbench searches them in order before the repo,
+so a plan there can use the repo's suites and deployments, and a name there hides
+the repo's. Account files (`deployments/<provider>.local.toml`) are found the same
+way; keep them out of any repository.
+
+```bash
+export MOQBENCH_CONFIG=~/my-moqbench-configs
+./bin/moqbench run my-plan --dry-run
+```
+
 ## Start here
 
 | file | what it is |
@@ -154,7 +166,8 @@ not a guaranteed hold at that population.
 Tracked files and PR descriptions hold generic harness behavior, public cloud
 interfaces and public upstream relay integrations only. Keep account and tenancy
 identifiers, host addresses, credentials and private results in the ignored
-`.env`, `*.local.tfvars`, `relays.local.sh`, `.testbed/` and `results/`.
+`.env`, `*.local.tfvars`, `relays.local.sh`, `.testbed/` and `results/`, and your
+own test configs in a `MOQBENCH_CONFIG` folder.
 `.gitignore` does not sanitize tracked content or history: review the commit
 range before pushing.
 
