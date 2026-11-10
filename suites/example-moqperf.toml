@@ -1,0 +1,10 @@
+description = "Example: moqx under moxygen's moqperf at 720p from two hosts, ramped until p90 crosses the SLO"
+requires = { subscriber = 2, publisher = 1 }
+
+[[test]]
+relay = "moqx"
+type = "capacity"
+tool = "moqperf"
+video = "720p"
+max_per_box = 500
+seconds = 420

@@ -1,0 +1,15 @@
+description = "Example: moqx, moq-dev and aiomoqt-relay on a 4-OCPU E6 VM, video-only and A/V viewers from two aiomoqt load hosts, and moqx under moqperf"
+deployment  = "oci-example"
+relays      = ["moqx:pgo", "moqdev:src", "aiomoqt:src"]
+suites      = ["example-video", "example-av", "example-moqperf"]
+slo_ms      = 500
+budget      = { hours = 3 }
+teardown    = true
+
+[builds]
+# Without a moqx entry, moqx points install its latest release;
+# moqx = "patches/bin/<release tarball>" pins one.
+moxygen  = "v0.3.7"
+moqdev   = "738c82bfbb93fe3bf6ba45a0e09a03203b895fd9"
+aiomoqt  = "0.15.0rc1"
+aiopquic = "v0.8.0rc1"

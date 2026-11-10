@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run a sweep plan: one relay-load.sh point per line, against RELAY (default moqx).
 #
-#   ./bin/sweep.sh <plan> [name]      # e.g. scenarios/sweep-g3.plan
+#   ./bin/sweep.sh <plan> [name]      # results/sweep-<name>, default the plan's file name
 #
 # A point is "<tool> <build> <shape> <max_per_box> <seconds> <run>":
 #   tool   aio (adaptive_bench) | mp (moqperf-ramp)

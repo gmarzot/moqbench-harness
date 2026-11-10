@@ -1,11 +1,11 @@
-# One relay and two load hosts on AMD Genoa (one core per vCPU), in one cluster
-# placement group. 2xlarge for its 3.125 Gbps network baseline; xlarge's 1.56
-# would cap 1080p. Your account settings go in deployments/aws.local.toml.
+# Example: a relay and two load hosts on c7a.2xlarge (8 vCPUs, 3.125 Gbps
+# baseline) in one cluster placement group. Your account settings go in
+# deployments/aws.local.toml (see aws.local.toml.example).
 provider = "aws"
 region   = "us-west-2"
 zone     = "us-west-2a"
 arch     = "amd64"
-tag      = "c7a"
+tag      = "awsex"
 
 [[nodes]]
 name     = "relay"
