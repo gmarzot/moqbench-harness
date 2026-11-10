@@ -20,9 +20,9 @@ belong in ignored local files.
 | `plans/<name>.toml` | A deployment, its suites, the relays, builds and tuning, the budget, and whether to tear down. |
 
 ```bash
-./bin/moqbench run moqx-c7gn12x --dry-run   # hosts, commands, each setting's source, time and cost
-./bin/moqbench run moqx-c7gn12x             # up, provision, tune, baseline, suites, report, down
-./bin/moqbench run moqx-c7gn12x --only ceiling-2160 --no-setup
+./bin/moqbench run example-aws --dry-run    # hosts, commands, each setting's source, time and cost
+./bin/moqbench run example-aws              # up, provision, tune, baseline, suites, report, down
+./bin/moqbench run example-aws --only example-av --no-setup
 ./bin/moqbench test capacity --tool moqperf --video 1080p --max-per-box 7000 --seconds 420
 ./bin/moqbench status
 ./bin/moqbench dashboard                    # watch a run; see RUNBOOK.md
@@ -31,6 +31,11 @@ belong in ignored local files.
 The test types are `capacity` (ramp until the latency SLO is crossed) and `ceiling`
 (ramp past it to the egress plateau, moqperf only). The commands below it remain
 available and are what `moqbench` calls.
+
+The repo ships examples to copy: `example-aws` and `example-oci` run moqx, moq-dev
+and aiomoqt-relay on a small relay with two load hosts (`aws-example`,
+`oci-example`), under the `example-video`, `example-av` and `example-moqperf`
+suites. They need only your account file.
 
 Your own deployments, suites and plans belong outside this repo. `MOQBENCH_CONFIG`
 lists folders, separated by `:`, each holding any of `deployments/`, `suites/`,

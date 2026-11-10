@@ -1,0 +1,30 @@
+description = "Example: viewers taking catalog and audio beside 720p video, audio on streams then on datagrams, aiomoqt load from two hosts"
+requires = { subscriber = 2, publisher = 1 }
+
+[[test]]
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 500
+seconds = 600
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+hold_s = 20
+confirm_s = 60
+aiomoqt_extra = "--audio --catalog"
+suffix = "av-stream"
+
+[[test]]
+type = "capacity"
+tool = "aiomoqt"
+video = "720p"
+max_per_box = 500
+seconds = 600
+step_subs = 50
+join_s = 5
+stop_at_ceiling = 1
+hold_s = 20
+confirm_s = 60
+aiomoqt_extra = "--audio --catalog -D"
+suffix = "av-dgram"

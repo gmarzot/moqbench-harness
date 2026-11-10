@@ -122,10 +122,10 @@ valid for lifecycle API calls.
 - **x86 on purpose.** The relay and moxygen binaries are x86-64 glibc 2.35
   and run unmodified on Ubuntu 22.04. A binary built on a newer distro will
   not load.
-- **Arm is a deployment.** `deployments/oci-a2.toml` runs AmpereOne hosts and
-  needs an Arm image. On A2 and A4, one OCPU is 2 cores. With an Arm
+- **Arm is a deployment.** A deployment with `arch = "arm64"` on an Ampere
+  shape needs an Arm image. On A2 and A4, one OCPU is 2 cores. With an Arm
   `image_ocid`, set `image_ocid_amd64` in `deployments/oci.local.toml` for x86
-  deployments such as `oci-e6-small`.
+  deployments such as `oci-example`.
 - **OCPU = 1 physical core = 2 vCPU** on x86. Graviton has no SMT, so matching
   48 Graviton vCPU takes 48 OCPU, not 24.
 - **E5.Flex sells 1 Gbps per OCPU, capped at 40.** Cores buy bandwidth: the 8

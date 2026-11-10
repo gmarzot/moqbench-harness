@@ -336,16 +336,16 @@ A sweep is a plan of relay-load.sh points against moqx: aiomoqt adaptive_bench
 (`aio`) or moxygen's moqperf_test_client (`mp`, the `moqperf-ramp` tool), a PGO
 or regular moqx build, and a video shape from `scenarios/shapes.json` (480p,
 720p, 1080p, 2160p at 1.10, 2.19, 4.30 and 16 Mbps per subscriber; aiomoqt's 2160p needs a build with `--video 4kuhd`). The plan's
-`KEY=VALUE` lines set the environment of the points after them;
-`scenarios/sweep-g3.plan` is the nine-point all-Graviton3 sweep (60 relay
-threads, publisher on load host 2, draft 18).
+`KEY=VALUE` lines set the environment of the points after them. `moqbench run`
+writes one such plan per suite under `results/moqbench/<plan>/`; a hand-written
+one can live in a `MOQBENCH_CONFIG` folder or anywhere else.
 
 ```bash
 AIOMOQT_SRC=1 ./bin/testbed-provision.sh       # aiopquic + aiomoqt dev heads; moxygen v0.3.7 test tools
 ./bin/testbed-tune.sh && ./bin/testbed-tune.sh --check   # also thread limits, chrony on AWS
 MOQX_PGO_TARBALL=$PWD/moqx-pgo.tar.gz MOQX_REG_TARBALL=$PWD/moqx-reg.tar.gz \
-  ./bin/sweep.sh scenarios/sweep-g3.plan         # results/sweep-g3/<run>/
-./bin/sweep-report.py results/sweep-g3           # results/sweep-g3/datasets/*.json
+  ./bin/sweep.sh ~/my-configs/sweep-a.plan       # results/sweep-a/<run>/
+./bin/sweep-report.py results/sweep-a            # results/sweep-a/datasets/*.json
 ```
 
 A point line is `<tool> <build> <shape> <max_per_box> <seconds> <run>`. moqx is

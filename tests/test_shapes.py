@@ -4,10 +4,15 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'lib'))
+import config  # noqa: E402
+
+os.environ.pop('MOQBENCH_CONFIG', None)
 SHAPES = json.loads((ROOT / 'scenarios/shapes.json').read_text())
 
 
@@ -29,10 +34,12 @@ class Shapes(unittest.TestCase):
         self.assertNotEqual(sh('shape_field 4k nominal_mbps').returncode, 0)
 
     def test_plan_points_name_known_tools_and_shapes(self):
-        for plan in (ROOT / 'scenarios').glob('sweep-*.plan'):
-            for line in plan.read_text().splitlines():
+        plans = [config.load_plan(path.stem) for path in sorted((ROOT / 'plans').glob('*.toml'))]
+        self.assertTrue(plans)
+        for plan in plans:
+            for line in (line for suite in plan.suites for line in plan.sweep_text(suite).splitlines()):
                 line = line.split('#')[0].strip()
-                if not line or re.fullmatch(r'[A-Z_][A-Z0-9_]*=\S*', line):
+                if not line or re.match(r'[A-Z_][A-Z0-9_]*=', line):
                     continue
                 with self.subTest(plan=plan.name, line=line):
                     tool, _build, shape, per_box, seconds, _run = line.split()

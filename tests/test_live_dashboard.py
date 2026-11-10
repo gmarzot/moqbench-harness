@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+os.environ.pop('MOQBENCH_CONFIG', None)
 loader = importlib.machinery.SourceFileLoader('live_dashboard', str(ROOT / 'bin/live-dashboard'))
 spec = importlib.util.spec_from_loader('live_dashboard', loader)
 live = importlib.util.module_from_spec(spec)
@@ -202,9 +203,9 @@ class LiveDashboard(unittest.TestCase):
             results, inventory = Path(d) / 'results', Path(d) / 'inventory.json'
             (results / 'moqbench' / 'p1').mkdir(parents=True)
             (results / 'moqbench' / 'p1' / 'plan.toml').write_text(
-                'description = "Why"\ndeployment = "aws-c7a-small"\nrelays = ["aiomoqt:src"]\nsuites = ["s1"]\n'
+                'description = "Why"\ndeployment = "aws-example"\nrelays = ["aiomoqt:src"]\nsuites = ["s1"]\n'
                 '[builds]\naiomoqt = "1049da0"\n')
-            inventory.write_text(json.dumps(dict(deployment='aws-c7a-small')))
+            inventory.write_text(json.dumps(dict(deployment='aws-example')))
             store = live.Store()
             info = live.header(store, inventory, results)
             facts = dict(info['facts'])

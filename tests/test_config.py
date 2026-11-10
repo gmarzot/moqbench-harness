@@ -122,70 +122,58 @@ class Suites(unittest.TestCase):
 
 
 class Plans(unittest.TestCase):
-    def test_this_series_matches_its_sweep_plan(self):
-        plan = config.load_plan('moqx-c7gn12x')
-        points = {p['run']: p for s in plan.suites for p in plan.points(s)}
-        want = scenario_points(ROOT / 'scenarios/sweep-c7gn12x.plan')
-        self.assertEqual(sorted(points), sorted(want))
-        for run, expect in want.items():
-            with self.subTest(run):
-                got = points[run]
-                for key in ('tool', 'build', 'shape', 'max_per_box', 'seconds'):
-                    self.assertEqual(got[key], expect[key])
-                for var, value in expect['env'].items():
-                    if not (var.startswith('MP_') and got['tool'] == 'aio'):
-                        self.assertEqual(str(got['env'][var][0]), value, var)
-
     def test_settings_name_their_source(self):
-        plan = config.load_plan('moqx-c7gn12x')
-        env = next(p for p in plan.points(plan.suites[1]) if p['tool'] == 'mp')['env']
-        self.assertEqual(env['STEP_SUBS'], (50, 'test'))
-        self.assertEqual(env['DRAFT'], (18, 'default'))
-        self.assertEqual(env['THREADS'], (48, 'relay vCPUs'))
-        self.assertEqual(env['PUB_HOST'], ('client:2', 'deployment'))
-
+        plan = config.load_plan('example-aws')
+        aio = plan.points(plan.suites[0])[0]['env']
+        mp = plan.points(plan.suites[2])[0]['env']
+        self.assertEqual((aio['STEP_SUBS'], mp['STEP_SUBS']), ((50, 'test'), (250, 'default')))
+        self.assertEqual(mp['DRAFT'], (18, 'default'))
+        self.assertEqual(mp['THREADS'], (8, 'relay vCPUs'))
+        self.assertEqual(mp['PUB_HOST'], ('client:2', 'deployment'))
     def test_source_relays_need_a_ref_and_take_their_own_tests(self):
         suite = config.Suite('s', dict(test=[
             dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=10, seconds=60, relay='moqdev'),
             dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=10, seconds=60, relay='cf', step_subs=10),
         ]))
-        data = dict(deployment='aws-c7gn12x', relays=['moqdev:src', 'cf:src'], suites=[suite])
+        data = dict(deployment='aws-example', relays=['moqdev:src', 'cf:src'], suites=[suite])
         with self.assertRaises(config.ConfigError):
             config.Plan('p', data)
         plan = config.Plan('p', dict(data, builds=dict(moqdev='abc', moq_rs='def')))
         points = plan.points(suite)
-        self.assertEqual([p['run'].split('-')[1] for p in points], ['moqdev48', 'cf48'])
+        self.assertEqual([p['run'].split('-')[1] for p in points], ['moqdev8', 'cf8'])
         self.assertEqual([p['env']['RELAY'][0] for p in points], ['moqdev', 'cf'])
         self.assertEqual([p['env']['STEP_SUBS'][0] for p in points], [250, 10])
         self.assertEqual({p['build'] for p in points}, {'src'})
 
     def test_a_test_can_set_its_own_relay_threads(self):
-        plan = config.load_plan('moqdev-moqrs-retest')
-        cf = [p for p in plan.points(plan.suites[0]) if p['env']['RELAY'][0] == 'cf']
-        self.assertEqual([p['env']['THREADS'] for p in cf], [(48, 'relay vCPUs'), (3, 'test')])
-        self.assertEqual([p['run'] for p in cf], ['aio-cf48-2b-720-12x', 'aio-cf3-2b-720-12x'])
-
+        test = dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=10, seconds=60)
+        suite = config.Suite('s', dict(test=[test, dict(test, threads=3)]))
+        plan = config.Plan('p', dict(deployment='aws-example', relays=['cf:src'], suites=[suite], builds=dict(moq_rs='x')))
+        points = plan.points(suite)
+        self.assertEqual([p['env']['THREADS'] for p in points], [(8, 'relay vCPUs'), (3, 'test')])
+        self.assertEqual([p['run'] for p in points], ['aio-cf8-2b-720-awsex', 'aio-cf3-2b-720-awsex'])
     def test_moqx_points_do_not_set_relay(self):
-        plan = config.load_plan('moqx-c7gn12x-720p-sockets')
+        plan = config.load_plan('example-aws')
         self.assertNotIn('RELAY', plan.points(plan.suites[0])[0]['env'])
-
     def test_sweep_text_is_a_plan_sweep_reads(self):
-        plan = config.load_plan('moqx-c7gn12x')
+        plan = config.load_plan('example-aws')
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'x.plan'
             path.write_text(plan.sweep_text(plan.suites[0]))
             self.assertEqual(set(scenario_points(path)), {p['run'] for p in plan.points(plan.suites[0])})
 
     def test_descriptions_and_notes_ride_as_comments(self):
-        plan = config.load_plan('moqdev-moqrs-retest')
-        text = plan.sweep_text(plan.suites[0])
-        self.assertIn(f'# plan: {plan.description}\n', text)
-        self.assertIn('# note: Whether moq-rs does better with fewer workers than relay vCPUs\naio src 720p', text)
+        test = dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=10, seconds=60, note='Why this point')
+        suite = config.Suite('s', dict(description='The suite', test=[test]))
+        plan = config.Plan('p', dict(description='The plan', deployment='aws-example', relays=['moqdev:src'],
+                                     suites=[suite], builds=dict(moqdev='x')))
+        text = plan.sweep_text(suite)
+        self.assertIn('# plan: The plan\n# suite: The suite\n', text)
+        self.assertIn('# note: Why this point\naio src 720p', text)
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'x.plan'
             path.write_text(text)
-            self.assertEqual(set(scenario_points(path)), {p['run'] for p in plan.points(plan.suites[0])})
-
+            self.assertEqual(set(scenario_points(path)), {p['run'] for p in plan.points(suite)})
     def test_a_note_is_one_line(self):
         test = dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=10, seconds=10, note='a\nb')
         with self.assertRaisesRegex(config.ConfigError, 'one line'):
@@ -221,53 +209,33 @@ class Plans(unittest.TestCase):
         with self.assertRaisesRegex(config.ConfigError, 'builds.aiomoqt'):
             config.load_plan('x', tree)
 
-    def test_the_aiomoqt_relay_plan(self):
-        plan = config.load_plan('aiomoqt-relay-e6')
-        points = plan.points(plan.suites[0])
-        self.assertEqual([p['run'] for p in points], ['aio-aiomoqt1-2b-720-e6', 'aio-aiomoqt1-2b-1080-e6'])
-        self.assertEqual({p['env']['RELAY'] for p in points}, {('aiomoqt', 'plan')})
-        self.assertEqual(points[0]['env']['THREADS'], (1, 'plan'))
-
-    def test_the_relay_efficiency_plan(self):
-        plan = config.load_plan('relay-efficiency-c7a')
-        points = plan.points(plan.suites[0])
-        # moqx points set no RELAY, so they come first in the sweep.
-        self.assertEqual([p['run'] for p in points], [
-            'aio-pgo4-2b-720-c7a4x', 'aio-pgo4-2b-1080-c7a4x',
-            'aio-moqdev4-2b-720-c7a4x', 'aio-moqdev4-2b-1080-c7a4x',
-            'aio-cf4-2b-720-c7a4x', 'aio-cf4-2b-1080-c7a4x', 'aio-aiomoqt1-2b-720-c7a4x', 'aio-aiomoqt1-2b-1080-c7a4x'])
-        self.assertEqual({p['env']['RELAY_CPUS'] for p in points}, {('4-7', 'test')})
-        self.assertEqual({p['env']['HOLD'] for p in points}, {(20, 'test')})
-        self.assertEqual({p['env']['CONFIRM'] for p in points}, {(30, 'default')})
-
-    def test_the_join_rate_suite(self):
-        plan = config.load_plan('relay-efficiency-c7a')
-        self.assertEqual([s.name for s in plan.suites], ['relay-efficiency-4core', 'relay-joinrate-4core'])
-        points = plan.points(plan.suites[1])
-        self.assertEqual([p['run'] for p in points], [f'aio-{r}-2b-{v}-c7a4x{s}' for r, s in (
-            ('pgo4', '-join'), ('moqdev4', '-join'), ('cf4', '-join'), ('aiomoqt1', '-join'))
-            for v in ('720', '1080')])
-        self.assertEqual({p['env']['JOIN_SEARCH'] for p in points}, {(5, 'test')})
-        self.assertEqual(points[0]['env']['SEARCHER_SUBS'], (400, 'test'))
-        self.assertEqual({p['env']['HOLD'][0] for p in points}, {0})
-
+    def test_the_example_plans(self):
+        relays = ('pgo8', 'moqdev8', 'aiomoqt8')
+        for name, tag in (('example-aws', 'awsex'), ('example-oci', 'ociex')):
+            with self.subTest(name):
+                plan = config.load_plan(name)
+                self.assertEqual([s.name for s in plan.suites], ['example-video', 'example-av', 'example-moqperf'])
+                self.assertEqual([p['run'] for s in plan.suites for p in plan.points(s)],
+                                 [f'aio-{r}-2b-720-{tag}' for r in relays]
+                                 + [f'aio-{r}-2b-720-{tag}-{v}' for r in relays for v in ('av-stream', 'av-dgram')]
+                                 + [f'mp-pgo8-2b-720-{tag}'])
+                held = plan.points(plan.suites[0])
+                self.assertEqual({(p['env']['HOLD'], p['env']['CONFIRM']) for p in held}, {((20, 'test'), (60, 'test'))})
+                self.assertEqual(held[2]['env']['RELAY'], ('aiomoqt', 'plan'))
+                self.assertNotIn('moqx', plan.builds)
+    def test_the_join_rate_settings(self):
+        test = dict(type='capacity', tool='aiomoqt', video='720p', max_per_box=800, seconds=600, join_search=5,
+                    searcher_subs=400, suffix='join')
+        suite = config.Suite('s', dict(test=[test]))
+        plan = config.Plan('p', dict(deployment='aws-example', relays=['moqx:pgo'], suites=[suite]))
+        env = plan.points(suite)[0]['env']
+        self.assertEqual((env['JOIN_SEARCH'], env['SEARCHER_SUBS'], env['HOLD'][0]), ((5, 'test'), (400, 'test'), 0))
     def test_join_search_needs_counts_and_aiomoqt(self):
         base = dict(type='capacity', video='720p', max_per_box=10, seconds=10, tool='aiomoqt')
         for test, why in ((dict(base, join_search=5), 'positive counts'), (dict(base, join_search=0, searcher_subs=50), 'positive counts'),
                           (dict(base, join_search=5, searcher_subs=50, hold_s=20), 'no hold_s')):
             with self.assertRaisesRegex(config.ConfigError, why):
                 config.Suite('s', dict(test=[test]))
-
-    def test_the_graviton_plan(self):
-        plan = config.load_plan('relay-efficiency-c7gn')
-        self.assertEqual(plan.deployment.arch, 'arm64')
-        self.assertEqual([p['run'] for p in plan.points(plan.suites[0])], [
-            'aio-cf4-2b-720-c7gn4x-ramp', 'aio-cf4-2b-1080-c7gn4x-ramp', 'aio-aiomoqt1-2b-720-c7gn4x-ramp',
-            'aio-aiomoqt1-2b-1080-c7gn4x-ramp'])
-        held = plan.points(plan.suites[1])
-        self.assertEqual([p['run'] for p in held], ['aio-cf4-2b-720-c7gn4x', 'aio-cf4-2b-1080-c7gn4x',
-                                                    'aio-aiomoqt1-2b-720-c7gn4x', 'aio-aiomoqt1-2b-1080-c7gn4x'])
-        self.assertEqual({p['env']['HOLD'][0] for p in held}, {20})
 
     def test_hold_needs_seconds_and_the_aiomoqt_tool(self):
         base = dict(type='capacity', video='720p', max_per_box=10, seconds=10)
@@ -395,20 +363,18 @@ class Command(unittest.TestCase):
 
     def test_dry_run_prints_the_series_and_changes_nothing(self):
         before = subprocess.check_output(['git', 'status', '--short'], cwd=ROOT)
-        run = self.moqbench('run', 'moqx-c7gn12x', '--dry-run', '--no-price')
+        run = self.moqbench('run', 'example-aws', '--dry-run', '--no-price')
         self.assertEqual(run.returncode, 0, run.stderr)
-        for text in ('6 points', './bin/testbed-provision.sh', 'AIOMOQT_SRC=bd2bc66', 'RPS=0', './bin/sweep.sh',
-                     'mp-pgo48-1b-1080-12x', 'THREADS=48  (relay vCPUs)', 'testbed.sh aws-c7gn12x destroy'):
+        for text in ('10 points', './bin/testbed-provision.sh', 'AIOMOQT_SRC=0.15.0rc1', 'RPS=1', './bin/sweep.sh',
+                     'mp-pgo8-2b-720-awsex', 'THREADS=8  (relay vCPUs)', 'testbed.sh aws-example destroy'):
             self.assertIn(text, run.stdout)
         self.assertEqual(subprocess.check_output(['git', 'status', '--short'], cwd=ROOT), before)
-
     def test_aiomoqt_relay_is_built_by_provisioning(self):
-        run = self.moqbench('run', 'aiomoqt-relay-e6', '--dry-run', '--no-price')
+        run = self.moqbench('run', 'example-oci', '--dry-run', '--no-price')
         self.assertEqual(run.returncode, 0, run.stderr)
-        for text in ('AIOMOQT_SRC=1049da0', 'AIOPQUIC_SRC=84d137a', 'AIOMOQT_PYTHON=3.14', 'aio-aiomoqt1-2b-720-e6'):
+        for text in ('AIOMOQT_SRC=0.15.0rc1', 'AIOPQUIC_SRC=v0.8.0rc1', 'aio-aiomoqt8-2b-720-ociex', 'relay-build.sh moqdev'):
             self.assertIn(text, run.stdout)
-        self.assertNotIn('relay-build.sh', run.stdout)
-
+        self.assertNotIn('relay-build.sh aiomoqt', run.stdout)
     def test_a_plan_from_moqbench_config_dry_runs(self):
         with tempfile.TemporaryDirectory() as d:
             for name, text in (('deployments/mine.toml', Plans.DEPLOYMENT.replace('provider = "aws"', 'provider = "aws"\nregion = "r"')),
@@ -427,10 +393,10 @@ class Command(unittest.TestCase):
         self.assertNotIn('Traceback', run.stderr)
 
     def test_one_test_dry_run(self):
-        run = self.moqbench('test', 'capacity', '--deployment', 'aws-c7gn12x', '--tool', 'moqperf', '--video', '1080p',
+        run = self.moqbench('test', 'capacity', '--deployment', 'aws-example', '--tool', 'moqperf', '--video', '1080p',
                             '--max-per-box', '100', '--seconds', '60', '--dry-run')
         self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertIn('mp-pgo48-2b-1080-12x', run.stdout)
+        self.assertIn('mp-pgo8-2b-1080-awsex', run.stdout)
 
 
 if __name__ == '__main__':
