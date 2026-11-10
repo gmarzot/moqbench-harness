@@ -160,11 +160,20 @@ MAX_STREAMS=${MAX_STREAMS:-8192}
 # MOQX_CC=bbr gives a like-for-like congestion control comparison.
 DEV_CC=${DEV_CC:-delay}
 
-# Relays that live outside this repo: relays.local.sh (untracked) may add
+# Relays that live outside this repo: relays.local.sh (untracked), then the one
+# in each MOQBENCH_CONFIG folder, last to first so the first folder wins, may add
 # PROC/PATHS/LABEL/BIN entries and a local_relay_cmd <cfg> <threads> for them,
 # plus a local_deploy for one that needs more than a binary copied in. See
 # relays.local.sh.example.
-if [[ -f relays.local.sh ]]; then source ./relays.local.sh; fi
+_relay_files=(./relays.local.sh)
+IFS=: read -ra _config_dirs <<< "${MOQBENCH_CONFIG:-}"
+for ((_i = ${#_config_dirs[@]} - 1; _i >= 0; _i--)); do
+  if [[ -n ${_config_dirs[_i]} ]]; then _relay_files+=("${_config_dirs[_i]/#\~/$HOME}/relays.local.sh"); fi
+done
+for _f in "${_relay_files[@]}"; do
+  if [[ -f $_f ]]; then source "$_f"; fi
+done
+unset _relay_files _config_dirs _i _f
 
 relay_cmd() {
   local cfg=$1 threads=$2

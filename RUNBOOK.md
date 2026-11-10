@@ -326,8 +326,9 @@ failure cannot stop the run. It binds to localhost only.
 moq-bench is one process per subscriber, so a client's ceiling is processes,
 not connections. Watch the client-bound flag in `run.txt` before scaling
 `SUBS` up. A relay kept out of this repo can be added through
-`relays.local.sh` (see `relays.local.sh.example`); it then works here and in
-`relay-capacity.sh` like the built-in four.
+`relays.local.sh`, in the repo or in a `MOQBENCH_CONFIG` folder (see
+`relays.local.sh.example`); it then works here and in `relay-capacity.sh` like
+the built-in four.
 
 ### Video-shape sweeps
 

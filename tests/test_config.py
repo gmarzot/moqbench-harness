@@ -9,10 +9,13 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lib'))
 import config  # noqa: E402
+
+os.environ.pop('MOQBENCH_CONFIG', None)
 
 
 def nodes(*specs):
@@ -313,6 +316,65 @@ class Plans(unittest.TestCase):
         self.assertEqual(plan.points(plan.suites[0])[0]['run'], 'mp-pgo8-1b-1080')
 
 
+class ConfigPath(unittest.TestCase):
+    DEPLOYMENT = Plans.DEPLOYMENT
+    SUITE = Plans.SUITE % (1, 'moqperf')
+
+    def folder(self, files=None):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        for name, text in (files or {}).items():
+            (d / name).parent.mkdir(parents=True, exist_ok=True)
+            (d / name).write_text(text)
+        return d
+
+    def using(self, *folders):
+        patcher = mock.patch.dict(os.environ, MOQBENCH_CONFIG=os.pathsep.join(map(str, folders)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_plan_in_a_folder_finds_its_deployment_and_suites_in_the_repo(self):
+        repo = self.folder({'deployments/x.toml': self.DEPLOYMENT, 'suites/x.toml': self.SUITE})
+        mine = self.folder({'plans/mine.toml': 'deployment = "x"\nsuites = ["x"]\n'})
+        self.using(mine)
+        plan = config.load_plan('mine', repo)
+        self.assertEqual((plan.path, plan.deployment.name, plan.suites[0].name), (mine / 'plans/mine.toml', 'x', 'x'))
+
+    def test_the_first_folder_wins(self):
+        repo = self.folder({'deployments/x.toml': self.DEPLOYMENT})
+        a = self.folder({'deployments/x.toml': self.DEPLOYMENT.replace('vcpus = 8', 'vcpus = 4')})
+        b = self.folder({'deployments/x.toml': self.DEPLOYMENT.replace('vcpus = 8', 'vcpus = 2')})
+        self.using(a, b)
+        self.assertEqual(config.load_deployment('x', repo).relay['vcpus'], 4)
+
+    def test_account_settings_are_found_in_the_folders(self):
+        repo = self.folder({'deployments/x.toml': self.DEPLOYMENT})
+        mine = self.folder({'deployments/aws.local.toml': '[account]\nprofile = "mine"\n'})
+        self.using(mine)
+        self.assertEqual(config.load_deployment('x', repo).account, {'profile': 'mine'})
+
+    def test_a_missing_name_says_where_it_looked(self):
+        repo, mine = self.folder(), self.folder()
+        self.using(mine)
+        with self.assertRaisesRegex(config.ConfigError, f'^no plans/nope.toml in {mine}, {repo}$'):
+            config.load_plan('nope', repo)
+
+    def test_deployment_names_span_the_folders_without_account_files(self):
+        repo = self.folder({'deployments/x.toml': '', 'deployments/aws.local.toml': '', 'deployments/lab.local.toml': ''})
+        mine = self.folder({'deployments/y.toml': '', 'deployments/oci.local.toml': ''})
+        self.using(mine)
+        self.assertEqual(config.deployment_names(repo), ['lab', 'x', 'y'])
+
+    def test_relays_local_sh_in_a_folder_is_sourced_and_the_first_folder_wins(self):
+        a = self.folder({'relays.local.sh': 'LABEL[mine]=a\n'})
+        b = self.folder({'relays.local.sh': 'LABEL[mine]=b\nLABEL[other]=b\n'})
+        with tempfile.TemporaryDirectory() as d:  # no relays.local.sh
+            out = subprocess.run(['bash', '-c', f'source {ROOT}/lib/run.sh; echo "${{LABEL[mine]}} ${{LABEL[other]}}"'], cwd=d,
+                                 capture_output=True, text=True,
+                                 env={'PATH': '/usr/bin:/bin', 'MOQBENCH_CONFIG': f'{a}{os.pathsep}{b}'}).stdout
+        self.assertEqual(out, 'a b\n')
+
+
 class Command(unittest.TestCase):
     def test_missing_builds_names_only_absent_files(self):
         loader = importlib.machinery.SourceFileLoader('moqbench_cli', str(ROOT / 'bin/moqbench'))
@@ -346,6 +408,18 @@ class Command(unittest.TestCase):
         for text in ('AIOMOQT_SRC=1049da0', 'AIOPQUIC_SRC=84d137a', 'AIOMOQT_PYTHON=3.14', 'aio-aiomoqt1-2b-720-e6'):
             self.assertIn(text, run.stdout)
         self.assertNotIn('relay-build.sh', run.stdout)
+
+    def test_a_plan_from_moqbench_config_dry_runs(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, text in (('deployments/mine.toml', Plans.DEPLOYMENT.replace('provider = "aws"', 'provider = "aws"\nregion = "r"')),
+                               ('suites/mine.toml', Plans.SUITE % (1, 'moqperf')),
+                               ('plans/mine.toml', 'deployment = "mine"\nsuites = ["mine"]\n')):
+                (Path(d) / name).parent.mkdir(exist_ok=True)
+                (Path(d) / name).write_text(text)
+            run = subprocess.run([str(ROOT / 'bin/moqbench'), 'run', 'mine', '--dry-run', '--no-price'], capture_output=True,
+                                 text=True, timeout=60, env={**os.environ, 'MOQBENCH_CONFIG': d})
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn('mp-pgo8-1b-1080', run.stdout)
 
     def test_a_config_problem_exits_2_without_a_traceback(self):
         run = self.moqbench('run', 'no-such-plan', '--dry-run')

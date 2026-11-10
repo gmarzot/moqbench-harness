@@ -15,6 +15,7 @@ import csv
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -150,10 +151,12 @@ def sweep_plan(path):
 
 
 def description(kind, name):
-    """A plan's or suite's description from the repo, for sweeps written before plans carried it."""
+    """A plan's or suite's description from MOQBENCH_CONFIG or the repo, for sweeps written before plans carried it."""
+    folders = [Path(p).expanduser() for p in os.environ.get('MOQBENCH_CONFIG', '').split(os.pathsep) if p] + [ROOT]
+    path = next((f / f'{kind}s' / f'{name}.toml' for f in folders if (f / f'{kind}s' / f'{name}.toml').is_file()), None)
     try:
         import tomllib
-        return tomllib.loads((ROOT / f'{kind}s' / f'{name}.toml').read_text()).get('description', '')
+        return tomllib.loads(path.read_text()).get('description', '') if path else ''
     except (ImportError, OSError, ValueError):
         return ''
 
