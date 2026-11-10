@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import tempfile
 import unittest
 
@@ -164,6 +165,24 @@ class LiveDashboard(unittest.TestCase):
         self.assertEqual(facts['Threads'], '3 picoquic workers + 1 Python event loop')
         self.assertEqual(facts['CPUs'], 'cores 4-7 (4 of 32 vCPU), AMD EPYC 9R14')
         self.assertTrue(info['title'].endswith(', 3 workers'))
+
+    def test_an_aiomoqt_load_states_its_viewer_tracks(self):
+        for extra, want in (('', 'video'),
+                            ('--audio --catalog', 'video, audio on streams, catalog'),
+                            ('--audio --catalog -D', 'video, audio on datagrams, catalog')):
+            self.assertEqual(live.viewer_tracks({'AIOMOQT_EXTRA': extra}), want)
+
+    def test_a_setting_of_several_words_survives_both_plan_parsers(self):
+        value = '--audio --catalog -D'
+        with tempfile.TemporaryDirectory() as d:
+            plan = Path(d) / 'plan'
+            plan.write_text(f'AIOMOQT_EXTRA={value}\naio pgo 1080p 100 120 p1\n')
+            _, points = live.sweep_plan(plan)
+        self.assertEqual(points[0]['env']['AIOMOQT_EXTRA'], value)
+        sweep = (Path(__file__).parents[1] / 'bin/sweep.sh').read_text()
+        pattern = re.search(r'\[\[ \$line =~ (.+) \]\]; then', sweep).group(1)
+        script = f'line="AIOMOQT_EXTRA={value}"; [[ $line =~ {pattern} ]] && printf %s "${{BASH_REMATCH[2]}}"'
+        self.assertEqual(subprocess.run(['bash', '-c', script], capture_output=True, text=True).stdout, value)
 
     def test_current_point_is_the_newest_unfinished_one(self):
         with tempfile.TemporaryDirectory() as d:

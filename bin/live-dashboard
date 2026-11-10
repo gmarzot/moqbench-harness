@@ -140,7 +140,7 @@ def sweep_plan(path):
             elif written:
                 header['plan_name'], header['suite_name'] = written.groups()
             continue
-        setting = re.match(r'([A-Z_][A-Z0-9_]*)=(\S*)$', line)
+        setting = re.match(r'([A-Z_][A-Z0-9_]*)=(.*)$', line)
         fields = line.split('#')[0].split()
         if setting:
             env[setting[1]] = setting[2]
@@ -205,6 +205,17 @@ def relay_threads(relay, env):
     return f'{threads} thread{"s" if threads != "1" else ""}' if threads else None
 
 
+def viewer_tracks(env):
+    """The tracks each aiomoqt load viewer takes."""
+    flags = env.get('AIOMOQT_EXTRA', '').split()
+    tracks = ['video']
+    if '--audio' in flags:
+        tracks.append('audio on ' + ('datagrams' if {'-D', '--datagram'} & set(flags) else 'streams'))
+    if '--catalog' in flags:
+        tracks.append('catalog')
+    return ', '.join(tracks)
+
+
 def relay_cpus(env, run_dir, instance):
     """The CPUs the relay may run on and the machine they belong to."""
     total, _, model = (match(run_dir / 'versions.txt', r'^relay-cpu:[ \t]*(.+)$') or '').partition(' vcpu, ')
@@ -260,6 +271,7 @@ def point_info(run_dir):
         ('Threads', relay_threads(relay, env)),
         ('CPUs', relay_cpus(env, run_dir, relay_instance(run_dir.parent.parent, header.get('plan_name')))),
         ('Tool', tool),
+        ('Viewers', None if pt.get('tool') == 'mp' else viewer_tracks(env)),
         ('Video', f'{shape}, {mbps:g} Mbps per subscriber' if mbps else shape),
         ('Draft', env.get('DRAFT', '16')),
         ('Ramp', f'{ramp:g} subscribers/s' if ramp else 'n/a'),
