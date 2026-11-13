@@ -81,8 +81,8 @@ group), `draft`, `peering_poll_s`, `links` (custom), `suffix`, `note`.
 
 Scenario keys: `mode` (`stream` or `setup`), `publisher`, `subscribers`
 (`["all"]` or node names and roles), `pub_ns`, `sub_start_s`, `peering_poll_s`,
-`state_poll_ms`, `settle_s`, `gap_s`, `warm_s`, `cold_order`, `namespace_check`,
-and `[[event]]` tables.
+`state_poll_ms`, `netdev_s`, `settle_s`, `gap_s`, `warm_s`, `cold_order`,
+`namespace_check`, and `[[event]]` tables.
 
 ## Faults
 
@@ -122,14 +122,16 @@ object IDs.
   seconds (or until the next event), objects lost and duplicated in that window,
   recovery (event start to the end of a gap longer than three object intervals),
   median latency before and after, and the delivery path before and after.
-- **Path**: from `/peering` samples. A relay receives the track from the peer
-  whose session `publishes` count is non-zero; following those back from a relay
-  gives its path from the ingest relay.
+- **Path**: from interface counters. Every link is its own interface, so each
+  relay's send rate on each link is exact; the links carrying at least half the
+  track's rate, followed back from a relay, give its paths from the ingest relay.
+  More than one path into a relay means it receives the track more than once.
+  The summary also reports each directed link's mean send rate.
 - **Setup**: connect to SUBSCRIBE_OK and connect to first object, from the
   subscriber's own output.
 
 A run folder holds the client logs, `faults.jsonl`, the pollers' JSONL (a body is
-stored only when it changed), each relay's log and final `/peering` and
+stored only when it changed; `poll-net-*` holds interface counters), each relay's log and final `/peering` and
 `/state`, the rendered stack, `meta.json` (images, versions, addresses) and
 `summary.json` from `./bin/fabric-report.py`.
 
