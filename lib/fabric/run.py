@@ -17,7 +17,8 @@ from fabric.docker import DockerFabric, FabricError
 
 MODES = {'stream', 'setup'}
 SCENARIO_KEYS = {'description', 'mode', 'publisher', 'subscribers', 'pub_ns', 'sub_start_s', 'peering_poll_s',
-                 'state_poll_ms', 'settle_s', 'gap_s', 'warm_s', 'cold_order', 'namespace_check', 'event'}
+                 'state_poll_ms', 'settle_s', 'gap_s', 'warm_s', 'cold_order', 'namespace_check', 'netdev_s',
+                 'event'}
 DEFAULTS = dict(object_size=1000, rate=30, group_size=30)
 
 
@@ -80,9 +81,11 @@ class Run:
     def poll(self, kinds, interval, seconds, suffix=''):
         for n in self.fab.order:
             urls = {k: u for k, u in self.fab.adapter.poll_urls(n).items() if k in kinds}
-            if not urls:
-                continue
             args = ' '.join(f'--url {k}={u}' for k, u in urls.items())
+            if 'netdev' in kinds:
+                args += ' --netdev'
+            if not args:
+                continue
             self.fab.exec(self.fab.holder(n), f'python3 /fabric/bin/fabric-poll.py {args} --interval {interval} '
                           f'--duration {seconds} --out {self.inside}/poll{suffix}-{n}.jsonl', user=self.user, detach=True)
 
@@ -99,6 +102,7 @@ class Run:
         secs = self.test['seconds']
         sub_start = self.scen.get('sub_start_s', 2)
         self.poll({'peering'}, self.test.get('peering_poll_s', self.scen.get('peering_poll_s', 5)), secs + 10)
+        self.poll({'netdev'}, self.scen.get('netdev_s', 0.25), secs + 10, suffix='-net')
         start = time.monotonic()
         self.launch('pub', self.pub_argv(secs + 5, self.scen.get('pub_ns', False)))
         time.sleep(sub_start)
@@ -119,6 +123,7 @@ class Run:
         if self.scen.get('namespace_check'):
             self.poll({'state'}, self.scen.get('state_poll_ms', 20) / 1000, settle + 2, suffix='-state')
         self.poll({'peering'}, self.test.get('peering_poll_s', self.scen.get('peering_poll_s', 2)), total + 5)
+        self.poll({'netdev'}, self.scen.get('netdev_s', 0.25), total + 5, suffix='-net')
         time.sleep(0.5)
         self.launch('pub', self.pub_argv(total + 5, self.scen.get('pub_ns', True)))
         time.sleep(settle)
@@ -137,7 +142,7 @@ class Run:
                     links=self.links, order=self.fab.order, namespace=self.ns, track=self.track, draft=self.draft,
                     options=self.opts, adapter=self.fab.adapter.name,
                     addressing={'access': self.fab.addr['access'],
-                                'links': {'-'.join(k): v for k, v in self.fab.addr['links'].items()}})
+                                'links': [{'pair': list(k), **v} for k, v in self.fab.addr['links'].items()]})
         took = self.fab.up()
         uid, gid = self.fab.ids()
         self.user = f'{uid}:{gid}'

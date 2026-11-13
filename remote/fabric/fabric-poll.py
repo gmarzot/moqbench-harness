@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Poll control URLs beside a relay and write JSONL: a body only when it changed since that URL's last sample.
+"""Sample control URLs and interface counters beside a relay, as JSONL.
 
-  fabric-poll.py --url NAME=URL [--url ...] --interval S --duration S --out PATH
+  fabric-poll.py [--url NAME=URL ...] [--netdev] --interval S --duration S --out PATH
+
+A URL's body is written only when it changed since its last sample. --netdev
+writes this namespace's interface addresses once, then every interface's
+rx/tx bytes and packets each interval.
 """
 import argparse
 import json
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -20,9 +25,25 @@ def fetch(url):
         return 0, str(e)
 
 
+def netdev():
+    out = {}
+    with open('/proc/net/dev') as f:
+        for line in f.readlines()[2:]:
+            name, rest = line.split(':', 1)
+            v = rest.split()
+            out[name.strip()] = [int(v[0]), int(v[1]), int(v[8]), int(v[9])]
+    return out
+
+
+def addresses():
+    text = subprocess.run(['ip', '-o', '-4', 'addr', 'show'], capture_output=True, text=True).stdout
+    return {f[1]: f[3].split('/')[0] for f in (line.split() for line in text.splitlines()) if len(f) > 3}
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--url', action='append', required=True)
+    p.add_argument('--url', action='append', default=[])
+    p.add_argument('--netdev', action='store_true')
     p.add_argument('--interval', type=float, default=1.0)
     p.add_argument('--duration', type=float, required=True)
     p.add_argument('--out', required=True)
@@ -31,6 +52,8 @@ def main():
     last = {}
     end = time.time() + a.duration
     with open(a.out, 'a', buffering=1) as out:
+        if a.netdev:
+            out.write(json.dumps({'t': time.time(), 'name': 'ifaddr', 'body': addresses()}) + '\n')
         while time.time() < end:
             tick = time.time()
             for name, url in urls.items():
@@ -41,6 +64,8 @@ def main():
                     row['body'] = body
                     last[name] = body
                 out.write(json.dumps(row) + '\n')
+            if a.netdev:
+                out.write(json.dumps({'t': time.time(), 'name': 'netdev', 'dev': netdev()}) + '\n')
             time.sleep(max(0.0, a.interval - (time.time() - tick)))
 
 

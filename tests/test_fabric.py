@@ -185,8 +185,8 @@ def write_run(folder, events=True):
                 scenario={'publisher': 'ingest'}, test={'scenario': 'steady', 'topology': 'line'},
                 options={'rate': 10, 'group_size': 10, 'object_size': 100},
                 addressing={'access': {'hosts': {'r1': '10.77.0.101', 'r2': '10.77.0.102', 'r3': '10.77.0.103'}},
-                            'links': {'r1-r2': {'r1': '10.77.1.11', 'r2': '10.77.1.12'},
-                                      'r2-r3': {'r2': '10.77.3.11', 'r3': '10.77.3.12'}}})
+                            'links': [{'pair': ['r1', 'r2'], 'r1': '10.77.1.11', 'r2': '10.77.1.12'},
+                                      {'pair': ['r2', 'r3'], 'r2': '10.77.3.11', 'r3': '10.77.3.12'}]})
     (folder / 'meta.json').write_text(json.dumps(meta))
     pub, sub = [], ['100.000000   Connecting...', '100.004000   Subscribed to \'fab-x/probe\', receiving...']
     for i in range(30):
@@ -204,8 +204,15 @@ def write_run(folder, events=True):
     if events:
         (folder / 'faults.jsonl').write_text(json.dumps(dict(verb='peer.remove', on='r1', peer='r3', t0=101.55,
                                                              t1=101.6, ok=True, status=200, expect='hitless')) + '\n')
-    body = json.dumps({'peers': [{'host': '10.77.3.11', 'status': 'connected', 'publishes': 1}]})
-    (folder / 'poll-r3.jsonl').write_text(json.dumps({'t': 100.0, 'name': 'peering', 'status': 200, 'body': body}) + '\n')
+    for node, sends_on in (('r1', {'eth1': '10.77.1.11'}), ('r2', {'eth1': '10.77.1.12', 'eth2': '10.77.3.11'}),
+                           ('r3', {'eth1': '10.77.3.12'})):
+        rows = [{'t': 99.0, 'name': 'ifaddr', 'body': sends_on}]
+        for k in range(12):
+            tx = {'eth1': 0, 'eth2': 0}
+            if node in ('r1', 'r2'):
+                tx[{'r1': 'eth1', 'r2': 'eth2'}[node]] = k * 1000
+            rows.append({'t': 100.0 + k * 0.25, 'name': 'netdev', 'dev': {d: [0, 0, tx[d], 0] for d in sends_on}})
+        (folder / f'poll-net-{node}.jsonl').write_text('\n'.join(json.dumps(r) for r in rows) + '\n')
 
 
 class Report(unittest.TestCase):
@@ -222,7 +229,8 @@ class Report(unittest.TestCase):
             ev = sub['events'][0]
             self.assertEqual((ev['lost'], ev['dups']), (2, 1))
             self.assertAlmostEqual(ev['max_gap_ms'], 300, places=1)
-            self.assertEqual(s['events'][0]['path_before']['r3'], 'r2>r3')
+            self.assertEqual(s['events'][0]['path_before']['r3'], ['r1>r2>r3'])
+            self.assertEqual(sub['events'][0]['lost_ids'], ['1.5', '1.6'])
             self.assertEqual([v['status'] for v in s['verdicts']], ['FAIL'])
             self.assertIn('sub-r3', report.text(s))
 

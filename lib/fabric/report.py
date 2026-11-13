@@ -10,7 +10,7 @@ import re
 import statistics
 
 from fabric import topology
-from fabric.moqx_peering import namespaces_in, peer_rows
+from fabric.moqx_peering import namespaces_in
 
 SEND = re.compile(r'TRACE: MOQT send: object (\d+)\.(\d+) alias=\d+ (\d+) bytes(?! \(datagram\))')
 RECV = re.compile(r'TRACE: MOQT stream\(\d+\): object (\d+)\.(\d+) alias=\d+ \d+ bytes status=(\S+)')
@@ -100,9 +100,10 @@ def delivery(sub, sent, t_from=None, t_to=None):
         first, last = min(seen), max(seen)
         expected = [k for k, ts in sent.items() if first <= k <= last
                     and (t_from is None or ts >= t_from - 1) and (t_to is None or ts <= t_to)]
-        out.update(first=list(first), last=list(last), missing=sum(1 for k in expected if k not in seen))
+        lost = sorted(k for k in expected if k not in seen)
+        out.update(first=list(first), last=list(last), missing=len(lost), missing_ids=[f'{g}.{o}' for g, o in lost[:20]])
     else:
-        out.update(first=None, last=None, missing=None)
+        out.update(first=None, last=None, missing=None, missing_ids=[])
     out.update(lat_p50=r3(pct(lat, 50)), lat_p90=r3(pct(lat, 90)), lat_p99=r3(pct(lat, 99)),
                lat_mean=r3(statistics.fmean(lat)) if lat else None)
     return out
@@ -132,42 +133,57 @@ def polls(path):
     return out
 
 
-def at(samples, t):
-    """The body in force at time t: the last changed body at or before it."""
-    body = None
-    for ts, b, _ in samples:
-        if ts > t:
-            break
-        if b is not None:
-            body = b
-    return body
-
-
-def upstreams(run_dir, order, names, t):
-    """{node: peer it receives the track from} at time t, from /peering samples."""
+def link_rates(run_dir, meta):
+    """{(src, dst): [(t, bytes/s)]}: what each relay sent on each link interface, from its netdev samples."""
     out = {}
-    for n in order:
-        body = at(polls(run_dir / f'poll-{n}.jsonl').get('peering', []), t)
-        if not body:
+    for n in meta['order']:
+        path = Path(run_dir) / f'poll-net-{n}.jsonl'
+        if not path.is_file():
             continue
-        try:
-            rows = peer_rows(json.loads(body), names)
-        except ValueError:
-            continue
-        ups = [r['peer'] for r in rows if r['status'] == 'connected' and (r['publishes'] or 0) > 0]
-        out[n] = ups
+        rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+        ifaddr = next((r['body'] for r in rows if r['name'] == 'ifaddr'), {})
+        by_ip = {ip: dev for dev, ip in ifaddr.items()}
+        ifaces = {}
+        for link in meta['addressing']['links']:
+            if n in link['pair'] and link[n] in by_ip:
+                ifaces[by_ip[link[n]]] = next(m for m in link['pair'] if m != n)
+        prev = None
+        for r in (r for r in rows if r['name'] == 'netdev'):
+            if prev:
+                dt = r['t'] - prev['t']
+                for dev, peer in ifaces.items():
+                    if dev in r['dev'] and dev in prev['dev'] and dt > 0:
+                        rate = (r['dev'][dev][2] - prev['dev'][dev][2]) / dt
+                        out.setdefault((n, peer), []).append((r['t'], rate))
+            prev = r
     return out
 
 
-def path_to(node, ups, limit=8):
-    path = [node]
-    while ups.get(path[-1]) and len(path) <= limit:
-        nxt = ups[path[-1]][0]
-        if nxt in path:
-            path.append(nxt + '(loop)')
-            break
-        path.append(nxt)
-    return list(reversed(path))
+def carrying(rates, t0, t1, floor):
+    """Directed links whose mean send rate over [t0, t1] is at least floor bytes/s."""
+    out = set()
+    for edge, series in rates.items():
+        vals = [v for t, v in series if t0 <= t <= t1]
+        if vals and sum(vals) / len(vals) >= floor:
+            out.add(edge)
+    return out
+
+
+def paths_into(node, edges, ingest, limit=8):
+    """Every path from ingest to node over the carrying directed links, as 'a>b>c'."""
+    found = []
+
+    def walk(path):
+        if path[0] == ingest:
+            found.append('>'.join(path))
+            return
+        if len(path) > limit:
+            return
+        for src, dst in sorted(edges):
+            if dst == path[0] and src not in path:
+                walk([src, *path])
+    walk([node])
+    return found
 
 
 def analyze(run_dir):
@@ -177,11 +193,9 @@ def analyze(run_dir):
     links = [tuple(p) for p in meta['links']]
     ingest = topology.resolve(meta['scenario'].get('publisher', 'ingest'), order)
     hop = topology.hops(links, ingest)
-    names = {ip: n for n, ip in meta['addressing']['access']['hosts'].items()}
-    for link in meta['addressing']['links'].values():
-        for k, v in link.items():
-            if k in order:
-                names[v] = k
+    opts = meta.get('options') or {}
+    floor = 0.5 * (opts.get('object_size') or 1000) * (opts.get('rate') or 30)
+    rates = link_rates(run_dir, meta)
     sent = sends(run_dir / 'pub.log') if (run_dir / 'pub.log').is_file() else {}
     out = dict(label=meta['label'], scenario=meta['test']['scenario'], topology=meta['test'].get('topology'),
                links=['-'.join(p) for p in links], relay_image=(meta.get('relay_image') or {}).get('tags'),
@@ -225,7 +239,7 @@ def analyze(run_dir):
                     verb=ev['verb'], on=ev.get('on'), peer=ev.get('peer'), metric=ev.get('metric'),
                     ok=ev.get('ok'), status=ev.get('status'), expect=ev.get('expect'),
                     max_gap_ms=r3(gap_ms), recovery_ms=r3((gap_end - t0) * 1000) if gap_ms > 3 * nominal else 0.0,
-                    lost=inwin['missing'], dups=inwin['dups'],
+                    lost=inwin['missing'], lost_ids=inwin['missing_ids'], dups=inwin['dups'],
                     lat_p50_before=before['lat_p50'], lat_p50_after=after['lat_p50']))
         subs[name] = row
     out['subscribers'] = subs
@@ -236,11 +250,20 @@ def analyze(run_dir):
             row = {k: ev.get(k) for k in ('verb', 'on', 'peer', 'metric', 'ok', 'status', 'expect', 'skipped')}
             if t0:
                 row['action_ms'] = r3((ev['t1'] - t0) * 1000)
-                for label, t in (('path_before', t0 - 0.2), ('path_after', t0 + 5)):
-                    ups = upstreams(run_dir, order, names, t)
-                    row[label] = {n: '>'.join(path_to(n, ups)) for n in order if n != ingest}
+                if rates:
+                    for label, (a, b) in (('path_before', (t0 - 1.5, t0 - 0.25)), ('path_after', (t0 + 2, t0 + 4))):
+                        edges = carrying(rates, a, b, floor)
+                        row[label] = {n: paths_into(n, edges, ingest) for n in order if n != ingest}
             evrows.append(row)
         out['events'] = evrows
+    if rates:
+        t_start, t_end = meta.get('started', 0) + 3, meta.get('ended', 1e12) - 3
+        out['link_kBps'] = {f'{a}>{b}': r3(sum(v for t, v in s_ if t_start <= t <= t_end) /
+                                          max(1, sum(1 for t, _ in s_ if t_start <= t <= t_end)) / 1000)
+                            for (a, b), s_ in sorted(rates.items())}
+        if not events:
+            edges = carrying(rates, t_start, t_end, floor)
+            out['paths'] = {n: paths_into(n, edges, ingest) for n in order if n != ingest}
     prop = {}
     for n in order:
         samples = polls(run_dir / f'poll-state-{n}.jsonl').get('state', [])
@@ -300,13 +323,18 @@ def text(summary):
         lines_.append(f'  {name:<12}{str(r["hops_at_start"]):>5}{r["unique"]:>7}{str(r["missing"]):>6}{r["dups"]:>6}  '
                       f'{tl:<24}{tool:<22}{t.get("jitter_ms", "-")!s:>7}  {setup}')
         for ev in r.get('events', []):
-            lines_.append(f'      {ev["verb"]:<12}{ev["on"]}-{ev["peer"]}: gap {ev["max_gap_ms"]} ms, lost {ev["lost"]}, '
+            lost = f' {ev["lost_ids"]}' if ev.get('lost_ids') else ''
+            lines_.append(f'      {ev["verb"]:<12}{ev["on"]}-{ev["peer"]}: gap {ev["max_gap_ms"]} ms, lost {ev["lost"]}{lost}, '
                           f'dups {ev["dups"]}, recovery {ev["recovery_ms"]} ms, p50 {ev["lat_p50_before"]} -> '
                           f'{ev["lat_p50_after"]} ms')
     for ev in s.get('events', []):
         lines_.append(f'  event {ev["verb"]} {ev["on"]}-{ev["peer"]} metric={ev.get("metric")} ok={ev["ok"]} '
                       f'status={ev["status"]} took {ev.get("action_ms")} ms; paths {ev.get("path_before")} -> '
                       f'{ev.get("path_after")}')
+    if s.get('link_kBps'):
+        lines_.append(f'  link send kB/s: {s["link_kBps"]}')
+    if s.get('paths'):
+        lines_.append(f'  paths carrying the track: {s["paths"]}')
     if 'namespace_seen' in s:
         lines_.append(f'  namespace seen (ms after ingest): {s["namespace_seen"]}; missing {s["namespace_missing"]}')
     for v in s['verdicts']:
