@@ -1,0 +1,9 @@
+description = "Subscribe setup across the mesh for a track announced with PUBLISH: one cold subscriber per relay, farthest first, then one warm subscriber per relay. Connect to SUBSCRIBE_OK, and connect to first object."
+mode        = "setup"
+publisher   = "ingest"
+pub_ns      = false
+cold_order  = "farthest"
+subscribers = ["all"]
+settle_s    = 3
+gap_s       = 2
+warm_s      = 6

@@ -1,0 +1,10 @@
+description = "A namespace published (PUBLISH_NAMESPACE) on the ingest relay reaching every relay's state, then one subscriber per relay, nearest first, cold then warm."
+mode        = "setup"
+publisher   = "ingest"
+pub_ns      = true
+namespace_check = true
+subscribers = ["all"]
+state_poll_ms = 2
+settle_s    = 4
+gap_s       = 2
+warm_s      = 6

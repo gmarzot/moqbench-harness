@@ -1,0 +1,35 @@
+description = "Example: a three-relay fabric on one Docker host. Steady per-hop delivery on a line and on a triangle, namespace propagation and subscribe setup across the line, then peer changes during live delivery. Run with moqbench fabric run."
+requires    = { relay = 3, subscriber = 1 }
+
+[[test]]
+type     = "fabric"
+scenario = "steady"
+topology = "line"
+seconds  = 120
+note     = "hops 0, 1 and 2 from the ingest relay"
+
+[[test]]
+type     = "fabric"
+scenario = "steady"
+topology = "full"
+seconds  = 60
+note     = "every relay one hop from the ingest relay"
+
+[[test]]
+type     = "fabric"
+scenario = "propagation"
+topology = "line"
+seconds  = 30
+
+[[test]]
+type     = "fabric"
+scenario = "subscribe-setup"
+topology = "line"
+seconds  = 30
+
+[[test]]
+type     = "fabric"
+scenario = "peer-churn"
+topology = "line"
+seconds  = 165
+note     = "line, then a triangle at 15 s; metric up at 45 s, restored at 75 s; link removed at 105 s, added at 135 s"
