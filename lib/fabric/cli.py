@@ -3,14 +3,18 @@
   moqbench fabric up <deployment> [--topology SHAPE]   render, start, wait for every link
   moqbench fabric down <deployment>
   moqbench fabric render <deployment> [--topology SHAPE]   write the stack locally only
+  moqbench fabric deploy <deployment> [--from TARGET]  copy the relay image to every relay VM
   moqbench fabric state <deployment> [node ...]        each relay's peer sessions
   moqbench fabric peer <deployment> add|remove|restart|metric <on> <peer> [metric]
-  moqbench fabric link <deployment> impair|down|clear <on> <peer> [netem spec] [--direction both|on|peer]
+  moqbench fabric link <deployment> impair|down|clear <on> <peer> [netem spec]
+                       [--direction both|on|peer] [--side send|receive]
   moqbench fabric node <deployment> kill|stop|start|freeze|thaw <node>
-  moqbench fabric check <deployment> [--clear]         impairments left on any relay namespace
+  moqbench fabric check <deployment> [--clear]         impairments left on any relay
   moqbench fabric run <deployment> <suite> [--only N] [--keep]
   moqbench fabric report <run folder> ...
 
+A docker deployment runs every relay on one Docker host; an aws or oci
+deployment with a [fabric] table runs one relay per VM of the selected testbed.
 Nodes may be named directly or by role: ingest, egress, transit.
 """
 import argparse
@@ -21,20 +25,20 @@ import sys
 
 import config
 from fabric import faults, report, topology
-from fabric.docker import DockerFabric, FabricError
-from fabric.run import Run, load_scenario
+from fabric.docker import FabricError
+from fabric.run import Run, load_scenario, provider
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def fabric_for(name, shape=None):
     dep = config.load_deployment(name)
-    if dep.fabric is None or dep.provider != 'docker':
-        raise config.ConfigError(f'{name}: moqbench fabric needs a docker deployment with a [fabric] table')
+    if dep.fabric is None or dep.provider == 'static':
+        raise config.ConfigError(f'{name}: moqbench fabric needs a docker, aws or oci deployment with a [fabric] table')
     links = None
     if shape:
         links = topology.links(shape, dep.fabric.order, dep.fabric.hub, dep.fabric.custom)
-    return dep, DockerFabric(dep, links)
+    return dep, provider(dep, links)
 
 
 def show(obj):
@@ -62,7 +66,7 @@ def cmd_run(a):
         summary = report.analyze(out)
         (out / 'summary.json').write_text(json.dumps(summary, indent=1) + '\n')
         print(report.text(summary), flush=True)
-        if any(v['status'] == 'FAIL' for v in summary['verdicts']):
+        if any(v['status'] in ('FAIL', 'XPASS') for v in summary['verdicts']):
             status = 1
     print(f'results in {root}')
     return status
@@ -77,6 +81,9 @@ def main(argv):
         c.add_argument('deployment')
         c.add_argument('--topology', choices=sorted(topology.SHAPES))
     sub.add_parser('down').add_argument('deployment')
+    c = sub.add_parser('deploy')
+    c.add_argument('deployment')
+    c.add_argument('--from', dest='source', metavar='TARGET', help='ssh target of a Docker host with the image')
     c = sub.add_parser('state')
     c.add_argument('deployment')
     c.add_argument('nodes', nargs='*')
@@ -93,6 +100,7 @@ def main(argv):
     c.add_argument('peer')
     c.add_argument('netem', nargs='*')
     c.add_argument('--direction', default='both', choices=['both', 'on', 'peer'])
+    c.add_argument('--side', default='send', choices=['send', 'receive'])
     c = sub.add_parser('node')
     c.add_argument('deployment')
     c.add_argument('action', choices=['kill', 'stop', 'start', 'freeze', 'thaw'])
@@ -121,6 +129,11 @@ def main(argv):
             print(f'{dep.name}: {len(fab.order)} relays up, {len(fab.links)} links connected in {took:.1f} s')
         elif a.verb == 'down':
             fab.down()
+        elif a.verb == 'deploy':
+            if fab.kind != 'vm':
+                raise config.ConfigError(f'{dep.name}: deploy copies images to relay VMs; a docker fabric builds on its host')
+            copied = fab.deploy(a.source)
+            print(f'{dep.fabric.image}: copied to {", ".join(copied) or "none (every relay has it)"}')
         elif a.verb == 'state':
             show({n: fab.adapter.peer_state(fab, n) for n in (a.nodes or fab.order)})
         elif a.verb == 'peer':
@@ -129,7 +142,7 @@ def main(argv):
                 ev['metric'] = a.metric
             show(faults.apply(fab, ev))
         elif a.verb == 'link':
-            ev = dict(verb=f'link.{a.action}', on=a.on, peer=a.peer, direction=a.direction)
+            ev = dict(verb=f'link.{a.action}', on=a.on, peer=a.peer, direction=a.direction, side=a.side)
             if a.action == 'impair':
                 ev['netem'] = ' '.join(a.netem)
             show(faults.apply(fab, ev))

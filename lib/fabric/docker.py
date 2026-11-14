@@ -14,7 +14,7 @@ import subprocess
 import time
 
 from fabric import adapter as adapters
-from fabric import certs, topology
+from fabric import certs, faults, topology
 
 ROOT = Path(__file__).resolve().parents[2]
 REMOTE_BIN = ROOT / 'remote' / 'fabric'
@@ -26,8 +26,9 @@ class FabricError(RuntimeError):
 
 
 class Host:
-    def __init__(self, target):
+    def __init__(self, target, key=None):
         self.target = target
+        self.key = key
 
     @property
     def local(self):
@@ -37,7 +38,8 @@ class Host:
         if self.local:
             return ['bash', '-c', script]
         # One multiplexed connection: a run issues hundreds of short commands.
-        return ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', '-o', 'ControlMaster=auto',
+        key = ['-i', self.key, '-o', 'StrictHostKeyChecking=accept-new'] if self.key else []
+        return ['ssh', *key, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', '-o', 'ControlMaster=auto',
                 '-o', 'ControlPath=~/.ssh/mb-%C', '-o', 'ControlPersist=300', self.target,
                 'bash -c ' + shlex.quote(script)]
 
@@ -72,6 +74,10 @@ class Host:
 
 
 class DockerFabric:
+    kind = 'docker'
+    bin_dir = '/fabric/bin'
+    python = 'python3'
+
     def __init__(self, deployment, link_list=None, host=None):
         self.dep = deployment
         self.spec = deployment.fabric
@@ -84,6 +90,7 @@ class DockerFabric:
         self.project = f'mb-{deployment.name}'.lower()
         self.host = host or Host(deployment.host)
         self.local_dir = ROOT / '.testbed' / 'fabric' / deployment.name
+        self.user = None
         self.stack = (str(self.local_dir / 'stack') if self.host.local
                       else f'{self.spec.stack_dir}/{deployment.name}')
 
@@ -95,6 +102,13 @@ class DockerFabric:
 
     def client(self, name=None):
         return f'{self.project}-{name or self.clients[0]}'
+
+    def load_targets(self):
+        """Where subscriber populations run: every client container."""
+        return [self.client(c) for c in self.clients]
+
+    def results_dir(self, label):
+        return f'/fabric/results/{label}'
 
     def access(self, node):
         return self.addr['access']['hosts'][node]
@@ -173,6 +187,7 @@ class DockerFabric:
 
     def ids(self):
         out = self.host.sh('id -u; id -g').stdout.split()
+        self.user = f'{out[0]}:{out[1]}'
         return int(out[0]), int(out[1])
 
     def compose_cmd(self, args):
@@ -238,7 +253,7 @@ class DockerFabric:
     def exec(self, container, command, user=None, detach=False, check=True, timeout=120):
         flags = ['-d'] if detach else []
         if user:
-            flags += ['-u', user, '-e', 'HOME=/tmp', '-e', 'PYTHONUNBUFFERED=1']
+            flags += ['-u', user, '-e', 'HOME=/tmp']
         script = f'docker exec {" ".join(flags)} {container} sh -c {shlex.quote(command)}'
         return self.host.sh(script, check=check, timeout=timeout)
 
@@ -248,6 +263,65 @@ class DockerFabric:
         arg = f' {shlex.quote(json.dumps(body))}' if body is not None else ''
         r = self.exec(self.holder(node), f'python3 /fabric/bin/fabric-admin.py {method} {url}{arg}')
         return json.loads(r.stdout)
+
+    def reset(self, label):
+        """An empty results folder for the run."""
+        d = shlex.quote(f'{self.stack}/results/{label}')
+        self.host.sh(f'rm -rf {d} && mkdir -p {d}')
+
+    def done(self, label, target=None):
+        """Names whose <name>.rc exists in the run's results."""
+        r = self.host.sh(f'cd {shlex.quote(self.stack)}/results/{label} && ls *.rc 2>/dev/null || true')
+        return {Path(x).stem for x in r.stdout.split()}
+
+    def telemetry(self, label, seconds, peering_s=5, netdev_s=0.25, state_ms=None, state_s=None):
+        """Pollers beside each relay: /peering every peering_s, interface counters every netdev_s,
+        and /state every state_ms for state_s seconds when given."""
+        out = self.results_dir(label)
+        for n in self.order:
+            urls = self.adapter.poll_urls(n)
+            jobs = [(f'--url peering={urls["peering"]}', peering_s, seconds, '')] if 'peering' in urls else []
+            jobs.append(('--netdev', netdev_s, seconds, '-net'))
+            if state_ms and 'state' in urls:
+                jobs.append((f'--url state={urls["state"]}', state_ms / 1000, state_s or seconds, '-state'))
+            for args, interval, secs, suffix in jobs:
+                self.exec(self.holder(n), f'python3 {self.bin_dir}/fabric-poll.py {args} --interval {interval} '
+                          f'--duration {secs} --out {out}/poll{suffix}-{n}.jsonl', user=self.user, detach=True)
+
+    def clock(self, label, tag):
+        """One host, one clock: nothing to record."""
+
+    def link_action(self, verb, sender, peer, spec=None, side='send'):
+        """netem on sender's interface on its link to peer; returns that end's host times."""
+        if side != 'send':
+            raise faults.FaultError('a docker fabric impairs the sending side only')
+        ip = topology.link_address(self.addr, sender, peer, sender)
+        cmd = {'link.impair': lambda: faults.netem_cmd(ip, spec),
+               'link.down': lambda: faults.netem_cmd(ip, 'loss 100%'),
+               'link.clear': lambda: faults.clear_cmd(ip)}[verb]()
+        r = self.exec(self.holder(sender), faults.timed(cmd))
+        return {'node': sender, **json.loads(r.stdout)}
+
+    def node_action(self, verb, node, signal='KILL', grace_s=5):
+        r = self.host.sh(faults.timed(faults.node_cmd('docker', verb, self.relay(node), signal, grace_s)))
+        return json.loads(r.stdout)
+
+    def leftovers(self):
+        left = {}
+        for n in self.order:
+            r = self.exec(self.holder(n), faults.CHECK_CMD, check=False)
+            if r.stdout.strip():
+                left[n] = r.stdout.strip().splitlines()
+        return left
+
+    def clear_impairments(self):
+        for (a, b), link in self.addr['links'].items():
+            for n in (a, b):
+                self.exec(self.holder(n), faults.clear_cmd(link[n]), check=False)
+        return self.leftovers()
+
+    def collect(self, label, out_dir):
+        self.host.pull(f'{self.stack}/results/{label}', out_dir)
 
     def logs(self, node, tail=None):
         t = f' --tail {int(tail)}' if tail else ''

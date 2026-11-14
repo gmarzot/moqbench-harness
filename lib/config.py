@@ -108,7 +108,7 @@ def positive_int(where, key, value):
 class Fabric:
     """A deployment's [fabric] table: which relays peer, how, and with what images."""
     KEYS = {'adapter', 'image', 'topology', 'order', 'hub', 'links', 'wire', 'subnet', 'threads',
-            'check_interval_ms', 'draft', 'aiomoqt', 'aiopquic', 'lab_image', 'stack_dir'}
+            'check_interval_ms', 'draft', 'aiomoqt', 'aiopquic', 'lab_image', 'stack_dir', 'client_python'}
     ADAPTERS = {'moqx-peering'}
 
     def __init__(self, data, relays, where):
@@ -135,6 +135,7 @@ class Fabric:
         self.aiopquic = data.get('aiopquic', '0.8.0rc1')
         self.lab_image = data.get('lab_image') or f'moqbench-lab:{self.aiomoqt}-{self.aiopquic}'
         self.stack_dir = data.get('stack_dir', 'moqbench-fabric')
+        self.client_python = data.get('client_python', 'Projects/aiomoqt/.venv/bin/python')
         for key in ('threads', 'check_interval_ms', 'draft'):
             positive_int(f'{where}: fabric', key, getattr(self, key))
         if self.check_interval_ms < 2000:
@@ -201,6 +202,9 @@ class Deployment:
             raise ConfigError(f'{where}: no node has the subscriber role')
         if self.provider in ('aws', 'oci') and len({n['instance'] for n in self.load_nodes}) > 1:
             raise ConfigError(f'{where}: load nodes must share one instance type on {self.provider}')
+        if self.provider in ('aws', 'oci') and len({(n['instance'], n.get('ocpus'), n.get('memory_gb'))
+                                                    for n in self.with_role('relay')}) > 1:
+            raise ConfigError(f'{where}: relay nodes must share one shape on {self.provider}')
 
     def with_role(self, role):
         return [n for n in self.nodes if role in n['roles']]
@@ -253,7 +257,8 @@ class Deployment:
                 out['availability_zone'] = self.zone
             if self.arch:
                 out['arch'] = self.arch
-            out.update(relay_instance_type=self.relay['instance'], client_count=len(load), probe_count=len(probes))
+            out.update(relay_instance_type=self.relay['instance'], relay_count=len(self.with_role('relay')),
+                       client_count=len(load), probe_count=len(probes))
             if load:
                 out['client_instance_type'] = load[0]['instance']
             if probes:
@@ -267,7 +272,7 @@ class Deployment:
                 out['availability_domain'] = self.zone
             if self.network_type:
                 out['network_type'] = self.network_type
-            out.update(client_count=len(load), probe_count=len(probes))
+            out.update(relay_count=len(self.with_role('relay')), client_count=len(load), probe_count=len(probes))
             for prefix, node in (('relay', self.relay), ('client', load[0] if load else None), ('probe', probes[0] if probes else None)):
                 if node:
                     out[f'{prefix}_shape'] = node['instance']
@@ -310,7 +315,7 @@ class Suite:
     KEYS = {'description', 'requires', 'test'}
     TEST_KEYS = {'type', 'tool', 'video', 'max_per_box', 'seconds', 'suffix', 'subscriber_nodes', 'relay', 'threads', 'note', *SETTINGS}
     FABRIC_KEYS = {'type', 'scenario', 'topology', 'links', 'seconds', 'suffix', 'note', 'draft',
-                   'object_size', 'rate', 'group_size', 'pub_ns', 'peering_poll_s'}
+                   'object_size', 'rate', 'group_size', 'pub_ns', 'peering_poll_s', 'slo_ms'}
 
     def __init__(self, name, data):
         self.name = name
@@ -371,7 +376,7 @@ class Suite:
         if test.get('topology', 'line') not in topology.SHAPES:
             raise ConfigError(f'{at}: topology must be one of {", ".join(sorted(topology.SHAPES))}')
         positive_int(at, 'seconds', test.get('seconds'))
-        for key in ('draft', 'object_size', 'rate', 'group_size'):
+        for key in ('draft', 'object_size', 'rate', 'group_size', 'slo_ms'):
             if key in test:
                 positive_int(at, key, test[key])
         if not isinstance(test.get('note', ''), str) or '\n' in test.get('note', ''):
@@ -409,7 +414,7 @@ class Plan:
         only_keys(f'{where}: builds', self.builds, self.BUILD_KEYS)
         self.threads = data.get('threads', 'all')
         self.slo_ms = data.get('slo_ms', 500)
-        if self.deployment.provider == 'docker' or any(s.fabric_tests for s in self.suites):
+        if self.deployment.fabric is not None or any(s.fabric_tests for s in self.suites):
             raise ConfigError(f'{where}: fabric deployments and suites run with moqbench fabric run, not in a plan')
         for relay in self.relays:
             relay_name, _, build = relay.partition(':')

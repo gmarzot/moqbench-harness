@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build the moqx relay image with moq-peering on a fabric deployment's Docker host.
+# Build the moqx relay image with moq-peering on a fabric deployment's Docker host,
+# or for a VM fabric on its first relay host (then: moqbench fabric deploy).
 #
 #   ./bin/moqx-peering-build.sh <deployment> [ref]   # ref: branch, tag or commit; default peering/moq-peering
 #
@@ -19,17 +20,22 @@ PATCH_DIR=${PATCH_DIR:-$ROOT/patches/local/moqx-peering}
 IMAGE=${IMAGE:-moqx-peering}
 WORK=moqbench-build/moqx
 [[ $REF =~ ^[A-Za-z0-9._/-]+$ && $IMAGE =~ ^[a-z0-9._/-]+$ ]] || { echo "bad ref or image name" >&2; exit 2; }
-HOST=$(cd "$ROOT/lib" && python3 -c 'import sys, config; print(config.load_deployment(sys.argv[1]).host)' "$DEP")
+read -r HOST KEY DOCKER < <(PYTHONPATH="$ROOT/lib" python3 "$ROOT/lib/fabric/buildhost.py" "$DEP")
+[[ -n ${HOST:-} ]] || exit 1
+DOCKER=${DOCKER/_/ }
+SSHK=(-o BatchMode=yes)
+[[ $KEY == - ]] || SSHK+=(-i "$KEY" -o StrictHostKeyChecking=accept-new)
 
 run() {
-  if [[ $HOST == local ]]; then (cd ~ && bash -c "$1"); else ssh -o BatchMode=yes "$HOST" "bash -c $(printf %q "$1")"; fi
+  if [[ $HOST == local ]]; then (cd ~ && bash -c "$1"); else ssh "${SSHK[@]}" "$HOST" "bash -c $(printf %q "$1")"; fi
 }
 push() {  # <local dir> <remote dir>
   if [[ $HOST == local ]]; then mkdir -p ~/"$2" && cp -a "$1"/. ~/"$2"/
-  else tar -C "$1" -cf - . | ssh -o BatchMode=yes "$HOST" "mkdir -p $2 && tar -C $2 -xf -"; fi
+  else tar -C "$1" -cf - . | ssh "${SSHK[@]}" "$HOST" "mkdir -p $2 && tar -C $2 -xf -"; fi
 }
 
 echo "== $HOST: fetching $REPO $REF"
+run "command -v docker >/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q docker.io docker-buildx git >/dev/null"
 read -r SHA DESCRIBE < <(run "set -e; mkdir -p moqbench-build
   [ -d $WORK/.git ] || git clone -q --filter=blob:none $REPO $WORK
   cd $WORK && git fetch -q origin '$REF' && git checkout -q --detach FETCH_HEAD && git reset -q --hard && git clean -qfdx
@@ -53,15 +59,15 @@ echo "== $IMAGE:$TAG from $SHA ($DESCRIBE), ${#PATCHES[@]} local patch(es)"
 run "set -euo pipefail; S=moqbench-build/stage-$TAG; cd $WORK
   for p in \$(ls ~/\$S/patches/*.patch 2>/dev/null | sort); do git apply --whitespace=nowarn \"\$p\"; echo \"  applied \$(basename \$p)\"; done
   export DOCKER_BUILDKIT=1
-  docker build -q --target builder --build-arg MOQX_VERSION_STRING='$VERSION' -t $IMAGE:builder-$TAG -f docker/Dockerfile . >/dev/null
-  docker build -q --target relay --build-arg MOQX_VERSION_STRING='$VERSION' -t $IMAGE:relay-$TAG -f docker/Dockerfile . >/dev/null
-  docker build -q --build-arg BUILDER=$IMAGE:builder-$TAG --build-arg RELAY=$IMAGE:relay-$TAG \
+  $DOCKER build -q --target builder --build-arg MOQX_VERSION_STRING='$VERSION' -t $IMAGE:builder-$TAG -f docker/Dockerfile . >/dev/null
+  $DOCKER build -q --target relay --build-arg MOQX_VERSION_STRING='$VERSION' -t $IMAGE:relay-$TAG -f docker/Dockerfile . >/dev/null
+  $DOCKER build -q --build-arg BUILDER=$IMAGE:builder-$TAG --build-arg RELAY=$IMAGE:relay-$TAG \
     --label org.moqbench.repo=$REPO --label org.moqbench.ref='$REF' --label org.moqbench.revision=$SHA \
     --label org.moqbench.patches='$PATCH_LABEL' -t $IMAGE:$TAG -f ~/\$S/moqx-peering.Dockerfile ~/\$S >/dev/null
-  docker tag $IMAGE:$TAG $IMAGE:latest
+  $DOCKER tag $IMAGE:$TAG $IMAGE:latest
   git reset -q --hard"
-VERSION_OUT=$(run "docker run --rm --entrypoint /usr/local/bin/moqx $IMAGE:$TAG --version 2>&1 | head -1")
-IMAGE_ID=$(run "docker image inspect $IMAGE:$TAG --format '{{.Id}}'")
+VERSION_OUT=$(run "$DOCKER run --rm --entrypoint /usr/local/bin/moqx $IMAGE:$TAG --version 2>&1 | head -1")
+IMAGE_ID=$(run "$DOCKER image inspect $IMAGE:$TAG --format '{{.Id}}'")
 mkdir -p "$ROOT/.testbed/builds"
 OUT="$ROOT/.testbed/builds/${IMAGE//\//_}-$TAG.json"
 REPO="$REPO" REF="$REF" SHA="$SHA" DESCRIBE="$DESCRIBE" IMAGE_TAG="$IMAGE:$TAG" IMAGE_ID="$IMAGE_ID" \

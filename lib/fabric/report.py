@@ -4,6 +4,7 @@ Times are host epoch seconds: the publisher's and subscribers' lines carry the
 time tsline read them, faults carry the host times bracketing each action, and
 pollers stamp each sample. One host, one clock.
 """
+import csv
 import json
 from pathlib import Path
 import re
@@ -146,8 +147,36 @@ def polls(path):
     return out
 
 
+def nft_rates(run_dir, meta):
+    """{(src, dst): [(t, bytes/s)]} from each relay's per-peer nft counters (VM fabrics)."""
+    out = {}
+    for n in meta['order']:
+        path = Path(run_dir) / f'monitor-{n}.jsonl'
+        if not path.is_file():
+            continue
+        prev = None
+        for raw in path.read_text().splitlines():
+            try:
+                row = json.loads(raw)
+            except ValueError:
+                continue
+            sent = (row.get('nft') or {}).get('out')
+            if sent is None:
+                continue
+            if prev:
+                dt = row['t_wall'] - prev[0]
+                for peer, (b, _) in sent.items():
+                    if peer in prev[1] and dt > 0:
+                        out.setdefault((n, peer), []).append((row['t_wall'], (b - prev[1][peer][0]) / dt))
+            prev = (row['t_wall'], sent)
+    return out
+
+
 def link_rates(run_dir, meta):
-    """{(src, dst): [(t, bytes/s)]}: what each relay sent on each link interface, from its netdev samples."""
+    """{(src, dst): [(t, bytes/s)]}: what each relay sent to each peer, from nft counters on VMs or
+    each link interface's counters on Docker."""
+    if meta.get('provider') == 'vm':
+        return nft_rates(run_dir, meta)
     out = {}
     for n in meta['order']:
         path = Path(run_dir) / f'poll-net-{n}.jsonl'
@@ -197,6 +226,86 @@ def paths_into(node, edges, ingest, limit=8):
                 walk([src, *path])
     walk([node])
     return found
+
+
+def clock(run_dir):
+    """{host: {tag: (offset_us, rms_us)}} from chronyc tracking snapshots, and the worst-case budget."""
+    hosts = {}
+    for f in Path(run_dir).glob('clock-*-*.txt'):
+        host, tag = f.stem[len('clock-'):].rsplit('-', 1)
+        text = f.read_text()
+        m = re.search(r'System time\s*:\s*([\d.]+) seconds (fast|slow)', text)
+        rms = re.search(r'RMS offset\s*:\s*([\d.]+) seconds', text)
+        if m:
+            off = float(m[1]) * 1e6 * (1 if m[2] == 'fast' else -1)
+            hosts.setdefault(host, {})[tag] = (r3(off), r3(float(rms[1]) * 1e6) if rms else None)
+    if not hosts:
+        return None
+    worst = max(abs(v[0]) for tags in hosts.values() for v in tags.values())
+    return {'hosts': hosts, 'budget_us': r3(2 * worst)}
+
+
+def population(run_dir, name, opts, slo_ms):
+    """One load_sim population: its steady window against the gate, and the tool's verdict."""
+    rows = []
+    path = Path(run_dir) / f'{name}.csv'
+    if path.is_file():
+        with open(path) as f:
+            rows = [r for r in csv.DictReader(f) if r.get('live')]
+    rc_path = Path(run_dir) / f'{name}.rc'
+    rc = int(rc_path.read_text().strip() or 1) if rc_path.is_file() else None
+    per_sub = (opts.get('object_size') or 1000) * 8 * (opts.get('rate') or 30) / 1e6
+    start = next((i for i, r in enumerate(rows) if int(r['live']) >= int(r['target'])), None)
+    steady = rows[start:-3] if start is not None else []
+    good = [r for r in steady if int(r['live']) >= int(r['target'])
+            and float(r['rx_mbps']) >= 0.9 * int(r['target']) * per_sub and float(r['p90_ms'] or 0) <= slo_ms]
+    target = int(rows[0]['target']) if rows else None
+    return dict(target=target, rows=len(rows), steady=len(steady), good=len(good), rc=rc,
+                p90_max_ms=r3(max((float(r['p90_ms'] or 0) for r in steady), default=None) if steady else None),
+                rx_mbps_min=r3(min((float(r['rx_mbps']) for r in steady), default=None) if steady else None),
+                ok=bool(steady) and len(good) >= 0.95 * len(steady) and rc == 0)
+
+
+def media(run_dir, name):
+    """One sub_media --analyze late joiner: time to catalog and to each track's first frame, and its summary."""
+    lines_ = lines(Path(run_dir) / f'{name}.log')
+    out = dict(catalog_ms=None, first_frame_ms={}, fail=[], tracks={})
+    if not lines_:
+        return out
+    t0 = lines_[0][0]
+    for t, text in lines_:
+        if out['catalog_ms'] is None and text.strip().startswith('catalog:'):
+            out['catalog_ms'] = r3((t - t0) * 1000)
+        m = re.match(r'\s+\[([^\]]+)\] g(\d+)\.o(\d+) ', text)
+        if m and m[1] not in out['first_frame_ms']:
+            out['first_frame_ms'][m[1]] = (r3((t - t0) * 1000), f'{m[2]}.{m[3]}')
+        if 'FAIL' in text or 'error:' in text:
+            out['fail'].append(text.strip()[:160])
+    path = Path(run_dir) / f'{name}.csv'
+    if path.is_file():
+        with open(path) as f:
+            for r in csv.DictReader(f):
+                if r.get('kind') == 'summary':
+                    out['tracks'][r['track']] = {k: r.get(k) for k in (
+                        'objects', 'lost', 'dups', 'lat_p50_ms', 'lat_p95_ms', 'groups', 'partial_groups')}
+    return out
+
+
+def fetched(run_dir, name):
+    """A joining FETCH's outcome from its log: ok (FETCH_OK), error (a refusal), or none."""
+    out = dict(outcome='none', response=None, stream=False)
+    sent = False
+    for _, text in lines(Path(run_dir) / f'{name}.log'):
+        if 'MOQT send: Fetch(' in text or 'MOQT send: Fetch ' in text:
+            sent = True
+        elif sent and 'FetchOk' in text and out['outcome'] == 'none':
+            out.update(outcome='ok', response=text.strip()[-160:])
+        elif sent and ('FetchError' in text or 'RequestError' in text) and out['outcome'] == 'none':
+            out.update(outcome='error', response=text.strip()[-160:])
+        if 'FetchHeader' in text:
+            out['stream'] = True
+    out['sent'] = sent
+    return out
 
 
 def analyze(run_dir):
@@ -304,12 +413,36 @@ def analyze(run_dir):
         base = prop.get(ingest)
         out['namespace_seen'] = {n: r3((t - base) * 1000) if base else None for n, t in prop.items()}
         out['namespace_missing'] = [n for n in order if n not in prop]
+    slo = meta['test'].get('slo_ms', 500)
+    pops = {}
+    for f in sorted(run_dir.glob('pop-*.rc')) or sorted(run_dir.glob('pop-*.csv')):
+        pops[f.stem] = population(run_dir, f.stem, meta.get('options') or {}, slo)
+    if pops:
+        out['populations'] = pops
+    medias = {f.stem: media(run_dir, f.stem) for f in sorted(run_dir.glob('media-*.log'))}
+    if medias:
+        out['media'] = medias
+    fetches = {f.stem: fetched(run_dir, f.stem) for f in sorted(run_dir.glob('fetch-*.log'))}
+    if fetches:
+        out['fetch'] = fetches
+    out['clock'] = clock(run_dir)
     out['verdicts'] = verdicts(out, meta)
     return out
 
 
+def expect(ok, expected):
+    """PASS or FAIL against an expected pass; XFAIL or XPASS against an expected failure."""
+    if expected == 'fail':
+        return 'XPASS' if ok else 'XFAIL'
+    return 'PASS' if ok else 'FAIL'
+
+
 def verdicts(out, meta):
-    group = (meta.get('options') or {}).get('group_size') or 30
+    opts = meta.get('options') or {}
+    group = opts.get('group_size') or 30
+    scen = meta.get('scenario') or {}
+    order = meta['order']
+    ingest = topology.resolve(scen.get('publisher', 'ingest'), order)
     res = []
     for name, s in out['subscribers'].items():
         if not s.get('events'):
@@ -326,6 +459,26 @@ def verdicts(out, meta):
                 continue
             res.append(dict(check=f'{name} {ev["verb"]} {ev["on"]}-{ev["peer"]}: {exp}', status='PASS' if ok else 'FAIL',
                             lost=ev['lost'], dups=ev['dups'], max_gap_ms=ev['max_gap_ms']))
+    for name, pop in (out.get('populations') or {}).items():
+        res.append(dict(check=f'{name}: {pop["target"]} subscribers held the gate', status=expect(pop['ok'], None),
+                        good=pop['good'], steady=pop['steady'], p90_max_ms=pop['p90_max_ms'], rc=pop['rc']))
+    if out.get('populations') and out.get('link_kBps'):
+        payload = (opts.get('object_size') or 1000) * (opts.get('rate') or 30) / 1000
+        carrying = {k: v for k, v in out['link_kBps'].items() if v >= 0.5 * payload}
+        ok = bool(carrying) and all(v <= 1.6 * payload for v in carrying.values())
+        res.append(dict(check='each link carrying the track carries it once', status=expect(ok, None),
+                        payload_kBps=r3(payload), carrying=carrying))
+    for name, m in (out.get('media') or {}).items():
+        ok = (m['catalog_ms'] is not None and bool(m['tracks']) and not m['fail']
+              and all(int(t['objects'] or 0) > 0 and int(t['dups'] or 0) == 0 for t in m['tracks'].values()))
+        res.append(dict(check=f'{name}: catalog and every track after a late join', status=expect(ok, None),
+                        catalog_ms=m['catalog_ms']))
+    for name, f in (out.get('fetch') or {}).items():
+        node = name.split('-', 1)[1]
+        across = node != ingest
+        exp = scen.get('expect_across', 'pass') if across else None
+        res.append(dict(check=f'{name}: joining FETCH {"across peering" if across else "on the publisher relay"}',
+                        status=expect(f['outcome'] == 'ok', exp), outcome=f['outcome'], response=f['response']))
     if 'namespace_missing' in out:
         res.append(dict(check='namespace reached every relay',
                         status='FAIL' if out['namespace_missing'] else 'PASS', missing=out['namespace_missing']))
@@ -361,6 +514,15 @@ def text(summary):
         lines_.append(f'  link send kB/s: {s["link_kBps"]}')
     if s.get('paths'):
         lines_.append(f'  paths carrying the track: {s["paths"]}')
+    for name, p in (s.get('populations') or {}).items():
+        lines_.append(f'  {name}: target {p["target"]}, {p["good"]}/{p["steady"]} steady samples at the gate, '
+                      f'p90 max {p["p90_max_ms"]} ms, rx min {p["rx_mbps_min"]} Mbps, exit {p["rc"]}')
+    for name, m in (s.get('media') or {}).items():
+        lines_.append(f'  {name}: catalog {m["catalog_ms"]} ms, first frames {m["first_frame_ms"]}, tracks {m["tracks"]}')
+    for name, f in (s.get('fetch') or {}).items():
+        lines_.append(f'  {name}: {f["outcome"]}{" (fetch stream seen)" if f["stream"] else ""} {f["response"] or ""}')
+    if s.get('clock'):
+        lines_.append(f'  clock budget {s["clock"]["budget_us"]} us: {s["clock"]["hosts"]}')
     if 'namespace_seen' in s:
         lines_.append(f'  namespace seen (ms after ingest): {s["namespace_seen"]}; missing {s["namespace_missing"]}')
     for v in s['verdicts']:
@@ -379,6 +541,6 @@ def main(paths):
             (run / 'summary.json').write_text(json.dumps(summary, indent=1) + '\n')
             print(text(summary))
             print()
-            if any(v['status'] == 'FAIL' for v in summary['verdicts']):
+            if any(v['status'] in ('FAIL', 'XPASS') for v in summary['verdicts']):
                 status = 1
     return status
