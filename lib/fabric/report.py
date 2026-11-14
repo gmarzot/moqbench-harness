@@ -119,6 +119,19 @@ def gaps(sub, t0, t1):
     return best
 
 
+def outage(sub, t0, limit_s=60):
+    """(last arrival at or before t0, first arrival after t0 within limit_s); either may be None."""
+    before = [a[0] for a in sub['arrivals'] if a[0] <= t0]
+    after = [a[0] for a in sub['arrivals'] if t0 < a[0] <= t0 + limit_s]
+    return (before[-1] if before else None), (after[0] if after else None)
+
+
+def lost_between(sub, sent, ta, tb):
+    """IDs the publisher sent in [ta, tb] that the subscriber never received."""
+    got = {(g, o) for _, g, o in sub['arrivals']}
+    return sorted(k for k, ts in sent.items() if ta <= ts <= tb and k not in got)
+
+
 def polls(path):
     """{name: [(t, body-or-None)]}: a sample's body when it changed, else None (unchanged)."""
     out = {}
@@ -232,14 +245,25 @@ def analyze(run_dir):
                 win_end = min(t0 + 10, t_next)
                 gap_ms, gap_end = gaps(s, t0, win_end)
                 nominal = 1000 / (meta['options'].get('rate') or 30)
-                inwin = delivery(s, sent, t0 - 0.5, win_end)
+                last_before, first_after = outage(s, t0)
+                out_ms = (first_after - last_before) * 1000 if last_before and first_after else 0.0
+                if first_after is None:
+                    recovery = None
+                elif out_ms >= gap_ms and out_ms > 3 * nominal:
+                    recovery = r3((first_after - t0) * 1000)
+                elif gap_ms > 3 * nominal:
+                    recovery = r3((gap_end - t0) * 1000)
+                else:
+                    recovery = 0.0
+                lost = lost_between(s, sent, t0 - 0.5, max(win_end, first_after or win_end))
+                inwin = delivery(s, sent, t0 - 0.5, max(win_end, first_after or win_end))
                 before = delivery(s, sent, t0 - 5, t0)
                 after = delivery(s, sent, min(t0 + 2, win_end), win_end)
                 row['events'].append(dict(
                     verb=ev['verb'], on=ev.get('on'), peer=ev.get('peer'), metric=ev.get('metric'),
                     ok=ev.get('ok'), status=ev.get('status'), expect=ev.get('expect'),
-                    max_gap_ms=r3(gap_ms), recovery_ms=r3((gap_end - t0) * 1000) if gap_ms > 3 * nominal else 0.0,
-                    lost=inwin['missing'], lost_ids=inwin['missing_ids'], dups=inwin['dups'],
+                    max_gap_ms=None if recovery is None else r3(max(gap_ms, out_ms)), recovery_ms=recovery,
+                    lost=len(lost), lost_ids=[f'{g}.{o}' for g, o in lost[:20]], dups=inwin['dups'],
                     lat_p50_before=before['lat_p50'], lat_p50_after=after['lat_p50']))
         subs[name] = row
     out['subscribers'] = subs
@@ -324,11 +348,13 @@ def text(summary):
                       f'{tl:<24}{tool:<22}{t.get("jitter_ms", "-")!s:>7}  {setup}')
         for ev in r.get('events', []):
             lost = f' {ev["lost_ids"]}' if ev.get('lost_ids') else ''
-            lines_.append(f'      {ev["verb"]:<12}{ev["on"]}-{ev["peer"]}: gap {ev["max_gap_ms"]} ms, lost {ev["lost"]}{lost}, '
+            where = ev['on'] if ev.get('peer') is None else f'{ev["on"]}-{ev["peer"]}'
+            lines_.append(f'      {ev["verb"]:<12}{where}: gap {ev["max_gap_ms"]} ms, lost {ev["lost"]}{lost}, '
                           f'dups {ev["dups"]}, recovery {ev["recovery_ms"]} ms, p50 {ev["lat_p50_before"]} -> '
                           f'{ev["lat_p50_after"]} ms')
     for ev in s.get('events', []):
-        lines_.append(f'  event {ev["verb"]} {ev["on"]}-{ev["peer"]} metric={ev.get("metric")} ok={ev["ok"]} '
+        where = ev['on'] if ev.get('peer') is None else f'{ev["on"]}-{ev["peer"]}'
+        lines_.append(f'  event {ev["verb"]} {where} metric={ev.get("metric")} ok={ev["ok"]} '
                       f'status={ev["status"]} took {ev.get("action_ms")} ms; paths {ev.get("path_before")} -> '
                       f'{ev.get("path_after")}')
     if s.get('link_kBps'):

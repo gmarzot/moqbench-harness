@@ -183,7 +183,7 @@ def write_run(folder, events=True):
     folder.mkdir(parents=True)
     meta = dict(label='t', order=['r1', 'r2', 'r3'], links=[['r1', 'r2'], ['r2', 'r3']], namespace='fab-x',
                 scenario={'publisher': 'ingest'}, test={'scenario': 'steady', 'topology': 'line'},
-                options={'rate': 10, 'group_size': 10, 'object_size': 100},
+                options={'rate': 30, 'group_size': 10, 'object_size': 100},
                 addressing={'access': {'hosts': {'r1': '10.77.0.101', 'r2': '10.77.0.102', 'r3': '10.77.0.103'}},
                             'links': [{'pair': ['r1', 'r2'], 'r1': '10.77.1.11', 'r2': '10.77.1.12'},
                                       {'pair': ['r2', 'r3'], 'r2': '10.77.3.11', 'r3': '10.77.3.12'}]})
@@ -229,6 +229,7 @@ class Report(unittest.TestCase):
             ev = sub['events'][0]
             self.assertEqual((ev['lost'], ev['dups']), (2, 1))
             self.assertAlmostEqual(ev['max_gap_ms'], 300, places=1)
+            self.assertAlmostEqual(ev['recovery_ms'], 250.5, places=1)
             self.assertEqual(s['events'][0]['path_before']['r3'], ['r1>r2>r3'])
             self.assertEqual(sub['events'][0]['lost_ids'], ['1.5', '1.6'])
             self.assertEqual([v['status'] for v in s['verdicts']], ['FAIL'])
