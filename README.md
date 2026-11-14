@@ -89,6 +89,7 @@ and record the ceiling beside every number.
 | `bin/testbed-provision.sh` | Install the load generators on every host and the relays under test (moqx by default). |
 | `bin/relay-deploy.sh` | Install one relay build on the relay host: moqx from its GitHub release, or any relay's binary built elsewhere. Checks it runs there, keeps the previous build, and records which one is installed for `versions.txt`. |
 | `bin/testbed-tune.sh` | Host network tuning: MTU 1500, per-queue `fq_codel`, receive spreading. Required after every boot. |
+| `bin/testbed-chrony.sh` | One local time source: the reference host serves chrony to every other host, itself synced to the provider's link-local time service. |
 | `bin/testbed-ssh.sh` | Log in to a host by role: `relay`, `client-01`, `probe-01`. |
 | `bin/relay-smoke.sh` | Does each relay serve subscribers? Uses moxygen's moqperf tools, which come only from a prebuilt tree (`SRC=` in provisioning). |
 | `bin/bw-baseline.sh` | iperf3 TCP and UDP between every node and the relay, both ways, then all nodes at once: the path ceiling every result is read against. |

@@ -3,6 +3,8 @@
 # to a relay or a QUIC stack (README, "The one rule"). TCP and UDP, both
 # directions, receiver-side numbers: first one node at a time, then every node
 # at once against the relay's egress, the direction a fan-out relay saturates.
+# With several relays (a fabric), every pair of relays is then measured the
+# same way, one pair at a time: the links relay peering runs over.
 #
 #   ./bin/bw-baseline.sh                     # ~5 min for 3 nodes at the defaults
 #   DUR=20 UDP_PROCS=6 ./bin/bw-baseline.sh
@@ -63,7 +65,7 @@ fi
 # Every host must have finished first boot (cloud-init installs iperf3) and be
 # at MAX_MTU or below on its primary interface.
 MAX_MTU=${MAX_MTU:-1500}
-for h in "$RELAY" "${NODES[@]}"; do
+for h in "${RELAYS[@]}" "${NODES[@]}"; do
   timeout 600 $SSH -n "$RUSER@$h" 'cloud-init status --wait >/dev/null 2>&1; iperf3 --version | head -1
     IF=$(ip -o -4 route show to default | cut -d" " -f5 | head -1); echo "mtu $(cat /sys/class/net/$IF/mtu)"' > "$OUT/.ver-$h" 2>&1 &
 done; wait
@@ -84,7 +86,7 @@ fi
 # One iperf3 server per port on the relay: N per node, so the concurrent round
 # never shares a port. Removed on exit, however the script ends.
 NPORTS=$(( ${#NODES[@]} * N ))
-stop_servers() { timeout 30 $SSH -n "$RUSER@$RELAY" 'pkill -x iperf3' >/dev/null 2>&1; }
+stop_servers() { for h in "${RELAYS[@]}"; do timeout 30 $SSH -n "$RUSER@$h" 'pkill -x iperf3' >/dev/null 2>&1; done; }
 trap stop_servers EXIT
 UP=$(timeout 60 $SSH -n "$RUSER@$RELAY" "pkill -x iperf3; sleep 0.5
   for p in \$(seq $BASE $(( BASE + NPORTS - 1 ))); do iperf3 -s -D -p \$p; done; sleep 1; pgrep -xc iperf3")
@@ -119,6 +121,25 @@ for i in "${!NODES[@]}"; do snap "${NODES[$i]}" "$OUT/${NAMES[$i]}/counters/conc
 for i in "${!NODES[@]}"; do run_node "$i" concurrent "$START_AT" & done; wait
 snap "$RELAY" "$OUT/conc-relay-after" &
 for i in "${!NODES[@]}"; do snap "${NODES[$i]}" "$OUT/${NAMES[$i]}/counters/conc-node-after" & done; wait
+
+# Relay pairs: a runs the client side against b's servers, so "up" is a -> b.
+if (( ${#RELAYS[@]} > 1 )); then
+  for (( b = 1; b < ${#RELAYS[@]}; b++ )); do
+    timeout 60 $SSH -n "$RUSER@${RELAYS[$b]}" "pkill -x iperf3; sleep 0.5
+      for p in \$(seq $BASE $(( BASE + N - 1 ))); do iperf3 -s -D -p \$p; done" >/dev/null 2>&1
+  done
+  for (( a = 0; a < ${#RELAYS[@]}; a++ )); do
+    for (( b = a + 1; b < ${#RELAYS[@]}; b++ )); do
+      pair=fabric-${RELAY_NAMES[$a]}-${RELAY_NAMES[$b]}
+      echo "-- $pair, both directions (~$(( 8 * DUR + 10 ))s)"
+      dir=$OUT/$pair/pair c=$OUT/$pair/counters; mkdir -p "$dir" "$c"
+      snap "${RELAYS[$b]}" "$c/pair-relay-before"; snap "${RELAYS[$a]}" "$c/pair-node-before"
+      timeout $(( 10 * DUR + 120 )) $SSH "$RUSER@${RELAYS[$a]}" \
+        "bash -s -- ${RELAYS_PRIV[$b]} $BASE $N $DUR pair 0 $UDP_RATE $UDP_WINDOW" < remote/bw-baseline-node.sh | tar xzf - -C "$dir"
+      snap "${RELAYS[$b]}" "$c/pair-relay-after"; snap "${RELAYS[$a]}" "$c/pair-node-after"
+    done
+  done
+fi
 
 python3 - "$OUT" "$N" "$DUR" <<'PY' | tee -a "$OUT/run.txt"
 import csv, glob, json, os, re, sys
@@ -200,28 +221,36 @@ def cell(m):
 
 tests = [("tcp1", "tcp"), ("tcp8", "tcp"), ("udp1", "udp"), (f"udp{n}", "udp")]
 rows = []
-nodes = sorted(d for d in os.listdir(out) if os.path.isdir(os.path.join(out, d)))
-print(f"\n{'':10} {'':6} {'relay -> node (fan-out)':<29} node -> relay (ingest)")
-for node in nodes:
-    pair = os.path.join(out, node, "pair")
-    setup = glob.glob(os.path.join(pair, "setup.json"))
-    if setup:
-        print(f"{node:10} ERROR {load(setup[0])['error']}"); continue
-    ping = open(os.path.join(pair, "ping.txt")).read() if os.path.exists(os.path.join(pair, "ping.txt")) else ""
-    rtt = re.search(r"= [\d.]+/([\d.]+)/", ping)
-    print(f"{node:10} {'rtt':6} {rtt.group(1) + ' ms avg' if rtt else 'no ping reply'}")
-    for t, proto in tests:
-        cells = {}
-        for d in ("down", "up"):
-            files = sorted(glob.glob(os.path.join(pair, f"{t}-{d}.json")) + glob.glob(os.path.join(pair, f"{t}-{d}-*.json")))
-            m = measure(files, proto) if files else (None, "not run")
-            cells[d] = m
-            rows.append([node, "alone", t, "relay->node" if d == "down" else "node->relay", m[0], m[1]])
-        print(f"{'':10} {t:6} {cell(cells['down']):<29} {cell(cells['up'])}")
-    c = os.path.join(out, node, "counters")
-    print(f"{'':10} {'drops':6} {drops('relay', f'{c}/pair-relay-before', f'{c}/pair-relay-after')}")
-    print(f"{'':17} {drops(node, f'{c}/pair-node-before', f'{c}/pair-node-after')}")
+dirs = sorted(d for d in os.listdir(out) if os.path.isdir(os.path.join(out, d)))
+nodes = [d for d in dirs if not d.startswith("fabric-")]
+pairs = [d for d in dirs if d.startswith("fabric-")]
 
+def table(names, down, up, side_a, side_b):
+    for node in names:
+        pair = os.path.join(out, node, "pair")
+        setup = glob.glob(os.path.join(pair, "setup.json"))
+        if setup:
+            print(f"{node:10} ERROR {load(setup[0])['error']}"); continue
+        ping = open(os.path.join(pair, "ping.txt")).read() if os.path.exists(os.path.join(pair, "ping.txt")) else ""
+        rtt = re.search(r"= [\d.]+/([\d.]+)/", ping)
+        print(f"{node:10} {'rtt':6} {rtt.group(1) + ' ms avg' if rtt else 'no ping reply'}")
+        for t, proto in tests:
+            cells = {}
+            for d in ("down", "up"):
+                files = sorted(glob.glob(os.path.join(pair, f"{t}-{d}.json")) + glob.glob(os.path.join(pair, f"{t}-{d}-*.json")))
+                m = measure(files, proto) if files else (None, "not run")
+                cells[d] = m
+                rows.append([node, "alone", t, down if d == "down" else up, m[0], m[1]])
+            print(f"{'':10} {t:6} {cell(cells['down']):<29} {cell(cells['up'])}")
+        c = os.path.join(out, node, "counters")
+        print(f"{'':10} {'drops':6} {drops(side_b, f'{c}/pair-relay-before', f'{c}/pair-relay-after')}")
+        print(f"{'':17} {drops(side_a or node, f'{c}/pair-node-before', f'{c}/pair-node-after')}")
+
+print(f"\n{'':10} {'':6} {'relay -> node (fan-out)':<29} node -> relay (ingest)")
+table(nodes, "relay->node", "node->relay", None, "relay")
+if pairs:
+    print(f"\nrelay pairs, fabric-a-b: {'b -> a':<29} a -> b")
+    table(pairs, "b->a", "a->b", "a", "b")
 print(f"\nevery node at once, relay -> nodes (the relay's egress ceiling):")
 for t, proto in [("tcp8", "tcp"), (f"udp{n}", "udp")]:
     parts, every = [], []

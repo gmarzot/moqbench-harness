@@ -7,7 +7,7 @@
 # run on an untuned host looks like a real result. Run this after every apply,
 # reboot, or resize, and again in --check mode before trusting numbers.
 #
-#   ./bin/testbed-tune.sh              # apply to relay, clients and probes, then verify
+#   ./bin/testbed-tune.sh              # apply to every relay, client and probe, then verify
 #   ./bin/testbed-tune.sh --check      # report only, change nothing
 #   ./bin/testbed-tune.sh --mtu-only   # only pin the MTU: an otherwise untuned baseline
 #   ./bin/testbed-tune.sh --host 203.0.113.10
@@ -35,7 +35,7 @@ done
 # plausible-but-wrong numbers this script exists to prevent.
 if [[ ${#HOSTS[@]} -eq 0 ]]; then
   source ./lib/hosts.sh
-  HOSTS=("$RELAY" "${CLIENTS[@]}" ${PROBES[@]+"${PROBES[@]}"})
+  HOSTS=("${RELAYS[@]}" "${CLIENTS[@]}" ${PROBES[@]+"${PROBES[@]}"})
 fi
 KEY=${KEY:-$HOME/.ssh/id_ed25519}   # --host without a testbed selected
 RUSER=${RUSER:-ubuntu}

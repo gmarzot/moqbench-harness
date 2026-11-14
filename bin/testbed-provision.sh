@@ -107,7 +107,7 @@ echo "relays: $RELAYS  tools:${TOOLS} prebuilt tree: ${SRC:-none}"
 #    numactl, node_exporter). A first boot that loses the dpkg lock race to
 #    the image's own apt run skips them silently, which surfaces much later as
 #    "iperf3 not installed"; install them wherever they are missing.
-for H in "$RELAY" "${LOADHOSTS[@]}"; do
+for H in "${RELAYS[@]}" "${LOADHOSTS[@]}"; do
   $SSH ubuntu@"$H" 'command -v iperf3 >/dev/null && exit 0
     sudo cloud-init status --wait >/dev/null 2>&1
     export DEBIAN_FRONTEND=noninteractive
@@ -158,7 +158,9 @@ has aiomoqt && for H in "$RELAY" "${LOADHOSTS[@]}"; do
       echo "  $(hostname): aiomoqt  $(git -C $K/aiomoqt log --oneline -1 | cut -c1-50)"
     elif [ "$HAVE" != "$WANT" ]; then
       [ -x $PY ] || uv venv --python $PYV ~/Projects/aiomoqt/.venv >/dev/null 2>&1
-      uv pip install --python $PY "$SPEC" >/dev/null 2>&1
+      # A pre-release pin needs pre-release dependencies too (aiomoqt rc -> aiopquic rc).
+      PRE=""; case $WANT in *rc*|*a[0-9]*|*b[0-9]*) PRE=--prerelease=allow ;; esac
+      uv pip install --python $PY $PRE "$SPEC" >/dev/null 2>&1
     fi
     [ -f ~/Projects/bench/cert.pem ] || openssl req -x509 -newkey ec \
       -pkeyopt ec_paramgen_curve:prime256v1 -keyout ~/Projects/bench/key.pem \
