@@ -119,9 +119,11 @@ object IDs.
   publisher sent between a subscriber's first and last arrival that it never
   received; a duplicate is a repeated group and object ID.
 - **Events**: for each event, the largest inter-arrival gap in the following ten
-  seconds (or until the next event), objects lost and duplicated in that window,
-  recovery (event start to the end of a gap longer than three object intervals),
-  median latency before and after, and the delivery path before and after.
+  seconds (or until the next event), including an outage that spans the event or
+  outlasts the window; the objects sent in that span and never received, with
+  their IDs; duplicates; recovery (event start to the end of a gap longer than
+  three object intervals, empty if delivery never resumed); median latency
+  before and after; and the delivery path before and after.
 - **Path**: from interface counters. Every link is its own interface, so each
   relay's send rate on each link is exact; the links carrying at least half the
   track's rate, followed back from a relay, give its paths from the ingest relay.
