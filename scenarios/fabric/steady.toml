@@ -1,0 +1,6 @@
+description = "Steady delivery from a publisher on the ingest relay to a reference subscriber on every relay: per-hop latency, jitter and loss."
+mode        = "stream"
+publisher   = "ingest"
+subscribers = ["all"]
+sub_start_s = 2
+peering_poll_s = 5

@@ -62,6 +62,7 @@ export MOQBENCH_CONFIG=~/my-moqbench-configs
 | `STATE-AND-PLAN.md` | Generic harness status and next steps; deployment-specific journals remain local. |
 | `aws/README.md` | The legacy AWS/Linode harness scripts — setup, running, and the gotchas that cost time. |
 | `PARITY.md` | What was equalised across relays. Read before comparing relays. |
+| `FABRIC.md` | Relay fabrics: several peered relays on one Docker host, their scenarios, faults and measurements (`moqbench fabric`). |
 
 ## The one rule
 
@@ -93,9 +94,12 @@ and record the ceiling beside every number.
 | `bin/bw-baseline.sh` | iperf3 TCP and UDP between every node and the relay, both ways, then all nodes at once: the path ceiling every result is read against. |
 | `bin/relay-capacity.sh` | Health-gated capacity search (moqperf). |
 | `bin/relay-load.sh` | One run with any load generator: `moqperf`, `moqbench`, `adaptive`, `fixed`, `loadsim`. |
+| `bin/moqx-peering-build.sh` | Build the moqx relay image with moq-peering on a fabric deployment's Docker host, at a ref, with optional local patches. |
+| `bin/fabric-report.py` | Summarize fabric runs (`moqbench fabric run`). |
 | `lib/` | Helpers the commands use: `hosts.sh` (which hosts to drive), `run.sh` (one measured point) and `summarize.py`. |
 | `oci/` | The OCI testbed: Terraform module, `testbed.sh`, and `envs/` (shared env definitions, plus gitignored per-tester `*.local.tfvars` from the `.example` templates). |
 | `remote/` | Scripts that run on a host, fed over ssh by `bin/testbed-provision.sh`. |
+| `lib/fabric/` | Relay fabrics: topology, addressing, the Docker provider, the relay adapter, faults, runs and reports. |
 | `moqbench/` | moq-bench track profiles. |
 | `relays.local.sh.example` | How to add a relay that is kept out of this repo (gitignored `relays.local.sh`). |
 | `.env.example` | Personal defaults every command reads from a gitignored `.env`, such as `TESTBED_ENV` (the environment for new deployments). Shell variables override it. |

@@ -37,3 +37,6 @@ __pycache__/
 # The selected testbed's host list, written by bin/testbed.sh (per tester).
 .testbed/
 wheels/
+
+# Local patches applied by build scripts; never tracked.
+patches/local/

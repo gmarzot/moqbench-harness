@@ -7,6 +7,7 @@
   moqbench down <deployment>     destroy them and check nothing is left
   moqbench status                what is up
   moqbench dashboard [args]      watch a run (bin/live-dashboard)
+  moqbench fabric <verb> ...     relay fabrics on Docker (FABRIC.md)
 
 A deployment (deployments/) is the nodes and their roles, a suite (suites/) is
 the tests, and a plan (plans/) pairs them with the relays, builds and budget of
@@ -345,6 +346,16 @@ def main(argv=None):
     sub.add_parser('status', help='what is up')
     d = sub.add_parser('dashboard', help='watch a run', add_help=False)
     d.add_argument('rest', nargs=argparse.REMAINDER)
+    f = sub.add_parser('fabric', help='relay fabrics on Docker: up, down, peer, link, node, run', add_help=False)
+    f.add_argument('rest', nargs=argparse.REMAINDER)
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ['fabric']:
+        from fabric import cli
+        try:
+            return cli.main(argv[1:])
+        except config.ConfigError as exc:
+            print(f'moqbench: {exc}', file=sys.stderr)
+            return 2
     args = p.parse_args(argv)
     try:
         if args.command == 'run':

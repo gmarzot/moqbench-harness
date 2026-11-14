@@ -1,0 +1,43 @@
+description = "Live delivery while peering changes: add the ingest-egress link (a line becomes a triangle), raise that session's metric (expected hitless), restore it, remove the link (expected loss of at most the in-flight group), add it back."
+mode        = "stream"
+publisher   = "ingest"
+subscribers = ["all"]
+sub_start_s = 2
+peering_poll_s = 1
+
+[[event]]
+at_s   = 15
+verb   = "peer.add"
+on     = "ingest"
+peer   = "egress"
+expect = "hitless"
+
+[[event]]
+at_s   = 45
+verb   = "peer.metric"
+on     = "egress"
+peer   = "ingest"
+metric = 1000
+expect = "hitless"
+
+[[event]]
+at_s   = 75
+verb   = "peer.metric"
+on     = "egress"
+peer   = "ingest"
+metric = 100
+expect = "hitless"
+
+[[event]]
+at_s   = 105
+verb   = "peer.remove"
+on     = "ingest"
+peer   = "egress"
+expect = "group-loss"
+
+[[event]]
+at_s   = 135
+verb   = "peer.add"
+on     = "ingest"
+peer   = "egress"
+expect = "hitless"

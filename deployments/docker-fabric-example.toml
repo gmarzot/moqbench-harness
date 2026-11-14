@@ -1,0 +1,35 @@
+# Example: three moqx relays peered with moq-peering and one client container,
+# all on one Docker host. host = "local" runs Docker here; a copy named
+# <name>.local.toml (ignored by git) can name an ssh target instead. Each relay
+# has its own pinned cores; the client runs every publisher and subscriber, so
+# they share one clock.
+provider = "docker"
+host     = "local"
+tag      = "fab"
+
+[fabric]
+adapter   = "moqx-peering"
+image     = "moqx-peering:latest"   # bin/moqx-peering-build.sh
+topology  = "line"
+order     = ["r1", "r2", "r3"]
+draft     = 16
+
+[[nodes]]
+name  = "r1"
+roles = ["relay"]
+cpus  = "2-3"
+
+[[nodes]]
+name  = "r2"
+roles = ["relay"]
+cpus  = "4-5"
+
+[[nodes]]
+name  = "r3"
+roles = ["relay"]
+cpus  = "6-7"
+
+[[nodes]]
+name  = "client"
+roles = ["publisher", "subscriber", "probe"]
+cpus  = "8-15"
