@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
+import urllib.error
 import urllib.request
 
 
@@ -90,6 +91,35 @@ def snapshot(pid, comms=(), nic=''):
     return result
 
 
+def fetch(url, timeout=0.5):
+    """(status, body) of one GET; status 0 when the server did not answer."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return response.status, response.read(4194304).decode(errors='replace')
+    except urllib.error.HTTPError as exc:
+        return exc.code, ''
+    except (OSError, ValueError) as exc:
+        return 0, str(exc)
+
+
+def nft_counters(table):
+    """{chain: {comment: [bytes, packets]}} for the counter rules of an inet table."""
+    run = subprocess.run(['sudo', '-n', 'nft', '-j', 'list', 'table', 'inet', table],
+                         capture_output=True, text=True, timeout=2)
+    if run.returncode:
+        raise OSError(run.stderr.strip() or f'nft exit {run.returncode}')
+    out = {}
+    for item in json.loads(run.stdout).get('nftables', []):
+        rule = item.get('rule')
+        if not rule or 'comment' not in rule:
+            continue
+        for expr in rule.get('expr', []):
+            if 'counter' in expr:
+                c = expr['counter']
+                out.setdefault(rule['chain'], {})[rule['comment']] = [c['bytes'], c['packets']]
+    return out
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--pid', type=int, default=0)
@@ -98,8 +128,16 @@ def main():
     p.add_argument('--metrics-url', default='')
     p.add_argument('--comm', action='append', default=[],
                    help='also sum CPU, RSS and threads of processes with this comm (repeatable)')
+    p.add_argument('--json-url', action='append', default=[], metavar='NAME=URL',
+                   help='also fetch this control URL every --json-interval; a body is kept only when it changed')
+    p.add_argument('--json-interval', type=float, default=5.0)
+    p.add_argument('--nft', default='', metavar='TABLE',
+                   help='also read the counter rules of this inet table every sample')
+    p.add_argument('--interval', type=float, default=1.0)
     args = p.parse_args()
     next_metrics = 0
+    json_urls = dict(u.split('=', 1) for u in args.json_url)
+    json_last, next_json = {}, 0
     nic = default_interface() if shutil.which('ethtool') else ''
     print(json.dumps(dict(type='metadata', hostname=os.uname().nodename,
                           clock_ticks=os.sysconf('SC_CLK_TCK'), pid=args.pid,
@@ -115,8 +153,22 @@ def main():
             except (OSError, ValueError) as exc:
                 sample['metrics_error'] = str(exc)
             next_metrics = start + 5
+        if json_urls and start >= next_json:
+            sample['json'], sample['json_status'] = {}, {}
+            for name, url in json_urls.items():
+                status, body = fetch(url)
+                sample['json_status'][name] = status
+                if body != json_last.get(name):
+                    sample['json'][name] = body
+                    json_last[name] = body
+            next_json = start + args.json_interval
+        if args.nft:
+            try:
+                sample['nft'] = nft_counters(args.nft)
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                sample['errors'].append(f'nft: {exc}')
         print(json.dumps(sample), flush=True)
-        time.sleep(max(0, 1 - (time.monotonic() - start)))
+        time.sleep(max(0, args.interval - (time.monotonic() - start)))
     print(json.dumps(dict(type='end', t_wall=time.time())), flush=True)
 
 
