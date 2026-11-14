@@ -95,6 +95,14 @@ variable "root_volume_gb" { default = 60 }
 
 // Relay: the system under test. c6gn = Graviton2, 64 cores, 100 Gbps.
 variable "relay_instance_type" { default = "c6gn.16xlarge" }
+// Relays of one type; more than one for a relay fabric.
+variable "relay_count" {
+  default = 1
+  validation {
+    condition     = var.relay_count >= 1
+    error_message = "relay_count must be at least 1."
+  }
+}
 
 // Load generators: enough of them that one client CPU never caps the
 // measurement; verify per run via client_box_busy_pct.
@@ -273,7 +281,13 @@ locals {
   EOT
 }
 
+moved {
+  from = aws_instance.relay
+  to   = aws_instance.relay[0]
+}
+
 resource "aws_instance" "relay" {
+  count                  = var.relay_count
   ami                    = data.aws_ssm_parameter.ubuntu.insecure_value
   instance_type          = var.relay_instance_type
   subnet_id              = aws_subnet.lab.id
@@ -281,7 +295,7 @@ resource "aws_instance" "relay" {
   placement_group        = aws_placement_group.lab.id
   key_name               = aws_key_pair.lab.key_name
   user_data              = local.cloud_init
-  tags                   = { Name = "${local.deployment}-relay-01" }
+  tags                   = { Name = "${local.deployment}-relay-${format("%02d", count.index + 1)}" }
 
   metadata_options {
     http_tokens = "required"
@@ -351,8 +365,10 @@ resource "aws_instance" "probe" {
   }
 }
 
-output "relay_public_ip" { value = aws_instance.relay.public_ip }
-output "relay_private_ip" { value = aws_instance.relay.private_ip }
+output "relay_public_ip" { value = aws_instance.relay[0].public_ip }
+output "relay_private_ip" { value = aws_instance.relay[0].private_ip }
+output "relay_public_ips" { value = aws_instance.relay[*].public_ip }
+output "relay_private_ips" { value = aws_instance.relay[*].private_ip }
 output "client_public_ips" { value = aws_instance.client[*].public_ip }
 output "client_private_ips" { value = aws_instance.client[*].private_ip }
 output "probe_public_ips" { value = aws_instance.probe[*].public_ip }
@@ -367,15 +383,16 @@ output "ssh_key_file" {
 
 output "instance_ids" {
   description = "For ./bin/testbed.sh stop|start, which power-cycle through the AWS CLI."
-  value       = concat([aws_instance.relay.id], aws_instance.client[*].id, aws_instance.probe[*].id)
+  value       = concat(aws_instance.relay[*].id, aws_instance.client[*].id, aws_instance.probe[*].id)
 }
 
 output "inventory" {
   description = "Feed this to the sweep driver."
   value = {
-    relay   = aws_instance.relay.private_ip
+    relay   = aws_instance.relay[0].private_ip
+    relays  = aws_instance.relay[*].private_ip
     clients = aws_instance.client[*].private_ip
     probes  = aws_instance.probe[*].private_ip
-    ssh     = "ssh ubuntu@${aws_instance.relay.public_ip}"
+    ssh     = "ssh ubuntu@${aws_instance.relay[0].public_ip}"
   }
 }
