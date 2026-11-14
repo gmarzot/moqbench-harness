@@ -1,0 +1,63 @@
+# Example: three moqx relays peered with moq-peering, one per 4-OCPU E6 VM, two
+# 8-OCPU load VMs for subscriber audiences, and a 4-OCPU reference VM for the
+# publisher, the reference subscribers and the local time source; SR-IOV
+# networking, one availability domain. Set region to yours; account settings go
+# in deployments/oci.local.toml.
+provider     = "oci"
+region       = "us-ashburn-1"
+arch         = "amd64"
+tag          = "ocifab"
+network_type = "VFIO"
+
+[fabric]
+adapter  = "moqx-peering"
+image    = "moqx-peering:latest"
+topology = "line"
+order    = ["r1", "r2", "r3"]
+threads  = 4
+draft    = 16
+
+[[nodes]]
+name      = "r1"
+instance  = "VM.Standard.E6.Flex"
+ocpus     = 4
+memory_gb = 16
+vcpus     = 8
+roles     = ["relay"]
+
+[[nodes]]
+name      = "r2"
+instance  = "VM.Standard.E6.Flex"
+ocpus     = 4
+memory_gb = 16
+vcpus     = 8
+roles     = ["relay"]
+
+[[nodes]]
+name      = "r3"
+instance  = "VM.Standard.E6.Flex"
+ocpus     = 4
+memory_gb = 16
+vcpus     = 8
+roles     = ["relay"]
+
+[[nodes]]
+name      = "load-1"
+instance  = "VM.Standard.E6.Flex"
+ocpus     = 8
+memory_gb = 32
+roles     = ["subscriber"]
+
+[[nodes]]
+name      = "load-2"
+instance  = "VM.Standard.E6.Flex"
+ocpus     = 8
+memory_gb = 32
+roles     = ["subscriber"]
+
+[[nodes]]
+name      = "ref"
+instance  = "VM.Standard.E6.Flex"
+ocpus     = 4
+memory_gb = 16
+roles     = ["probe"]

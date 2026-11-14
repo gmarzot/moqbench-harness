@@ -130,6 +130,14 @@ variable "relay_shape" {
 }
 variable "relay_ocpus" { default = 94 } // 94 Gbps, the VM ceiling
 variable "relay_memory_gb" { default = 188 }
+// Relays of one shape; more than one for a relay fabric.
+variable "relay_count" {
+  default = 1
+  validation {
+    condition     = var.relay_count >= 1
+    error_message = "relay_count must be at least 1."
+  }
+}
 
 // Load generators: several hosts so one client CPU never caps the measurement.
 // One load generator, matching the reference 2-host topology: the publisher
@@ -338,10 +346,16 @@ locals {
   )
 }
 
+moved {
+  from = oci_core_instance.relay
+  to   = oci_core_instance.relay[0]
+}
+
 resource "oci_core_instance" "relay" {
+  count               = var.relay_count
   compartment_id      = var.compartment_ocid
   availability_domain = local.ad
-  display_name        = "${local.deployment}-relay-01"
+  display_name        = "${local.deployment}-relay-${format("%02d", count.index + 1)}"
   shape               = var.relay_shape
   freeform_tags       = local.tags
 
@@ -366,7 +380,7 @@ resource "oci_core_instance" "relay" {
   create_vnic_details {
     subnet_id        = oci_core_subnet.lab.id
     assign_public_ip = true
-    hostname_label   = "moq-relay-01"
+    hostname_label   = "moq-relay-${format("%02d", count.index + 1)}"
   }
 
   source_details {
@@ -467,8 +481,10 @@ resource "oci_core_instance" "probe" {
   }
 }
 
-output "relay_public_ip" { value = oci_core_instance.relay.public_ip }
-output "relay_private_ip" { value = oci_core_instance.relay.private_ip }
+output "relay_public_ip" { value = oci_core_instance.relay[0].public_ip }
+output "relay_private_ip" { value = oci_core_instance.relay[0].private_ip }
+output "relay_public_ips" { value = oci_core_instance.relay[*].public_ip }
+output "relay_private_ips" { value = oci_core_instance.relay[*].private_ip }
 output "client_public_ips" { value = oci_core_instance.client[*].public_ip }
 output "client_private_ips" { value = oci_core_instance.client[*].private_ip }
 output "probe_public_ips" { value = oci_core_instance.probe[*].public_ip }
@@ -481,15 +497,16 @@ output "ssh_key_file" {
 
 output "instance_ids" {
   description = "For ./bin/testbed.sh stop|start, which power-cycle through the OCI CLI."
-  value       = concat([oci_core_instance.relay.id], oci_core_instance.client[*].id, oci_core_instance.probe[*].id)
+  value       = concat(oci_core_instance.relay[*].id, oci_core_instance.client[*].id, oci_core_instance.probe[*].id)
 }
 
 output "inventory" {
   description = "Feed this to the sweep driver."
   value = {
-    relay   = oci_core_instance.relay.private_ip
+    relay   = oci_core_instance.relay[0].private_ip
+    relays  = oci_core_instance.relay[*].private_ip
     clients = oci_core_instance.client[*].private_ip
     probes  = oci_core_instance.probe[*].private_ip
-    ssh     = "ssh ubuntu@${oci_core_instance.relay.public_ip}"
+    ssh     = "ssh ubuntu@${oci_core_instance.relay[0].public_ip}"
   }
 }

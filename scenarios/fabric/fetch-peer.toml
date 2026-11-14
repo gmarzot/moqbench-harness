@@ -1,0 +1,8 @@
+description = "A joining FETCH for groups already published: on the publisher's relay as the control, then on every other relay across peering, where it is expected to fail while FETCH is not carried over peering."
+mode        = "fetch"
+publisher   = "ingest"
+subscribers = ["all"]
+settle_s    = 6
+gap_s       = 2
+warm_s      = 6
+expect_across = "fail"

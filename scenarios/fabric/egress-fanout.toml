@@ -1,0 +1,10 @@
+description = "Fan-out at the egress relay: a load_sim audience there while a reference subscriber watches every relay. Each link carrying the track should carry it once, whatever the audience."
+mode        = "stream"
+publisher   = "ingest"
+subscribers = ["all"]
+sub_start_s = 2
+peering_poll_s = 5
+
+[[population]]
+edge = "egress"
+subs = 200

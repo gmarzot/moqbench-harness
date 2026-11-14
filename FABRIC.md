@@ -2,8 +2,9 @@
 
 A fabric is several relays peered into one mesh and tested as one system: per-hop
 latency, how fast names and subscriptions cross it, and what live delivery does
-while peers change or links degrade. Phase 0 runs the whole fabric on one Docker
-host. The first adapter is moqx with moq-peering.
+while peers change or links degrade. A fabric runs on one Docker host, or with
+one relay per VM in a cloud testbed ([VM fabrics](#vm-fabrics)). The first
+adapter is moqx with moq-peering.
 
 ## Quick start
 
@@ -70,7 +71,7 @@ seconds  = 165
 ```
 
 Test keys: `object_size`, `rate`, `group_size` (default 1000 B, 30/s, 30 per
-group), `draft`, `peering_poll_s`, `links` (custom), `suffix`, `note`.
+group), `draft`, `peering_poll_s`, `slo_ms`, `links` (custom), `suffix`, `note`.
 
 | scenario | measures | verdicts |
 |---|---|---|
@@ -78,11 +79,23 @@ group), `draft`, `peering_poll_s`, `links` (custom), `suffix`, `note`.
 | `propagation` | a PUBLISH_NAMESPACE reaching every relay's `/state`, polled every 2 ms; then subscribers nearest first, cold then warm | the namespace reaches every relay; each subscriber gets every object once |
 | `subscribe-setup` | connect to SUBSCRIBE_OK and connect to first object, for a PUBLISH-announced track, farthest relay first, cold then warm | each subscriber gets every object once |
 | `peer-churn` | gap, loss, duplicates, recovery and latency before and after each peer change during live delivery | per event: `hitless` (no loss, no duplicates) or `group-loss` (at most one group lost, no duplicates) |
+| `egress-fanout` | a load_sim audience on the egress relay beside the reference subscribers; each link's send rate | the audience holds the gate; each link carrying the track carries it once (0.5–1.6 times its payload rate) |
+| `edge-scale` | one load_sim audience per relay | every audience holds the gate on its own |
+| `late-join` | an MSF publisher (pub_media: catalog and audio), then one late `sub_media --analyze` per relay: time to catalog and to each track's first frame | catalog received, every track delivered without duplicates |
+| `fetch-peer` | a joining FETCH (aiomoqt's join example) on the publisher's relay and on every other relay | FETCH_OK on the publisher's relay; across peering, `expect_across = "fail"` reports a refusal as XFAIL and a success as XPASS |
+
+The gate for an audience: over its steady samples (from the first at the full
+population to three before the end), at least 95% have the full population,
+at least 90% of the expected receive rate and a p90 at or under the test's
+`slo_ms` (default 500), and load_sim exits 0.
 
 Scenario keys: `mode` (`stream` or `setup`), `publisher`, `subscribers`
 (`["all"]` or node names and roles), `pub_ns`, `sub_start_s`, `peering_poll_s`,
 `state_poll_ms`, `netdev_s`, `settle_s`, `gap_s`, `warm_s`, `cold_order`,
-`namespace_check`, and `[[event]]` tables.
+`namespace_check`, `audio_frames_per_group` (media), `fetch_history` and
+`expect_across` (fetch), `[[event]]` tables, and `[[population]]` tables (`edge`:
+a node, a role or `each`; `subs`; `subs_per_proc`) for load_sim audiences on
+the load hosts.
 
 ## Faults
 
@@ -140,6 +153,52 @@ stored only when it changed; `poll-net-*` holds interface counters), each relay'
 Polling a relay's control API is not free and can change what it measures:
 `peering_poll_s` sets the rate, and the steady scenario polls every 5 s.
 
+## VM fabrics
+
+An aws or oci deployment with a `[fabric]` table runs one relay per VM. Its relay
+nodes, which share one shape, become `relay_count` relays; the first probe is
+the reference host (the publisher, every reference subscriber and the local
+time source), and the load nodes run the audiences. `deployments/oci-fabric-example.toml`
+is three relays, two load hosts and a reference host.
+
+```bash
+./bin/moqbench up <deployment>                             # Terraform: relays, load hosts, reference host
+AIOMOQT_VERSION=0.15.0rc1 TOOLS=aiomoqt RELAYS=none ./bin/testbed-provision.sh
+./bin/testbed-tune.sh                                      # every relay, client and probe
+./bin/testbed-chrony.sh                                    # the reference host as everyone's time source
+./bin/bw-baseline.sh                                       # every node to relay 1, then every relay pair
+./bin/moqx-peering-build.sh <deployment> peering/moq-peering   # on the first relay host
+./bin/moqbench fabric deploy <deployment>                  # the image to the other relays
+./bin/moqbench fabric run <deployment> example-fabric-vm
+```
+
+Relays run the adapter's image with host networking and listen on their private
+addresses; peering runs over the same addresses. `moqbench fabric deploy` copies
+the image from the first relay host that has it, or from `--from <ssh target>`,
+through the machine running the harness.
+
+**Impairments** never touch the NIC's tuned qdiscs. A flower filter on the
+peer's address, on the NIC's clsact egress hook (`side = "send"`, the default)
+or ingress hook (`side = "receive"`), redirects that peer's packets through an
+ifb device (`mbo<k>` or `mbi<k>`) whose root is netem. `direction` picks which
+end's traffic is impaired, as on Docker. `moqbench fabric check` lists ifb
+devices, mirred filters and netem qdiscs left on any relay; `--clear` removes
+them.
+
+**Link rates** come from an nft table on each relay that counts bytes to and
+from every other relay.
+
+**Telemetry**: `remote/load-monitor.py` runs on every host for the run. On a
+relay it also samples `/peering` every `peering_poll_s` and the nft counters
+every sample; the namespace check polls `/state` beside each relay as on Docker.
+
+**Clock**: `./bin/testbed-chrony.sh` makes the reference host a chrony server
+disciplined by the provider's link-local time service, and every other host its
+client. Every run records `chronyc tracking` on every host at its start and end,
+and the summary reports each host's offset and a budget of twice the worst one.
+Reference subscribers share the publisher's clock and need none of it; audience
+latency on the load hosts does.
+
 ## Adapters
 
 `lib/fabric/adapter.py` is the relay-neutral interface: render a node's config
@@ -151,5 +210,6 @@ implements all of it for moqx.
 ## Limits
 
 One Docker host shares its CPUs, memory and kernel among every relay and client:
-results are functional and relative, not capacity. Pin cores with `cpus`. VM
-fabrics, other relays' adapters and per-track path visibility are later phases.
+results are functional and relative, not capacity. Pin cores with `cpus`. Other
+relays' adapters, cross-region fabrics and per-track path visibility are later
+phases.

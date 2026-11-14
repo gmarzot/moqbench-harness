@@ -67,7 +67,9 @@ def static_env(deployment):
 def wait_for_ssh(deployment, limit_s=300):
     """New hosts refuse connections for their first minute or two."""
     inv = inventory()
-    hosts = [inv['relay']['public'], *[c['public'] for c in inv['clients']]]
+    relays = inv.get('relays') or [inv['relay']]
+    hosts = [*(r['public'] for r in relays), *(c['public'] for c in inv['clients']),
+             *(p['public'] for p in inv.get('probes', []))]
     user = inv.get('user') or 'ubuntu'
     end = time.time() + limit_s
     for host in hosts:
@@ -293,7 +295,8 @@ def do_status(_args):
     inv = inventory()
     if inv:
         print(f'selected: {inv.get("deployment")} ({inv.get("provider")}, {inv.get("region", "")})')
-        print(f'  relay {inv["relay"]["public"]}')
+        for relay in inv.get('relays') or [inv['relay']]:
+            print(f'  {relay.get("name", "relay")} {relay["public"]}')
         for i, client in enumerate(inv['clients']):
             print(f'  load-{i + 1} {client["public"]}')
     else:

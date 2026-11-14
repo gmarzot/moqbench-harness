@@ -1,0 +1,10 @@
+description = "Subscribers spread over every relay: one load_sim audience per relay, each held to the delivery and latency gate on its own."
+mode        = "stream"
+publisher   = "ingest"
+subscribers = ["all"]
+sub_start_s = 2
+peering_poll_s = 5
+
+[[population]]
+edge = "each"
+subs = 200

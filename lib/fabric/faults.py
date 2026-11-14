@@ -43,6 +43,57 @@ def clear_cmd(ip):
 CHECK_CMD = "tc qdisc show | grep -E 'netem|tbf' || true"
 
 
+def node_cmd(docker, verb, container, signal='KILL', grace_s=5):
+    """The docker command for a node verb on a relay container."""
+    if not re.fullmatch(r'[A-Z0-9]+', str(signal)):
+        raise FaultError(f'signal must be a name such as KILL or TERM, not {signal!r}')
+    return {'node.kill': f'{docker} kill -s {signal} {container}',
+            'node.stop': f'{docker} stop -t {int(grace_s)} {container}',
+            'node.start': f'{docker} start {container}',
+            'node.freeze': f'{docker} pause {container}',
+            'node.thaw': f'{docker} unpause {container}'}[verb]
+
+
+def ifb_name(direction, index):
+    """The ifb device that holds one peer's impairment: mbo<k> sending, mbi<k> receiving."""
+    return f'mb{"o" if direction == "send" else "i"}{index}'
+
+
+def nic(ip):
+    """Shell that prints the interface holding ip (the host's private address)."""
+    return iface(ip)
+
+
+def ifb_impair_cmd(own_ip, peer_ip, index, side, spec):
+    """Redirect packets to (send) or from (receive) peer_ip through an ifb with netem; the NIC's
+    own qdiscs stay as tuned."""
+    if not SAFE_SPEC.match(spec):
+        raise FaultError(f'netem spec has characters it does not need: {spec!r}')
+    dev = ifb_name(side, index)
+    hook, match, pref = (('egress', 'dst_ip', 100 + index) if side == 'send' else ('ingress', 'src_ip', 200 + index))
+    return (f'IF=$({nic(own_ip)}); [ -n "$IF" ] || {{ echo "no interface holds {own_ip}" >&2; exit 3; }}; '
+            f'sudo modprobe ifb numifbs=0 2>/dev/null; sudo ip link add {dev} type ifb 2>/dev/null; '
+            f'sudo ip link set {dev} up && sudo tc qdisc replace dev {dev} root netem {spec} limit {NETEM_LIMIT} && '
+            f'{{ sudo tc qdisc add dev "$IF" clsact 2>/dev/null; true; }} && '
+            f'{{ sudo tc filter del dev "$IF" {hook} pref {pref} 2>/dev/null; true; }} && '
+            f'sudo tc filter add dev "$IF" {hook} pref {pref} protocol ip flower {match} {peer_ip} '
+            f'action mirred egress redirect dev {dev}')
+
+
+def ifb_clear_cmd(own_ip, index, side):
+    dev = ifb_name(side, index)
+    hook, pref = ('egress', 100 + index) if side == 'send' else ('ingress', 200 + index)
+    return (f'IF=$({nic(own_ip)}); [ -n "$IF" ] || exit 3; sudo tc filter del dev "$IF" {hook} pref {pref} 2>/dev/null; '
+            f'sudo ip link del {dev} 2>/dev/null; true')
+
+
+IFB_CHECK_CMD = ("ip -o link show type ifb 2>/dev/null | awk -F': ' '$2 ~ /^mb[oi][0-9]+/ {print \"ifb \" $2}'; "
+                 "for d in $(ip -o link show | awk -F': ' '{print $2}' | cut -d@ -f1); do "
+                 "sudo tc filter show dev $d egress 2>/dev/null | grep -q mirred && echo \"egress filter on $d\"; "
+                 "sudo tc filter show dev $d ingress 2>/dev/null | grep -q mirred && echo \"ingress filter on $d\"; "
+                 "done; sudo tc qdisc show | grep -E 'netem|tbf' || true")
+
+
 def timed(script):
     """Wrap a host shell command so it prints its start, end and exit status as JSON."""
     return (f't0=$(date +%s.%N); {{ {script}; }} >/dev/null 2>&1; rc=$?; t1=$(date +%s.%N); '
@@ -50,12 +101,15 @@ def timed(script):
 
 
 def ends(fab, ev):
+    """The link's nodes and the senders of the impaired traffic: both, or only on's or peer's."""
     a = topology.resolve(ev['on'], fab.order)
     b = topology.resolve(ev['peer'], fab.order)
     direction = ev.get('direction', 'both')
     senders = {'both': [a, b], 'on': [a], 'peer': [b]}.get(direction)
     if senders is None:
         raise FaultError(f'direction must be both, on or peer, not {direction!r}')
+    if ev.get('side', 'send') not in ('send', 'receive'):
+        raise FaultError(f'side must be send or receive, not {ev.get("side")!r}')
     return a, b, senders
 
 
@@ -71,24 +125,12 @@ def apply(fab, ev):
             out.update(on=a, peer=b, ends=[])
             for s in senders:
                 other = b if s == a else a
-                ip = topology.link_address(fab.addr, s, other, s)
-                cmd = {'link.impair': lambda: netem_cmd(ip, ev['netem']),
-                       'link.down': lambda: netem_cmd(ip, 'loss 100%'),
-                       'link.clear': lambda: clear_cmd(ip)}[verb]()
-                r = fab.exec(fab.holder(s), timed(cmd))
-                out['ends'].append({'node': s, **json.loads(r.stdout)})
+                out['ends'].append(fab.link_action(verb, s, other, ev.get('netem'), ev.get('side', 'send')))
             out.update(t0=out['ends'][0]['t0'], t1=out['ends'][-1]['t1'],
                        ok=all(e['rc'] == 0 for e in out['ends']))
         elif verb.startswith('node.'):
             n = topology.resolve(ev['on'], fab.order)
-            c = fab.relay(n)
-            cmd = {'node.kill': f'docker kill -s {shlex.quote(ev.get("signal", "KILL"))} {c}',
-                   'node.stop': f'docker stop -t {int(ev.get("grace_s", 5))} {c}',
-                   'node.start': f'docker start {c}',
-                   'node.freeze': f'docker pause {c}',
-                   'node.thaw': f'docker unpause {c}'}[verb]
-            r = fab.host.sh(timed(cmd))
-            out.update(on=n, **json.loads(r.stdout))
+            out.update(on=n, **fab.node_action(verb, n, ev.get('signal', 'KILL'), ev.get('grace_s', 5)))
             out['ok'] = out['rc'] == 0
         else:
             a = topology.resolve(ev['on'], fab.order)
@@ -107,20 +149,12 @@ def apply(fab, ev):
 
 
 def check(fab):
-    """{node: leftover qdisc lines} for every relay namespace that still has an impairment."""
-    left = {}
-    for n in fab.order:
-        r = fab.exec(fab.holder(n), CHECK_CMD, check=False)
-        if r.stdout.strip():
-            left[n] = r.stdout.strip().splitlines()
-    return left
+    """{node: leftover lines} for every relay that still has an impairment."""
+    return fab.leftovers()
 
 
 def clear_all(fab):
-    for (a, b), link in fab.addr['links'].items():
-        for n in (a, b):
-            fab.exec(fab.holder(n), clear_cmd(link[n]), check=False)
-    return check(fab)
+    return fab.clear_impairments()
 
 
 def validate(events, order):

@@ -58,7 +58,7 @@ class Inventory(unittest.TestCase):
         self.assertEqual([(h['public'], h['private']) for h in inv['clients']],
                          [('203.0.113.11', '10.42.1.11'), ('203.0.113.12', '10.42.1.12')])
         self.assertEqual(inv['probes'], [])
-        self.assertEqual((inv['schema'], inv['region'], inv['arch']), (2, 'us-ashburn-1', None))
+        self.assertEqual((inv['schema'], inv['region'], inv['arch']), (3, 'us-ashburn-1', None))
         self.assertEqual([(h['name'], h['id']) for h in [inv['relay']] + inv['clients']],
                          [('relay', 'ocid-relay'), ('client-01', 'ocid-c1'), ('client-02', 'ocid-c2')])
 
@@ -70,6 +70,24 @@ class Inventory(unittest.TestCase):
         self.assertEqual(inv['probes'], [{'public': '198.51.100.12', 'private': '10.42.1.22',
                                           'name': 'probe-01', 'id': 'i-probe'}])
         self.assertEqual(inv['clients'][0]['id'], 'i-client')
+
+    def test_several_relays(self):
+        outputs = dict(OCI, **out(relay_public_ips=['203.0.113.10', '203.0.113.20'],
+                                  relay_private_ips=['10.42.1.10', '10.42.1.20'],
+                                  instance_ids=['ocid-r1', 'ocid-r2', 'ocid-c1', 'ocid-c2']))
+        code, inv = run(outputs, '--provider', 'oci')
+        self.assertEqual(code, 0)
+        self.assertEqual([(h['name'], h['private'], h['id']) for h in inv['relays']],
+                         [('relay-01', '10.42.1.10', 'ocid-r1'), ('relay-02', '10.42.1.20', 'ocid-r2')])
+        self.assertEqual((inv['relay']['name'], inv['relay']['id']), ('relay', 'ocid-r1'))
+        self.assertEqual([h['id'] for h in inv['clients']], ['ocid-c1', 'ocid-c2'])
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / '.testbed').mkdir()
+            (Path(d) / '.testbed/inventory.json').write_text(json.dumps(inv))
+            script = f'source {ROOT}/lib/hosts.sh; echo "${{RELAYS[*]}}|${{RELAYS_PRIV[*]}}|${{RELAY_NAMES[*]}}|$RELAY"'
+            got = subprocess.check_output(['bash', '-c', script], cwd=d, text=True,
+                                          env={'PATH': '/usr/bin:/bin', 'HOME': d}).strip()
+        self.assertEqual(got, '203.0.113.10 203.0.113.20|10.42.1.10 10.42.1.20|relay-01 relay-02|203.0.113.10')
 
     def test_no_relay_writes_nothing(self):
         self.assertEqual(run({}, '--provider', 'aws'), (1, None))

@@ -24,6 +24,8 @@
 # .rev file that versions.txt reports), and will not replace a binary that was
 # copied in by hand unless FORCE=1. A relay already running keeps the old build
 # until restarted. REV=<label> names a build instead of the default label.
+# RELAY_TARGETS=all installs on every relay host of the testbed, N on the Nth;
+# the default is the first.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
 source ./lib/dotenv.sh
@@ -120,6 +122,7 @@ if pgrep -x moqx >/dev/null; then echo "  moqx is still running the previous bui
 INSTALL
 }
 
+deploy_one() {
 echo "== $CFG -> relay host $RELAY (${TESTBED:-hosts from the environment})"
 if [[ $CFG == moqdev ]]; then
   SOURCE=${SOURCE:-patches/bin/moqdev/moq-relay-dev}
@@ -156,3 +159,13 @@ elif [[ -n ${PROC[$CFG]:-} ]] && declare -F local_deploy >/dev/null; then
 else
   echo "$CFG: give a binary to install (./bin/relay-deploy.sh $CFG <binary>)" >&2; exit 2
 fi
+}
+
+case ${RELAY_TARGETS:-first} in
+  first) TARGETS=("$RELAY") ;;
+  all)   TARGETS=("${RELAYS[@]}") ;;
+  *)     [[ $RELAY_TARGETS =~ ^[1-9][0-9]*$ ]] && (( RELAY_TARGETS <= ${#RELAYS[@]} )) ||
+           { echo "RELAY_TARGETS: first, all, or 1-${#RELAYS[@]}" >&2; exit 2; }
+         TARGETS=("${RELAYS[$(( RELAY_TARGETS - 1 ))]}") ;;
+esac
+for RELAY in "${TARGETS[@]}"; do deploy_one; done

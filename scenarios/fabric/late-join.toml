@@ -1,0 +1,8 @@
+description = "Late join with a catalog: an MSF publisher (catalog and audio) on the ingest relay, then one late sub_media --analyze per relay, nearest first. Time to catalog and to the first frame of each track."
+mode        = "media"
+publisher   = "ingest"
+subscribers = ["all"]
+settle_s    = 6
+gap_s       = 2
+warm_s      = 10
+audio_frames_per_group = 50

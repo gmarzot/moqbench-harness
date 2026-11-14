@@ -5,8 +5,9 @@
     lib/inventory.py ... outputs.json
 
 The host list every command in bin/ reads (lib/hosts.sh). The v1 keys are
-unchanged; schema 2 adds region, arch and per-host id and name. Exits 1 without
-writing anything when the outputs hold no relay yet.
+unchanged; schema 2 adds region, arch and per-host id and name; schema 3 adds
+relays, every relay host in order, of which relay is the first. Exits 1
+without writing anything when the outputs hold no relay yet.
 """
 import argparse
 import json
@@ -23,7 +24,7 @@ def build(outputs, deployment, environment, provider, user='ubuntu', region=None
         return default if value is None else value
 
     ids = list(v('instance_ids', []))
-    counter = iter(ids[1:])
+    counter = iter(ids)
 
     def host(public, private, name, id_=None):
         return {'public': public, 'private': private, 'name': name, 'id': id_}
@@ -32,13 +33,19 @@ def build(outputs, deployment, environment, provider, user='ubuntu', region=None
         return [host(a, b, f'{role}-{i:02d}', next(counter, None))
                 for i, (a, b) in enumerate(zip(v(pub, []), v(priv, [])), 1)]
 
+    if 'relay_public_ips' in outputs:
+        relays = pairs('relay', 'relay_public_ips', 'relay_private_ips')
+    else:
+        relays = [host(v('relay_public_ip'), v('relay_private_ip'), 'relay-01', next(counter, None))]
+    first = dict(relays[0], name='relay')
     return {
         'deployment': deployment, 'environment': environment, 'provider': provider, 'user': user,
         'ssh_key_file': outputs['ssh_key_file']['value'],
-        'relay': host(v('relay_public_ip'), v('relay_private_ip'), 'relay', ids[0] if ids else None),
+        'relay': first,
         'clients': pairs('client', 'client_public_ips', 'client_private_ips'),
         'probes': pairs('probe', 'probe_public_ips', 'probe_private_ips'),
-        'schema': 2,
+        'relays': relays,
+        'schema': 3,
         'region': v('region', region),
         'arch': v('arch', arch),
     }
