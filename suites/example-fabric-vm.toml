@@ -1,0 +1,57 @@
+description = "Example: a three-relay fabric on VMs. Steady per-hop delivery on a line and a triangle, peer changes during live delivery, namespace propagation and subscribe setup, fan-out at the egress relay, audiences on every relay, late join with a catalog, and FETCH across peering. Run with moqbench fabric run."
+requires    = { relay = 3, subscriber = 1, probe = 1 }
+
+[[test]]
+type     = "fabric"
+scenario = "steady"
+topology = "line"
+seconds  = 120
+
+[[test]]
+type     = "fabric"
+scenario = "steady"
+topology = "full"
+seconds  = 60
+
+[[test]]
+type     = "fabric"
+scenario = "peer-churn"
+topology = "line"
+seconds  = 165
+
+[[test]]
+type     = "fabric"
+scenario = "propagation"
+topology = "line"
+seconds  = 30
+
+[[test]]
+type     = "fabric"
+scenario = "subscribe-setup"
+topology = "line"
+seconds  = 30
+
+[[test]]
+type     = "fabric"
+scenario = "egress-fanout"
+topology = "line"
+seconds  = 120
+
+[[test]]
+type     = "fabric"
+scenario = "edge-scale"
+topology = "line"
+seconds  = 180
+slo_ms   = 500
+
+[[test]]
+type     = "fabric"
+scenario = "late-join"
+topology = "line"
+seconds  = 30
+
+[[test]]
+type     = "fabric"
+scenario = "fetch-peer"
+topology = "line"
+seconds  = 30
