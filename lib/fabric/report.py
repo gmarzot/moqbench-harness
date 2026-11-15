@@ -419,6 +419,10 @@ def analyze(run_dir):
         if not events:
             edges = carrying(rates, t_start, t_end, floor)
             out['paths'] = {n: paths_into(n, edges, ingest) for n in order if n != ingest}
+            for row in subs.values():
+                found = out['paths'].get(row['node'])
+                if found and len(found) == 1:
+                    row['path_hops'] = found[0].count('>')
     prop = {}
     for n in order:
         samples = polls(run_dir / f'poll-state-{n}.jsonl').get('state', [])
@@ -527,7 +531,8 @@ def text(summary):
         tool = '/'.join('-' if t.get(k) is None else f'{t[k]:.1f}' for k in ('lat_p50', 'lat_p95', 'lat_p99'))
         mk = r['markers']
         setup = f'{mk.get("subscribed_ms", "-")}/{mk.get("first_object_ms", "-")}'
-        lines_.append(f'  {name:<12}{str(r["hops_at_start"]):>5}{r["unique"]:>7}{str(r["missing"]):>6}{r["dups"]:>6}  '
+        hops = r.get('path_hops', r['hops_at_start'])
+        lines_.append(f'  {name:<12}{str(hops):>5}{r["unique"]:>7}{str(r["missing"]):>6}{r["dups"]:>6}  '
                       f'{tl:<24}{tool:<22}{t.get("jitter_ms", "-")!s:>7}  {setup}')
         for ev in r.get('events', []):
             lost = f' {ev["lost_ids"]}' if ev.get('lost_ids') else ''

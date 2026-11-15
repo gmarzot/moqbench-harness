@@ -10,6 +10,7 @@ command runs there.
 import json
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import time
 
@@ -202,6 +203,10 @@ class DockerFabric:
     def render(self, uid=1000, gid=1000):
         """Write the stack to .testbed/fabric/<deployment>/stack; returns that folder."""
         stack = self.local_dir / 'stack'
+        shutil.rmtree(stack / 'nodes', ignore_errors=True)
+        if (stack / 'nodes').exists():
+            raise FabricError(f'cannot clear {stack / "nodes"}: files there belong to another user '
+                              '(Docker creates a missing bind-mount source as root); remove it and retry')
         (stack / 'bin').mkdir(parents=True, exist_ok=True)
         (stack / 'build').mkdir(exist_ok=True)
         (stack / 'results').mkdir(exist_ok=True)
@@ -247,8 +252,9 @@ class DockerFabric:
         uid, gid = self.ids()
         stack = self.render(uid, gid)
         self.host.sh(self.compose_cmd('down -t 2 --remove-orphans') + ' >/dev/null 2>&1 || true', check=False)
-        self.host.sh(f'mkdir -p {shlex.quote(self.stack)} && rm -rf {shlex.quote(self.stack)}/nodes')
-        self.host.push(stack, self.stack)
+        if not self.host.local:
+            self.host.sh(f'mkdir -p {shlex.quote(self.stack)} && rm -rf {shlex.quote(self.stack)}/nodes')
+            self.host.push(stack, self.stack)
         self.ensure_lab_image()
         self.host.sh(self.compose_cmd('up -d --force-recreate --remove-orphans'), timeout=300)
         self.wait_ready(wait_s)

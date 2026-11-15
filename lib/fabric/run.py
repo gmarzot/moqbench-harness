@@ -246,7 +246,12 @@ class Run:
                     namespace_nodes=[n for n in fab.order if 'state' in fab.adapter_for(n).poll_urls(n)],
                     addressing={'access': fab.addr['access'],
                                 'links': [{'pair': list(k), **v} for k, v in fab.addr['links'].items()]})
-        took = fab.up()
+        try:
+            took = fab.up()
+        except Exception:
+            if not keep:
+                fab.down()
+            raise
         fab.ids()
         fab.reset(self.label)
         meta.update(links_up_s=took, started=fab.now(), relay_image=fab.image_info(fab.spec.node_image(fab.order[0])),
@@ -259,12 +264,14 @@ class Run:
         try:
             missing = {'setup': self.setup, 'media': self.media, 'fetch': self.fetch}.get(self.scen['mode'], self.stream)()
         finally:
-            meta['unfinished'] = missing
-            meta['ended'] = fab.now()
-            fab.clock(self.label, 'end')
-            self.collect(meta)
-            if not keep:
-                fab.down()
+            try:
+                meta['unfinished'] = missing
+                meta['ended'] = fab.now()
+                fab.clock(self.label, 'end')
+                self.collect(meta)
+            finally:
+                if not keep:
+                    fab.down()
         return self.out
 
     def collect(self, meta):
@@ -287,8 +294,10 @@ class Run:
         except FabricError as exc:
             meta['pull_error'] = str(exc)
         stack = fab.local_dir / 'stack'
-        for rel in [*(['compose.yaml'] if fab.kind == 'docker' else []), *(f'nodes/{n}/config.yaml' for n in fab.order)]:
-            dst = self.out / 'stack' / rel
+        rendered = [stack / 'compose.yaml'] if fab.kind == 'docker' else []
+        rendered += [f for n in fab.order for f in sorted((stack / 'nodes' / n).glob('*')) if f.is_file()]
+        for src in rendered:
+            dst = self.out / 'stack' / src.relative_to(stack)
             dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_bytes((stack / rel).read_bytes())
+            dst.write_bytes(src.read_bytes())
         (self.out / 'meta.json').write_text(json.dumps(meta, indent=1, default=str) + '\n')
