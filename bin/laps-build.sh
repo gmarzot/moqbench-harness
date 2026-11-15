@@ -10,8 +10,9 @@
 # builds upstream's Dockerfile twice: the builder stage, which carries lapsAdmin
 # for the control sidecar, as $IMAGE:builder-<tag>, and the runtime image as
 # $IMAGE:<tag>. The tag is <sha8>, or <sha8>-p<count> with patches; $IMAGE:latest
-# and $IMAGE:builder-latest follow them. Image labels and .testbed/builds/<image>-<tag>.json record the ref,
-# the resolved commit, the submodule commits and each patch's sha256.
+# and $IMAGE:builder-latest follow them. Image labels and
+# .testbed/builds/<image>-<tag>.json record the ref, the resolved commit, the
+# submodule commits and each patch's sha256.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 DEP=${1:?usage: laps-build.sh <deployment> [ref]}
