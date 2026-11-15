@@ -570,11 +570,15 @@ def verdicts(out, meta):
             and all(h[0] == h[1] for h in (e['announces_hash_ok'], e['subscribes_hash_ok'])) for e in ends.values())
         res.append(dict(check=f'{name}: learned every relay, every hash checked, stayed a leaf',
                         status=expect(ok, None), error=pn.get('error')))
+        dials = (meta.get('peer_dials') or {}).get(name[len('peer-'):], [])
         for end, e in ends.items():
             for t in e.get('tracks', []):
                 good = (t['objects'] or 0) > 0 and not t['lost'] and not t['dups'] and not t['payload_bad']
-                res.append(dict(check=f'{name} {end}: {t["track"]} received every object once over peering',
-                                status=expect(good, None), objects=t['objects'], lost=t['lost'], dups=t['dups']))
+                row = dict(check=f'{name} {end}: {t["track"]} received every object once over peering',
+                           status=expect(good, None), objects=t['objects'], lost=t['lost'], dups=t['dups'])
+                if remote and dials and ingest not in dials:
+                    row.update(status=expect(good, 'fail'), defect=remote['defect'])
+                res.append(row)
     if 'namespace_missing' in out:
         res.append(dict(check='namespace reached every relay',
                         status='FAIL' if out['namespace_missing'] else 'PASS', missing=out['namespace_missing']))

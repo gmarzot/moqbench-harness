@@ -269,6 +269,7 @@ class Run:
                     dialers={'-'.join(p): topology.dialer(*p, fab.order, fab.spec.dialers) for p in self.links},
                     metrics={f'{a}>{b}': m for (a, b), m in fab.spec.metrics.items()},
                     peers=list(getattr(fab, 'peers', [])),
+                    peer_dials={n: fab.spec.peer_dials(n) for n in getattr(fab, 'peers', [])},
                     namespace_nodes=[n for n in fab.order if 'state' in fab.adapter_for(n).poll_urls(n)],
                     addressing={'access': fab.addr['access'],
                                 'links': [{'pair': list(k), **v} for k, v in fab.addr['links'].items()]})
