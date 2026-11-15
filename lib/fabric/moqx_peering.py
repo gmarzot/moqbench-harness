@@ -19,12 +19,17 @@ class MoqxPeering(Adapter):
     caps = frozenset({'peer.add', 'peer.remove', 'peer.restart', 'peer.metric'})
     client_port = 4433
     client_path = '/moq-relay'
+    cheap_state = True
 
     def config(self, node, ctx):
         fab = ctx['fabric']
         addr = ctx['addressing']
-        peers = [{'host': topology.link_address(addr, node, peer, peer), 'port': PEERING_PORT}
-                 for peer in topology.dial_lists(ctx['links'], fab.order)[node]]
+        peers = []
+        for peer in topology.dial_lists(ctx['links'], fab.order, ctx.get('dialers', ()))[node]:
+            entry = {'host': topology.link_address(addr, node, peer, peer), 'port': PEERING_PORT}
+            if (node, peer) in ctx.get('metrics', {}):
+                entry['metric'] = ctx['metrics'][(node, peer)]
+            peers.append(entry)
         return {
             'relay_id': node,
             'threads': fab.threads,
@@ -60,7 +65,7 @@ class MoqxPeering(Adapter):
 
     def service(self, node, ctx):
         return {
-            'image': ctx['fabric'].image,
+            'image': ctx['images'][node],
             'volumes': [f'./nodes/{node}/config.yaml:/etc/moqx/config.yaml:ro', f'./nodes/{node}/certs:{CERT_DIR}'],
             'environment': {'MOQX_JEMALLOC': 'auto'},
         }

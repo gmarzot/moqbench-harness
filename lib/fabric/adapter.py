@@ -17,6 +17,10 @@ class Adapter:
     caps = frozenset()
     client_port = 4433
     client_path = '/'
+    # MoQT drafts its clients may use; empty means any.
+    drafts = ()
+    # Peer state can be read often without disturbing the fabric.
+    cheap_state = False
 
     def render(self, node, ctx):
         """{relative path: text} for one relay node under nodes/<node>/."""
@@ -25,6 +29,10 @@ class Adapter:
     def service(self, node, ctx):
         """Compose fields for the relay container: image, volumes, environment, user."""
         raise NotImplementedError
+
+    def sidecar(self, node, ctx):
+        """Compose fields for a container beside the relay that runs its control client, or None."""
+        return None
 
     def ready(self, fab, node):
         """True once the relay answers its control interface."""
@@ -66,4 +74,7 @@ def get(name):
     if name == 'moqx-peering':
         from fabric.moqx_peering import MoqxPeering
         return MoqxPeering()
+    if name == 'laps':
+        from fabric.laps import Laps
+        return Laps()
     raise Unsupported(f'no fabric adapter named {name!r}')

@@ -308,6 +308,28 @@ def fetched(run_dir, name):
     return out
 
 
+def peer_node(path, relays):
+    """What a peer node learned: nodes, hash checks, and whether it stayed a leaf."""
+    try:
+        doc = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as exc:
+        return {'error': str(exc)}
+    own = (doc.get('node') or {}).get('id')
+    learned = sorted({n.get('contact') or n.get('node') for n in doc.get('nodes', [])})
+    sessions = doc.get('sessions', [])
+    adv = sum((s.get('tx_msgs') or {}).get('NODE_INFO_ADV', 0) for s in sessions)
+    via_us = [n.get('contact') for n in doc.get('nodes', []) if any(p.get('node') == own for p in n.get('path', []))]
+    out = dict(node=(doc.get('node') or {}).get('contact'), learned=learned,
+               missing=sorted(set(relays) - set(learned)),
+               sessions_up=(doc.get('counters') or {}).get('sessions_up'),
+               dial_failures=(doc.get('counters') or {}).get('dial_failures'))
+    for kind in ('announces', 'subscribes'):
+        rows = doc.get(kind, [])
+        out[f'{kind}_hash_ok'] = [sum(1 for r in rows if r.get('hash_ok')), len(rows)]
+    out['leaf'] = dict(node_info_sent=adv, paths_through_us=via_us, held=adv == 0 and not via_us)
+    return out
+
+
 def analyze(run_dir):
     run_dir = Path(run_dir)
     meta = json.loads((run_dir / 'meta.json').read_text())
@@ -412,7 +434,7 @@ def analyze(run_dir):
     if prop:
         base = prop.get(ingest)
         out['namespace_seen'] = {n: r3((t - base) * 1000) if base else None for n, t in prop.items()}
-        out['namespace_missing'] = [n for n in order if n not in prop]
+        out['namespace_missing'] = [n for n in meta.get('namespace_nodes', order) if n not in prop]
     slo = meta['test'].get('slo_ms', 500)
     pops = {}
     for f in sorted(run_dir.glob('pop-*.rc')) or sorted(run_dir.glob('pop-*.csv')):
@@ -425,6 +447,9 @@ def analyze(run_dir):
     fetches = {f.stem: fetched(run_dir, f.stem) for f in sorted(run_dir.glob('fetch-*.log'))}
     if fetches:
         out['fetch'] = fetches
+    peers = {f.stem: peer_node(f, order) for f in sorted(run_dir.glob('peer-*.json'))}
+    if peers:
+        out['peer_nodes'] = peers
     out['clock'] = clock(run_dir)
     out['verdicts'] = verdicts(out, meta)
     return out
@@ -479,6 +504,11 @@ def verdicts(out, meta):
         exp = scen.get('expect_across', 'pass') if across else None
         res.append(dict(check=f'{name}: joining FETCH {"across peering" if across else "on the publisher relay"}',
                         status=expect(f['outcome'] == 'ok', exp), outcome=f['outcome'], response=f['response']))
+    for name, pn in (out.get('peer_nodes') or {}).items():
+        ok = ('error' not in pn and not pn['missing'] and pn['leaf']['held']
+              and all(h[0] == h[1] for h in (pn['announces_hash_ok'], pn['subscribes_hash_ok'])))
+        res.append(dict(check=f'{name}: learned every relay, every hash checked, stayed a leaf',
+                        status=expect(ok, None), missing=pn.get('missing'), error=pn.get('error')))
     if 'namespace_missing' in out:
         res.append(dict(check='namespace reached every relay',
                         status='FAIL' if out['namespace_missing'] else 'PASS', missing=out['namespace_missing']))
@@ -521,6 +551,14 @@ def text(summary):
         lines_.append(f'  {name}: catalog {m["catalog_ms"]} ms, first frames {m["first_frame_ms"]}, tracks {m["tracks"]}')
     for name, f in (s.get('fetch') or {}).items():
         lines_.append(f'  {name}: {f["outcome"]}{" (fetch stream seen)" if f["stream"] else ""} {f["response"] or ""}')
+    for name, pn in (s.get('peer_nodes') or {}).items():
+        if 'error' in pn:
+            lines_.append(f'  {name}: no report ({pn["error"]})')
+            continue
+        lines_.append(f'  {name}: learned {pn["learned"]}, announces hash_ok {pn["announces_hash_ok"][0]}/'
+                      f'{pn["announces_hash_ok"][1]}, subscribes {pn["subscribes_hash_ok"][0]}/'
+                      f'{pn["subscribes_hash_ok"][1]}, NODE_INFO sent {pn["leaf"]["node_info_sent"]}, '
+                      f'paths through it {pn["leaf"]["paths_through_us"]}, sessions up {pn["sessions_up"]}')
     if s.get('clock'):
         lines_.append(f'  clock budget {s["clock"]["budget_us"]} us: {s["clock"]["hosts"]}')
     if 'namespace_seen' in s:

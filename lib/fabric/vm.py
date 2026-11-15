@@ -21,7 +21,7 @@ import time
 
 from fabric import adapter as adapters
 from fabric import certs, faults, topology
-from fabric.docker import ROOT, REMOTE_BIN, FabricError, Host
+from fabric.docker import ROOT, REMOTE_BIN, FabricError, Host, parse_timed, timed_out
 
 NFT_TABLE = 'moqbench_fabric'
 DOCKER = 'sudo docker'
@@ -50,13 +50,22 @@ def nft_rules(peers):
 
 
 def run_args(service, root):
-    """docker run arguments for a compose-style service, with ./ paths under root."""
+    """docker run options for a compose-style service, with ./ paths under root; the image and its
+    command follow them."""
     args = []
     for vol in service.get('volumes', []):
         args += ['-v', vol.replace('./', f'"$HOME/{root}/"', 1) if vol.startswith('./') else vol]
     for k, v in sorted((service.get('environment') or {}).items()):
         args += ['-e', f'{k}={v}']
-    return args
+    entry = service.get('entrypoint')
+    if entry:
+        args += ['--entrypoint', shlex.quote(entry[0])]
+    if service.get('init'):
+        args.append('--init')
+    if service.get('stop_grace_period'):
+        args += ['--stop-timeout', str(int(str(service['stop_grace_period']).rstrip('s')))]
+    tail = [*(entry[1:] if entry else []), *service.get('command', [])]
+    return args + [service['image']] + [shlex.quote(str(a)) for a in tail]
 
 
 class VMFabric:
@@ -67,6 +76,9 @@ class VMFabric:
         self.spec = deployment.fabric
         self.adapter = adapters.get(self.spec.adapter)
         self.order = self.spec.order
+        self.adapters = {n: adapters.get(self.spec.node_adapter(n)) for n in self.order}
+        if self.spec.peers:
+            raise FabricError(f'{deployment.name}: peer nodes run on docker fabrics only')
         self.links = topology.normalize(link_list if link_list is not None else self.spec.links, self.order)
         inv = inventory if inventory is not None else load_inventory(deployment)
         relays = inv.get('relays') or [inv['relay']]
@@ -104,6 +116,12 @@ class VMFabric:
     def holder(self, node):
         return node
 
+    def adapter_for(self, node):
+        return self.adapters.get(node, self.adapter)
+
+    def sidecar(self, node):
+        return f'{self.project}-{node}-admin'
+
     def relay(self, node):
         return f'{self.project}-{node}-relay'
 
@@ -126,11 +144,15 @@ class VMFabric:
         return {h['private']: t for t, h in self.hosts.items()}
 
     def client_url(self, node):
-        return f'moqt://{self.access(node)}:{self.adapter.client_port}{self.adapter.client_path}'
+        a = self.adapter_for(node)
+        return f'moqt://{self.access(node)}:{a.client_port}{a.client_path}'
 
     def ctx(self):
         roles = {n: self.nodes[n].get('fabric_role', 'edge') for n in self.order}
-        return dict(fabric=self.spec, addressing=self.addr, links=self.links, roles=roles)
+        return dict(fabric=self.spec, addressing=self.addr, links=self.links, roles=roles,
+                    dialers=self.spec.dialers, metrics=self.spec.metrics,
+                    images={n: self.spec.node_image(n) for n in self.order},
+                    admin_images={n: self.spec.node_admin_image(n) for n in self.order})
 
     def exec(self, target, command, user=None, detach=False, check=True, timeout=120):
         script = command
@@ -150,7 +172,7 @@ class VMFabric:
         for n in self.order:
             folder = stack / 'nodes' / n
             (folder / 'certs').mkdir(parents=True, exist_ok=True)
-            for rel, text in self.adapter.render(n, ctx).items():
+            for rel, text in self.adapter_for(n).render(n, ctx).items():
                 (folder / rel).write_text(text)
             pem, key = certs.ensure_leaf(self.local_dir / 'certs', n,
                                          [self.hosts[n]['private'], self.hosts[n]['public']])
@@ -167,13 +189,24 @@ class VMFabric:
         return int(out[0]), int(out[1])
 
     def start_cmd(self, node):
-        svc = self.adapter.service(node, self.ctx())
+        ctx = self.ctx()
+        adapter = self.adapter_for(node)
+        svc = adapter.service(node, ctx)
         cpus = self.nodes[node].get('cpus')
         args = ['-d', '--name', self.relay(node), '--network', 'host', '--user', self.user, '--restart', 'no',
                 '--ulimit', 'nofile=1048576:1048576', *(['--cpuset-cpus', str(cpus)] if cpus else []),
-                *run_args(svc, self.root), svc['image']]
-        return (f'{DOCKER} rm -f {self.relay(node)} >/dev/null 2>&1; '
-                f'{DOCKER} run {" ".join(args)}')
+                *run_args(svc, self.root)]
+        cmd = f'{DOCKER} rm -f {self.relay(node)} >/dev/null 2>&1; {DOCKER} run {" ".join(args)}'
+        side = adapter.sidecar(node, ctx)
+        if side:
+            cmd += (f' && {DOCKER} rm -f {self.sidecar(node)} >/dev/null 2>&1; {DOCKER} run -d --name '
+                    f'{self.sidecar(node)} --network host --restart no {" ".join(run_args(side, self.root))}')
+        return cmd
+
+    def images(self, node):
+        """Images a relay node needs: its relay image, and its sidecar's when it has one."""
+        side = self.adapter_for(node).sidecar(node, self.ctx())
+        return [self.spec.node_image(node), *([side['image']] if side else [])]
 
     def prepare(self, node):
         """Docker on the relay host, and the relay image already there."""
@@ -182,8 +215,9 @@ class VMFabric:
                 '-o DPkg::Lock::Timeout=300 install -y -q docker.io >/dev/null; }; '
                 'command -v nft >/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 '
                 'install -y -q nftables >/dev/null', timeout=900)
-        if host.sh(f'{DOCKER} image inspect {shlex.quote(self.spec.image)} >/dev/null 2>&1', check=False).returncode:
-            raise FabricError(f'{node}: no image {self.spec.image}; moqbench fabric deploy {self.dep.name}')
+        for image in self.images(node):
+            if host.sh(f'{DOCKER} image inspect {shlex.quote(image)} >/dev/null 2>&1', check=False).returncode:
+                raise FabricError(f'{node}: no image {image}; moqbench fabric deploy {self.dep.name}')
 
     def counters(self, node):
         peers = {p: self.hosts[p]['private'] for p in self.order if p != node}
@@ -222,36 +256,38 @@ class VMFabric:
 
     def down(self):
         def relay_down(n):
-            self.hostfor(n).sh(f'{DOCKER} rm -f {self.relay(n)} >/dev/null 2>&1; '
+            self.hostfor(n).sh(f'{DOCKER} rm -f {self.relay(n)} {self.sidecar(n)} >/dev/null 2>&1; '
                                f'sudo nft delete table inet {NFT_TABLE} 2>/dev/null; true', check=False)
         self.each(self.order, relay_down)
         self.clear_impairments()
 
     def deploy(self, source=None):
-        """Copy the relay image to every relay host that lacks it, from source (an ssh target) or the
-        first relay host that has it. Returns the hosts it copied to."""
-        image = shlex.quote(self.spec.image)
-        have = self.each(self.order, lambda n: self.hostfor(n).sh(
-            f'{DOCKER} image inspect {image} --format "{{{{.Id}}}}" 2>/dev/null', check=False).stdout.strip())
-        src = Host(source, key=self.key) if source else next(
-            (self.hostfor(n) for n in self.order if have[n]), None)
-        if src is None:
-            raise FabricError(f'no relay host has {self.spec.image}: ./bin/moqx-peering-build.sh {self.dep.name}, '
-                              'or name a Docker host with --from')
-        want = src.sh(f'{DOCKER if not source else "docker"} image inspect {image} --format "{{{{.Id}}}}"').stdout.strip()
+        """Copy each relay node's images to its host when it lacks them, from source (an ssh target) or
+        the first relay host that has each. Returns (node, image) pairs copied."""
+        docker_src = 'docker' if source else DOCKER
         copied = []
-        for n in self.order:
-            if have[n] == want:
-                continue
-            self.prepare_docker(n)
-            save = subprocess.Popen(src.argv(f'{DOCKER if not source else "docker"} save {image} | gzip -1'),
-                                    stdout=subprocess.PIPE)
-            load = subprocess.run(self.hostfor(n).argv(f'gunzip | {DOCKER} load >/dev/null'), stdin=save.stdout,
-                                  capture_output=True, text=True, timeout=3600)
-            save.wait()
-            if load.returncode or save.returncode:
-                raise FabricError(f'{n}: image copy failed: {load.stderr.strip()[-500:]}')
-            copied.append(n)
+        for image in sorted({i for n in self.order for i in self.images(n)}):
+            q = shlex.quote(image)
+            needs = [n for n in self.order if image in self.images(n)]
+            have = self.each(self.order, lambda n: self.hostfor(n).sh(
+                f'{DOCKER} image inspect {q} --format "{{{{.Id}}}}" 2>/dev/null', check=False).stdout.strip())
+            src = Host(source, key=self.key) if source else next(
+                (self.hostfor(n) for n in self.order if have[n]), None)
+            if src is None:
+                raise FabricError(f'no relay host has {image}: build it on one (bin/*-build.sh), '
+                                  'or name a Docker host with --from')
+            want = src.sh(f'{docker_src} image inspect {q} --format "{{{{.Id}}}}"').stdout.strip()
+            for n in needs:
+                if have[n] == want:
+                    continue
+                self.prepare_docker(n)
+                save = subprocess.Popen(src.argv(f'{docker_src} save {q} | gzip -1'), stdout=subprocess.PIPE)
+                load = subprocess.run(self.hostfor(n).argv(f'gunzip | {DOCKER} load >/dev/null'), stdin=save.stdout,
+                                      capture_output=True, text=True, timeout=3600)
+                save.wait()
+                if load.returncode or save.returncode:
+                    raise FabricError(f'{n}: copying {image} failed: {load.stderr.strip()[-500:]}')
+                copied.append((n, image))
         return copied
 
     def prepare_docker(self, node):
@@ -262,26 +298,33 @@ class VMFabric:
         end = time.time() + limit_s
         pending = list(self.order)
         while pending:
-            pending = [n for n in pending if not self.safe(lambda n=n: self.adapter.ready(self, n))]
+            pending = [n for n in pending if not self.safe(lambda n=n: self.adapter_for(n).ready(self, n))]
             if pending and time.time() > end:
                 raise FabricError(f'relays not ready after {limit_s} s: {", ".join(pending)}\n' +
                                   '\n'.join(f'--- {n}\n{self.logs(n, tail=30)}' for n in pending))
             if pending:
                 time.sleep(1)
 
+    def observer(self, a, b):
+        for end, other in ((a, b), (b, a)):
+            if self.adapter_for(end).cheap_state:
+                return end, other
+        d = topology.dialer(a, b, self.order, self.spec.dialers)
+        return d, (b if d == a else a)
+
     def link_up(self, a, b):
-        rows = self.adapter.peer_state(self, a) or []
+        rows = self.adapter_for(a).peer_state(self, a) or []
         return any(r['peer'] == b and r['status'] == 'connected' for r in rows)
 
     def wait_links(self, limit_s, link_list=None):
         start = time.time()
-        pending = list(link_list if link_list is not None else self.links)
+        pending = [self.observer(a, b) for a, b in (link_list if link_list is not None else self.links)]
         while pending:
             pending = [p for p in pending if not self.safe(lambda p=p: self.link_up(*p))]
             if pending and time.time() - start > limit_s:
                 raise FabricError(f'links not connected after {limit_s} s: {pending}')
             if pending:
-                time.sleep(0.5)
+                time.sleep(0.5 if all(self.adapter_for(e).cheap_state for e, _ in pending) else 2)
         return time.time() - start
 
     @staticmethod
@@ -296,6 +339,14 @@ class VMFabric:
         arg = f' {shlex.quote(json.dumps(body))}' if body is not None else ''
         r = self.exec(node, f'python3 {self.bin_dir}/fabric-admin.py {method} {url}{arg}')
         return json.loads(r.stdout)
+
+    def sidecar_exec(self, node, command, timeout=60):
+        r = self.hostfor(node).sh(timed_out(f'{DOCKER} exec {self.sidecar(node)} sh -c {shlex.quote(command)}'),
+                                  check=False, timeout=timeout)
+        return parse_timed(r.stdout)
+
+    def listening(self, node, port):
+        return self.exec(node, f"ss -Hlun 'sport = :{int(port)}' | grep -q .", check=False).returncode == 0
 
     def logs(self, node, tail=None):
         t = f' --tail {int(tail)}' if tail else ''
@@ -332,14 +383,14 @@ class VMFabric:
         def start(t):
             extra = ''
             if t in self.order:
-                urls = self.adapter.poll_urls(t)
+                urls = self.adapter_for(t).poll_urls(t)
                 extra = (f'--comm moqx --nft {NFT_TABLE} --json-interval {peering_s} '
                          + ' '.join(f'--json-url {k}={u}' for k, u in urls.items() if k == 'peering'))
             self.exec(t, f'mkdir -p {out} && rm -f {out}/monitor.stop && python3 -u {self.bin_dir}/load-monitor.py '
                       f'--duration {int(seconds)} --interval {interval} --stop-file {out}/monitor.stop {extra} '
                       f'> {out}/monitor-{t}.jsonl 2> {out}/monitor-{t}.err', detach=True)
-            if state_ms and t in self.order and 'state' in self.adapter.poll_urls(t):
-                self.exec(t, f'python3 {self.bin_dir}/fabric-poll.py --url state={self.adapter.poll_urls(t)["state"]} '
+            if state_ms and t in self.order and 'state' in self.adapter_for(t).poll_urls(t):
+                self.exec(t, f'python3 {self.bin_dir}/fabric-poll.py --url state={self.adapter_for(t).poll_urls(t)["state"]} '
                           f'--interval {state_ms / 1000} --duration {state_s or seconds} '
                           f'--out {out}/poll-state-{t}.jsonl', detach=True)
         self.each(self.targets(), start)

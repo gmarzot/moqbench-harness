@@ -16,6 +16,7 @@ import uuid
 import config
 from fabric import faults, topology
 from fabric.docker import DockerFabric, FabricError
+from fabric.moqx_peering import PEERING_PORT
 
 MODES = {'stream', 'setup', 'media', 'fetch'}
 SCENARIO_KEYS = {'description', 'mode', 'publisher', 'subscribers', 'pub_ns', 'sub_start_s', 'peering_poll_s',
@@ -68,7 +69,14 @@ class Run:
         shape = test.get('topology', spec.topology)
         custom = [tuple(p) for p in test.get('links') or spec.custom]
         self.links = topology.links(shape, spec.order, spec.hub, custom)
+        spec.check_links(self.links, f'test {test["scenario"]}')
         self.fab = provider(deployment, self.links)
+        draft = test.get('draft', spec.draft)
+        for n in self.fab.order:
+            drafts = self.fab.adapter_for(n).drafts
+            if drafts and draft not in drafts:
+                raise config.ConfigError(f'test {test["scenario"]}: {n} ({self.fab.adapter_for(n).name}) takes '
+                                         f'MoQT draft {", ".join(map(str, drafts))} only, not {draft}')
         self.out = Path(out_root) / label
         self.dir = self.fab.results_dir(label)
         self.ns = f'fab-{uuid.uuid4().hex[:6]}'
@@ -105,6 +113,18 @@ class Run:
         return [*self.tool('aiomoqt.tools.sub_bench'), self.fab.client_url(node), '-k', '--draft', self.draft,
                 '-N', self.ns, '-T', self.track, '-t', int(seconds), '-i', 1, '--log', 'data=trace']
 
+    def peer_argv(self, name, seconds):
+        """A peer node's command from its template: {peers} dials each relay it names."""
+        fab = self.fab
+        peers = ' '.join(f'--peer {fab.access(n)}:{PEERING_PORT}' for n in fab.spec.peer_dials(name))
+        text = fab.spec.peer_template(name).format(peers=peers, node=name, seconds=int(seconds),
+                                                   output=f'{self.dir}/peer-{name}.json')
+        return shlex.split(text)
+
+    def start_peers(self, seconds):
+        for name in getattr(self.fab, 'peers', []):
+            self.launch(f'peer-{name}', self.peer_argv(name, seconds), where=self.fab.peer_target(name))
+
     def populations(self, seconds):
         """load_sim subscribers on each population's edge, spread over the load targets."""
         targets = self.fab.load_targets()
@@ -139,6 +159,7 @@ class Run:
                            netdev_s=self.scen.get('netdev_s', 0.25))
         start = time.monotonic()
         self.launch('pub', self.pub_argv(secs + 5, self.scen.get('pub_ns', False)))
+        self.start_peers(secs)
         time.sleep(sub_start)
         subs = subscriber_nodes(self.scen, self.fab.order)
         for n in subs:
@@ -164,6 +185,7 @@ class Run:
                            state_s=settle + 2)
         time.sleep(0.5)
         self.launch('pub', self.pub_argv(total + 5, self.scen.get('pub_ns', True)))
+        self.start_peers(total)
         time.sleep(settle)
         for i, n in enumerate(subs):
             self.launch(f'cold-{n}', self.sub_argv(n, total - settle - gap * i))
@@ -217,12 +239,18 @@ class Run:
         meta = dict(label=self.label, deployment=self.dep.name, provider=fab.kind, test=self.test,
                     scenario=self.scen, links=self.links, order=fab.order, namespace=self.ns, track=self.track,
                     draft=self.draft, options=self.opts, adapter=fab.adapter.name,
+                    adapters={n: fab.adapter_for(n).name for n in fab.order},
+                    dialers={'-'.join(p): topology.dialer(*p, fab.order, fab.spec.dialers) for p in self.links},
+                    metrics={f'{a}>{b}': m for (a, b), m in fab.spec.metrics.items()},
+                    peers=list(getattr(fab, 'peers', [])),
+                    namespace_nodes=[n for n in fab.order if 'state' in fab.adapter_for(n).poll_urls(n)],
                     addressing={'access': fab.addr['access'],
                                 'links': [{'pair': list(k), **v} for k, v in fab.addr['links'].items()]})
         took = fab.up()
         fab.ids()
         fab.reset(self.label)
-        meta.update(links_up_s=took, started=fab.now(), relay_image=fab.image_info(fab.spec.image),
+        meta.update(links_up_s=took, started=fab.now(), relay_image=fab.image_info(fab.spec.node_image(fab.order[0])),
+                    images={n: fab.image_info(fab.spec.node_image(n)) for n in fab.order},
                     lab_image=fab.image_info(fab.spec.lab_image) if fab.kind == 'docker' else None)
         r = fab.exec(fab.client(), f'{fab.python} -m aiomoqt.versions 2>&1 | head -5', check=False)
         meta['client_versions'] = r.stdout.strip().splitlines()
@@ -243,7 +271,8 @@ class Run:
         fab = self.fab
         for n in fab.order:
             final = {}
-            for name, call in (('peering', fab.adapter.peer_state), ('state', fab.adapter.state)):
+            adapter = fab.adapter_for(n)
+            for name, call in (('peering', adapter.peer_state), ('state', adapter.state)):
                 try:
                     final[name] = call(fab, n)
                 except (FabricError, ValueError) as exc:
