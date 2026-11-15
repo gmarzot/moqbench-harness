@@ -194,7 +194,7 @@ class DockerFabric:
             svc = {**common, 'container_name': self.client(c), 'hostname': c,
                    'networks': {'access': {'ipv4_address': a['access']['hosts'][c]}}}
             if c in self.peers:
-                svc['image'] = self.spec.peer_image
+                svc['image'] = self.spec.peer_node_image(c)
             if self.nodes[c].get('cpus'):
                 svc['cpuset'] = str(self.nodes[c]['cpus'])
             services[c] = svc
@@ -241,8 +241,9 @@ class DockerFabric:
             self.host.sh(f'cd {shlex.quote(self.stack)} && docker build -q -t {self.spec.lab_image} '
                          f'--build-arg AIOMOQT={self.spec.aiomoqt} --build-arg AIOPQUIC={self.spec.aiopquic} '
                          f'-f build/{LAB_DOCKERFILE.name} build', timeout=1800)
-        if self.peers and self.host.sh(f'docker image inspect {self.spec.peer_image} >/dev/null 2>&1',
-                                       check=False).returncode:
+        if (any(not self.nodes[n].get('image') for n in self.peers)
+                and self.host.sh(f'docker image inspect {self.spec.peer_image} >/dev/null 2>&1',
+                                 check=False).returncode):
             self.host.sh(f'cd {shlex.quote(self.stack)} && docker build -q -t {self.spec.peer_image} '
                          f'--build-arg BASE={self.spec.lab_image} --build-arg SPEC={shlex.quote(self.spec.peer_pip)} '
                          f'--label org.moqbench.peer_pip={shlex.quote(self.spec.peer_pip)} '

@@ -1,4 +1,4 @@
-description = "Example: a mixed fabric (moqx, LAPS, moqx in a triangle, with an aiomoqt peer node) at MoQT draft 18. Steady delivery, namespace propagation and subscribe setup, then path changes through each relay's control API."
+description = "Example: a mixed fabric (moqx, LAPS, moqx in a triangle, with aiomoqt peer nodes) at MoQT draft 18. Steady delivery, namespace propagation and subscribe setup, path changes through each relay's control API, and datagrams from and through the LAPS relay."
 requires    = { relay = 3, subscriber = 1 }
 
 [[test]]
@@ -19,5 +19,26 @@ draft    = 18
 type     = "fabric"
 scenario = "metric-flip"
 topology = "full"
-seconds  = 75
+seconds  = 105
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "datagram-transit-origin"
+topology = "full"
+seconds  = 30
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "datagram-through-transit"
+topology = "full"
+seconds  = 30
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "datagram-through-transit-control"
+topology = "full"
+seconds  = 30
 draft    = 18

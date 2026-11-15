@@ -1,6 +1,6 @@
 # Example: a mixed moq-peering triangle on the local Docker. moqx-a and moqx-b
-# run moqx, the transit relay runs LAPS, and an aiomoqt peer node joins the
-# fabric as a leaf. moqx-a's direct session to moqx-b costs 300, so its traffic
+# run moqx, the transit relay runs LAPS, and two aiomoqt peer nodes join the
+# fabric as leaves: one observes, one receives the run's track. moqx-a's direct session to moqx-b costs 300, so its traffic
 # goes through LAPS (100 + 100) until a peer.metric event makes the direct link
 # cheaper. Clients use MoQT draft 18, the only draft LAPS clients speak.
 provider = "docker"
@@ -38,6 +38,13 @@ cpus  = "6-7"
 name  = "probe"
 roles = ["peer"]
 dials = ["moqx-a", "laps"]
+
+# Receives the run's track over peering from moqx-b, as a leaf.
+[[nodes]]
+name    = "bench"
+roles   = ["peer"]
+dials   = ["moqx-b"]
+command = "moq-peer-bench {peers} --node-id {node} --role sub -N {namespace} -T {track} -t {seconds} -o {output}"
 
 [[nodes]]
 name  = "client"

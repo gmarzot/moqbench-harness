@@ -4,6 +4,7 @@ A deployment says what hardware exists and what each node does. A suite says
 which tests to run, with no hardware in it. A plan pairs them with the relays,
 builds and tuning of one series, and is what `moqbench run` executes.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -119,7 +120,7 @@ class Fabric:
     # Adapters whose relays take a session metric at startup.
     START_METRICS = {'moqx-peering'}
     PEER_COMMAND = 'moq-peer-probe {peers} -p 0 --node-id {node} -t {seconds} -i 5 -o {output}'
-    PEER_FIELDS = {'peers', 'node', 'seconds', 'output'}
+    PEER_FIELDS = {'peers', 'node', 'seconds', 'output', 'namespace', 'track'}
 
     def __init__(self, data, relays, where, nodes=None):
         from fabric import topology
@@ -147,9 +148,10 @@ class Fabric:
         self.lab_image = data.get('lab_image') or f'moqbench-lab:{self.aiomoqt}-{self.aiopquic}'
         self.stack_dir = data.get('stack_dir', 'moqbench-fabric')
         self.client_python = data.get('client_python', 'Projects/aiomoqt/.venv/bin/python')
-        self.peer_pip = data.get('peer_pip', 'git+https://github.com/gmarzot/aiomoqt@gmarzot-peering-probe')
+        self.peer_pip = data.get('peer_pip', 'git+https://github.com/gmarzot/aiomoqt@gmarzot-peering-data')
         self.peer_command = data.get('peer_command', self.PEER_COMMAND)
-        self.peer_image = data.get('peer_image') or f'moqbench-peer:{self.aiomoqt}-{self.aiopquic}'
+        spec_id = hashlib.sha256(self.peer_pip.encode()).hexdigest()[:8]
+        self.peer_image = data.get('peer_image') or f'moqbench-peer:{self.aiomoqt}-{self.aiopquic}-{spec_id}'
         for n in self.order:
             adapter = self.node_adapter(n)
             if adapter not in self.ADAPTERS:
@@ -216,6 +218,10 @@ class Fabric:
     def peer_template(self, name):
         return self.nodes[name].get('command', self.peer_command)
 
+    def peer_node_image(self, name):
+        """A peer node's own image, else the one built from peer_pip."""
+        return self.nodes[name].get('image') or self.peer_image
+
     def check_links(self, link_list, where):
         """Every dial and metrics entry names a link of this topology, and a metric sits on its dialer."""
         from fabric import topology
@@ -240,7 +246,7 @@ class Fabric:
 class Deployment:
     NODE_KEYS = {'name', 'instance', 'roles', 'vcpus', 'ocpus', 'memory_gb', 'address', 'cpus', 'fabric_role',
                  'adapter', 'image', 'admin_image', 'dials', 'command'}
-    RELAY_ONLY = {'adapter', 'image', 'admin_image'}
+    RELAY_ONLY = {'adapter', 'admin_image'}
     PEER_ONLY = {'dials', 'command'}
     KEYS = {'provider', 'region', 'zone', 'arch', 'tag', 'network_type', 'nodes', 'host', 'fabric'}
 
@@ -277,6 +283,8 @@ class Deployment:
             if key and not node.get(key):
                 raise ConfigError(f'{where}: node {node["name"]} needs {key}')
             roles = set(node.get('roles') or [])
+            if 'image' in node and not roles & {'relay', 'peer'}:
+                raise ConfigError(f'{where}: node {node["name"]}: image applies only to relay and peer nodes')
             for keys, role in ((self.RELAY_ONLY, 'relay'), (self.PEER_ONLY, 'peer')):
                 if keys & set(node) and role not in roles:
                     raise ConfigError(f'{where}: node {node["name"]}: {", ".join(sorted(keys & set(node)))} '

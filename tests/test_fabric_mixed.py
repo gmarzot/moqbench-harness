@@ -41,7 +41,8 @@ class Config(unittest.TestCase):
         cases = [
             (dict(node_list=nodes()[:1] + [dict(name='laps', roles=['relay'], adapter='laps')] + nodes()[2:]), 'needs an image'),
             (dict(laps={'adapter': 'nats'}), 'adapter must be one of'),
-            (dict(extra=[dict(name='load', roles=['subscriber'], image='x')]), 'apply only to relay nodes'),
+            (dict(extra=[dict(name='load', roles=['subscriber'], admin_image='x')]), 'apply only to relay nodes'),
+            (dict(extra=[dict(name='load', roles=['subscriber'], image='x')]), 'only to relay and peer nodes'),
             (dict(extra=[dict(name='load', roles=['subscriber'], dials=['moqx-a'])]), 'apply only to peer nodes'),
             (dict(fabric={'dial': [['laps', 'laps']]}), 'dial entries'),
             (dict(fabric={'metrics': [['laps', 'moqx-b', 200]]}), 'takes no session metric'),
@@ -173,10 +174,63 @@ class PeerReport(unittest.TestCase):
 class Examples(unittest.TestCase):
     def test_mixed_example_and_suite(self):
         dep = config.load_deployment('docker-mixed-fabric-example')
-        self.assertEqual(dep.fabric.peers, ['probe'])
+        self.assertEqual(dep.fabric.peers, ['probe', 'bench'])
         self.assertEqual(dep.fabric.metrics, {('moqx-a', 'moqx-b'): 300})
         suite = config.load_suite('example-mixed-fabric')
-        self.assertEqual([t['scenario'] for t in suite.fabric_tests], ['steady', 'propagation', 'metric-flip'])
+        self.assertEqual([t['scenario'] for t in suite.fabric_tests],
+                         ['steady', 'propagation', 'metric-flip', 'datagram-transit-origin', 'datagram-through-transit',
+                          'datagram-through-transit-control'])
+
+
+class FollowUps(unittest.TestCase):
+    def test_bench_template_and_own_image(self):
+        dep = deployment(peer={'dials': ['egress'], 'image': 'peer:x',
+                               'command': 'moq-peer-bench {peers} --role sub -N {namespace} -T {track} -o {output}'})
+        run = Run(dep, dict(type='fabric', scenario='steady', topology='full', seconds=30), 't', tempfile.mkdtemp())
+        argv = run.peer_argv('probe', 30)
+        self.assertEqual(argv[:3], ['moq-peer-bench', '--peer', '10.77.0.103:33434'])
+        self.assertEqual(argv[argv.index('-N') + 1], run.ns)
+        self.assertEqual(argv[argv.index('-T') + 1], 'probe')
+        self.assertEqual(DockerFabric(dep).compose(1000, 1000)['services']['probe']['image'], 'peer:x')
+
+    def test_datagram_publisher(self):
+        run = Run(deployment(), dict(type='fabric', scenario='datagram-transit-origin', topology='full', seconds=30), 't',
+                  tempfile.mkdtemp())
+        argv = run.pub_argv(30)
+        self.assertIn('-D', argv)
+        self.assertIn('moqt://10.77.0.102:33435', argv)
+
+    def test_report_parses_datagrams_bench_and_expect_remote(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            (run / 'pub.log').write_text('1.0 x TRACE: MOQT send: object 0.0 alias=0 1000 bytes (datagram)\n'
+                                         '1.1 x TRACE: MOQT send: object 0.1 alias=0 1000 bytes (datagram)\n')
+            self.assertEqual(set(report.sends(run / 'pub.log')), {(0, 0), (0, 1)})
+            (run / 'sub-moqx-b.log').write_text('1.2 x TRACE: MOQT event: d18 ObjectDatagram: 0.1 size: 1013 bytes status: 0\n'
+                                                '1.3 x TRACE: MOQT event: d18 ObjectDatagram: 0.1 size: 1013 bytes status: 0\n')
+            self.assertEqual(report.subscriber(run / 'sub-moqx-b.log')['arrivals'], [(1.2, 0, 1), (1.3, 0, 1)])
+            self.assertEqual(report.phase(report.sends(run / 'pub.log'), 1.05, 30), 'object 1 of 30 (group 0)')
+            bench = {'role': 'sub', 'sub': {'node': {'id': 'x'}, 'nodes': [{'contact': 'moqx-b', 'path': []}],
+                                            'sessions': [], 'announces': [], 'subscribes': [],
+                                            'tracks': [{'ns': ['fab'], 'name': 'probe', 'objects': 90, 'lost': 0,
+                                                        'dups': 0, 'payload_bad': 0,
+                                                        'latency_ms': {'n': 90, 'p50': 0.2, 'p90': 0.3, 'p99': 0.4}}]}}
+            (run / 'peer-bench.json').write_text(json.dumps(bench))
+            pn = report.peer_node(run / 'peer-bench.json', ['moqx-b'])
+            self.assertEqual(pn['ends']['sub']['tracks'][0]['latency_ms']['p90'], 0.3)
+            out = {'subscribers': {'cold-moqx-a': dict(node='moqx-a', unique=5, dups=0, missing=0),
+                                   'cold-moqx-b': dict(node='moqx-b', unique=0, dups=0, missing=None)},
+                   'peer_nodes': {'peer-bench': pn}}
+            meta = {'order': ['moqx-a', 'laps', 'moqx-b'], 'options': {}, 'adapters': {'moqx-a': 'moqx-peering'},
+                    'scenario': {'publisher': 'ingest', 'expect_remote': {'publisher_adapter': 'moqx-peering',
+                                                                          'expect': 'fail', 'defect': 'N1'}}}
+            got = {v['check']: v['status'] for v in report.verdicts(out, meta)}
+            self.assertEqual(got['cold-moqx-a delivered every object once'], 'PASS')
+            self.assertEqual(got['cold-moqx-b delivered every object once'], 'XFAIL')
+            self.assertEqual(got['peer-bench sub: fab/probe received every object once over peering'], 'PASS')
+            meta['adapters']['moqx-a'] = 'laps'
+            got = {v['check']: v['status'] for v in report.verdicts(out, meta)}
+            self.assertEqual(got['cold-moqx-b delivered every object once'], 'FAIL')
 
 
 if __name__ == '__main__':

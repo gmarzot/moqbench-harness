@@ -15,13 +15,16 @@ import uuid
 
 import config
 from fabric import faults, topology
+from fabric.adapter import Unsupported
 from fabric.docker import DockerFabric, FabricError
 from fabric.moqx_peering import PEERING_PORT
 
 MODES = {'stream', 'setup', 'media', 'fetch'}
 SCENARIO_KEYS = {'description', 'mode', 'publisher', 'subscribers', 'pub_ns', 'sub_start_s', 'peering_poll_s',
                  'state_poll_ms', 'settle_s', 'gap_s', 'warm_s', 'cold_order', 'namespace_check', 'netdev_s',
-                 'event', 'population', 'audio_frames_per_group', 'fetch_history', 'expect_across'}
+                 'event', 'population', 'audio_frames_per_group', 'fetch_history', 'expect_across', 'datagram',
+                 'expect_remote'}
+EXPECT_REMOTE_KEYS = {'publisher_adapter', 'expect', 'defect'}
 POPULATION_KEYS = {'edge', 'subs', 'subs_per_proc'}
 DEFAULTS = dict(object_size=1000, rate=30, group_size=30)
 
@@ -37,6 +40,11 @@ def load_scenario(name):
         raise config.ConfigError(f'{where}: cold_order must be nearest or farthest')
     if data.get('expect_across', 'pass') not in ('pass', 'fail'):
         raise config.ConfigError(f'{where}: expect_across must be pass or fail')
+    remote = data.get('expect_remote')
+    if remote is not None:
+        config.only_keys(f'{where}: expect_remote', remote, EXPECT_REMOTE_KEYS)
+        if remote.get('expect') != 'fail' or not remote.get('defect'):
+            raise config.ConfigError(f'{where}: expect_remote needs expect = "fail" and a defect description')
     for i, pop in enumerate(data.get('population', []), 1):
         config.only_keys(f'{where}: population {i}', pop, POPULATION_KEYS)
         config.positive_int(f'{where}: population {i}', 'subs', pop.get('subs'))
@@ -107,7 +115,7 @@ class Run:
         argv = [*self.tool('aiomoqt.tools.pub_bench'), self.fab.client_url(self.node('publisher')), '-k',
                 '--draft', self.draft, '-N', self.ns, '-T', self.track, '-s', self.opts['object_size'],
                 '-r', self.opts['rate'], '-g', self.opts['group_size'], '-t', int(seconds), '--log', 'data=trace']
-        return argv + (['--pub-ns'] if pub_ns else []) + list(extra)
+        return argv + (['--pub-ns'] if pub_ns else []) + (['-D'] if self.scen.get('datagram') else []) + list(extra)
 
     def sub_argv(self, node, seconds):
         return [*self.tool('aiomoqt.tools.sub_bench'), self.fab.client_url(node), '-k', '--draft', self.draft,
@@ -118,12 +126,28 @@ class Run:
         fab = self.fab
         peers = ' '.join(f'--peer {fab.access(n)}:{PEERING_PORT}' for n in fab.spec.peer_dials(name))
         text = fab.spec.peer_template(name).format(peers=peers, node=name, seconds=int(seconds),
-                                                   output=f'{self.dir}/peer-{name}.json')
+                                                   output=f'{self.dir}/peer-{name}.json',
+                                                   namespace=self.ns, track=self.track)
         return shlex.split(text)
 
     def start_peers(self, seconds):
         for name in getattr(self.fab, 'peers', []):
             self.launch(f'peer-{name}', self.peer_argv(name, seconds), where=self.fab.peer_target(name))
+
+    def sample_namespaces(self):
+        """Namespaces once from each relay whose state is not polled, as ns-sample-<node>.json."""
+        fab = self.fab
+        for n in fab.order:
+            adapter = fab.adapter_for(n)
+            if 'state' in adapter.poll_urls(n):
+                continue
+            try:
+                t = fab.now()
+                found = adapter.namespaces(fab, n)
+            except (FabricError, ValueError, Unsupported):
+                continue
+            if found is not None:
+                (self.out / f'ns-sample-{n}.json').write_text(json.dumps({'t': t, 'namespaces': sorted(found)}) + '\n')
 
     def populations(self, seconds):
         """load_sim subscribers on each population's edge, spread over the load targets."""
@@ -187,6 +211,8 @@ class Run:
         self.launch('pub', self.pub_argv(total + 5, self.scen.get('pub_ns', True)))
         self.start_peers(total)
         time.sleep(settle)
+        if self.scen.get('namespace_check'):
+            self.sample_namespaces()
         for i, n in enumerate(subs):
             self.launch(f'cold-{n}', self.sub_argv(n, total - settle - gap * i))
             time.sleep(gap)

@@ -13,8 +13,10 @@ import statistics
 from fabric import topology
 from fabric.moqx_peering import namespaces_in
 
-SEND = re.compile(r'TRACE: MOQT send: object (\d+)\.(\d+) alias=\d+ (\d+) bytes(?! \(datagram\))')
+SEND = re.compile(r'TRACE: MOQT send: object (\d+)\.(\d+) alias=\d+ (\d+) bytes')
 RECV = re.compile(r'TRACE: MOQT stream\(\d+\): object (\d+)\.(\d+) alias=\d+ \d+ bytes status=(\S+)')
+DGRAM = re.compile(r'TRACE: MOQT event: (?:d\d+ )?ObjectDatagram: (\d+)\.(\d+) size: \d+ bytes(?: status: (\S+))?')
+NORMAL = {None, '0', 'None', 'NORMAL', 'ObjectStatus.NORMAL'}
 SUMMARY = {
     'objects': re.compile(r'^\s+Objects:\s+([\d,]+)'),
     'lat_p50': re.compile(r'p50=([\d.]+)'), 'lat_p95': re.compile(r'p95=([\d.]+)'),
@@ -64,9 +66,9 @@ def subscriber(path):
     """Arrivals, markers and the tool's own summary from one sub_bench log."""
     arrivals, markers, summary, intervals = [], {}, {}, []
     for t, text in lines(path):
-        m = RECV.search(text)
+        m = RECV.search(text) or DGRAM.search(text)
         if m:
-            if m[3] == '0':
+            if m[3] in NORMAL:
                 arrivals.append((t, int(m[1]), int(m[2])))
             continue
         if 'Connecting...' in text:
@@ -108,6 +110,15 @@ def delivery(sub, sent, t_from=None, t_to=None):
     out.update(lat_p50=r3(pct(lat, 50)), lat_p90=r3(pct(lat, 90)), lat_p99=r3(pct(lat, 99)),
                lat_mean=r3(statistics.fmean(lat)) if lat else None)
     return out
+
+
+def phase(sent, t, group_size):
+    """Where in its group the publisher was at time t: 'object k of n (group g)', by the last object sent."""
+    before = [(ts, k) for k, ts in sent.items() if ts <= t]
+    if not before:
+        return None
+    _, (g, o) = max(before)
+    return f'object {o + 1} of {group_size} (group {g})'
 
 
 def gaps(sub, t0, t1):
@@ -309,11 +320,37 @@ def fetched(run_dir, name):
 
 
 def peer_node(path, relays):
-    """What a peer node learned: nodes, hash checks, and whether it stayed a leaf."""
+    """What a peer node learned: nodes, hash checks, and whether it stayed a leaf. A moq-peer-bench
+    report ({"role", "pub", "sub"}) gives that per end, plus what it published and received."""
     try:
         doc = json.loads(Path(path).read_text())
     except (OSError, ValueError) as exc:
         return {'error': str(exc)}
+    if 'role' in doc:
+        out = {'role': doc['role'], 'ends': {}}
+        for end in ('pub', 'sub'):
+            if isinstance(doc.get(end), dict):
+                part = fabric_view(doc[end], relays)
+                part['published'] = [dict(track='/'.join([*t.get('ns', []), t.get('name', '')]), objects=t.get('objects'))
+                                     for t in doc[end].get('published', [])]
+                part['tracks'] = [received(t) for t in doc[end].get('tracks', [])]
+                out['ends'][end] = part
+        return out
+    return fabric_view(doc, relays)
+
+
+def received(t):
+    """One track a moq-peer-bench subscriber received."""
+    lat = t.get('latency_ms') or {}
+    head = t.get('header_to_first_object_ms') or {}
+    return dict(track='/'.join([*t.get('ns', []), t.get('name', '')]), objects=t.get('objects'), lost=t.get('lost'),
+                dups=t.get('dups'), payload_bad=t.get('payload_bad'), datagrams=t.get('datagrams'),
+                latency_ms={k: lat.get(k) for k in ('n', 'p50', 'p90', 'p99')},
+                header_to_first_object_ms={k: head.get(k) for k in ('p50', 'p99')})
+
+
+def fabric_view(doc, relays):
+    """Nodes learned, hash checks and the leaf rule from one peering node's report."""
     own = (doc.get('node') or {}).get('id')
     learned = sorted({n.get('contact') or n.get('node') for n in doc.get('nodes', [])})
     sessions = doc.get('sessions', [])
@@ -392,7 +429,8 @@ def analyze(run_dir):
                 after = delivery(s, sent, min(t0 + 2, win_end), win_end)
                 row['events'].append(dict(
                     verb=ev['verb'], on=ev.get('on'), peer=ev.get('peer'), metric=ev.get('metric'),
-                    ok=ev.get('ok'), status=ev.get('status'), expect=ev.get('expect'),
+                    ok=ev.get('ok'), status=ev.get('status'), expect=ev.get('expect'), label=ev.get('label'),
+                    phase=phase(sent, t0, (meta.get('options') or {}).get('group_size') or 30),
                     max_gap_ms=None if recovery is None else r3(max(gap_ms, out_ms)), recovery_ms=recovery,
                     lost=len(lost), lost_ids=[f'{g}.{o}' for g, o in lost[:20]], dups=inwin['dups'],
                     lat_p50_before=before['lat_p50'], lat_p50_after=after['lat_p50']))
@@ -402,7 +440,9 @@ def analyze(run_dir):
         evrows = []
         for ev in events:
             t0 = ev.get('t0')
-            row = {k: ev.get(k) for k in ('verb', 'on', 'peer', 'metric', 'ok', 'status', 'expect', 'skipped')}
+            row = {k: ev.get(k) for k in ('verb', 'on', 'peer', 'metric', 'ok', 'status', 'expect', 'skipped', 'label')}
+            if t0:
+                row['phase'] = phase(sent, t0, (meta.get('options') or {}).get('group_size') or 30)
             if t0:
                 row['action_ms'] = r3((ev['t1'] - t0) * 1000)
                 if rates:
@@ -435,10 +475,18 @@ def analyze(run_dir):
                 if any(ns == meta['namespace'] or ns.startswith(meta['namespace'] + '/') for ns in found):
                     prop[n] = ts
                     break
-    if prop:
+    sampled = {}
+    for f in sorted(run_dir.glob('ns-sample-*.json')):
+        doc = json.loads(f.read_text())
+        found = any(ns == meta['namespace'] or ns.startswith(meta['namespace'] + '/') for ns in doc['namespaces'])
+        sampled[f.stem[len('ns-sample-'):]] = (doc['t'], found)
+    if prop or sampled:
         base = prop.get(ingest)
         out['namespace_seen'] = {n: r3((t - base) * 1000) if base else None for n, t in prop.items()}
-        out['namespace_missing'] = [n for n in meta.get('namespace_nodes', order) if n not in prop]
+        out['namespace_sampled'] = {n: {'seen': found, 'at_ms': r3((t - base) * 1000) if base else None}
+                                    for n, (t, found) in sampled.items()}
+        out['namespace_missing'] = ([n for n in meta.get('namespace_nodes', order) if n not in prop]
+                                    + [n for n, (_, found) in sampled.items() if not found])
     slo = meta['test'].get('slo_ms', 500)
     pops = {}
     for f in sorted(run_dir.glob('pop-*.rc')) or sorted(run_dir.glob('pop-*.csv')):
@@ -473,11 +521,17 @@ def verdicts(out, meta):
     order = meta['order']
     ingest = topology.resolve(scen.get('publisher', 'ingest'), order)
     res = []
+    remote = scen.get('expect_remote')
+    if remote and (meta.get('adapters') or {}).get(ingest, meta.get('adapter')) != remote.get('publisher_adapter'):
+        remote = None
     for name, s in out['subscribers'].items():
         if not s.get('events'):
             ok = s['unique'] > 0 and s['dups'] == 0 and (s['missing'] or 0) == 0
-            res.append(dict(check=f'{name} delivered every object once', status='PASS' if ok else 'FAIL',
-                            objects=s['unique'], missing=s['missing'], dups=s['dups']))
+            row = dict(check=f'{name} delivered every object once', status='PASS' if ok else 'FAIL',
+                       objects=s['unique'], missing=s['missing'], dups=s['dups'])
+            if remote and s['node'] != ingest:
+                row.update(status=expect(ok, 'fail'), defect=remote['defect'])
+            res.append(row)
         for ev in s.get('events', []):
             exp = ev.get('expect')
             if exp == 'hitless':
@@ -486,7 +540,8 @@ def verdicts(out, meta):
                 ok = (ev['lost'] or 0) <= group and ev['dups'] == 0
             else:
                 continue
-            res.append(dict(check=f'{name} {ev["verb"]} {ev["on"]}-{ev["peer"]}: {exp}', status='PASS' if ok else 'FAIL',
+            where = f'{ev["on"]}-{ev["peer"]}' + (f' ({ev["label"]})' if ev.get('label') else '')
+            res.append(dict(check=f'{name} {ev["verb"]} {where}: {exp}', status='PASS' if ok else 'FAIL',
                             lost=ev['lost'], dups=ev['dups'], max_gap_ms=ev['max_gap_ms']))
     for name, pop in (out.get('populations') or {}).items():
         res.append(dict(check=f'{name}: {pop["target"]} subscribers held the gate', status=expect(pop['ok'], None),
@@ -509,10 +564,17 @@ def verdicts(out, meta):
         res.append(dict(check=f'{name}: joining FETCH {"across peering" if across else "on the publisher relay"}',
                         status=expect(f['outcome'] == 'ok', exp), outcome=f['outcome'], response=f['response']))
     for name, pn in (out.get('peer_nodes') or {}).items():
-        ok = ('error' not in pn and not pn['missing'] and pn['leaf']['held']
-              and all(h[0] == h[1] for h in (pn['announces_hash_ok'], pn['subscribes_hash_ok'])))
+        ends = pn.get('ends', {name: pn}) if 'error' not in pn else {}
+        ok = 'error' not in pn and bool(ends) and all(
+            not e['missing'] and e['leaf']['held']
+            and all(h[0] == h[1] for h in (e['announces_hash_ok'], e['subscribes_hash_ok'])) for e in ends.values())
         res.append(dict(check=f'{name}: learned every relay, every hash checked, stayed a leaf',
-                        status=expect(ok, None), missing=pn.get('missing'), error=pn.get('error')))
+                        status=expect(ok, None), error=pn.get('error')))
+        for end, e in ends.items():
+            for t in e.get('tracks', []):
+                good = (t['objects'] or 0) > 0 and not t['lost'] and not t['dups'] and not t['payload_bad']
+                res.append(dict(check=f'{name} {end}: {t["track"]} received every object once over peering',
+                                status=expect(good, None), objects=t['objects'], lost=t['lost'], dups=t['dups']))
     if 'namespace_missing' in out:
         res.append(dict(check='namespace reached every relay',
                         status='FAIL' if out['namespace_missing'] else 'PASS', missing=out['namespace_missing']))
@@ -537,11 +599,15 @@ def text(summary):
         for ev in r.get('events', []):
             lost = f' {ev["lost_ids"]}' if ev.get('lost_ids') else ''
             where = ev['on'] if ev.get('peer') is None else f'{ev["on"]}-{ev["peer"]}'
+            if ev.get('label'):
+                lines_.append(f'      [{ev["label"]}; at {ev.get("phase")}]')
             lines_.append(f'      {ev["verb"]:<12}{where}: gap {ev["max_gap_ms"]} ms, lost {ev["lost"]}{lost}, '
                           f'dups {ev["dups"]}, recovery {ev["recovery_ms"]} ms, p50 {ev["lat_p50_before"]} -> '
                           f'{ev["lat_p50_after"]} ms')
     for ev in s.get('events', []):
         where = ev['on'] if ev.get('peer') is None else f'{ev["on"]}-{ev["peer"]}'
+        if ev.get('label'):
+            where += f' [{ev["label"]}; at {ev.get("phase")}]'
         lines_.append(f'  event {ev["verb"]} {where} metric={ev.get("metric")} ok={ev["ok"]} '
                       f'status={ev["status"]} took {ev.get("action_ms")} ms; paths {ev.get("path_before")} -> '
                       f'{ev.get("path_after")}')
@@ -560,16 +626,26 @@ def text(summary):
         if 'error' in pn:
             lines_.append(f'  {name}: no report ({pn["error"]})')
             continue
-        lines_.append(f'  {name}: learned {pn["learned"]}, announces hash_ok {pn["announces_hash_ok"][0]}/'
-                      f'{pn["announces_hash_ok"][1]}, subscribes {pn["subscribes_hash_ok"][0]}/'
-                      f'{pn["subscribes_hash_ok"][1]}, NODE_INFO sent {pn["leaf"]["node_info_sent"]}, '
-                      f'paths through it {pn["leaf"]["paths_through_us"]}, sessions up {pn["sessions_up"]}')
+        for end, e in pn.get('ends', {'': pn}).items():
+            label = f'{name} {end}'.strip()
+            lines_.append(f'  {label}: learned {e["learned"]}, announces hash_ok {e["announces_hash_ok"][0]}/'
+                          f'{e["announces_hash_ok"][1]}, subscribes {e["subscribes_hash_ok"][0]}/'
+                          f'{e["subscribes_hash_ok"][1]}, NODE_INFO sent {e["leaf"]["node_info_sent"]}, '
+                          f'paths through it {e["leaf"]["paths_through_us"]}, sessions up {e["sessions_up"]}')
+            for t in e.get('tracks', []):
+                lat = t['latency_ms']
+                lines_.append(f'    {t["track"]}: {t["objects"]} objects, lost {t["lost"]}, dups {t["dups"]}, '
+                              f'payload_bad {t["payload_bad"]}, latency p50/p90/p99 {lat["p50"]}/{lat["p90"]}/'
+                              f'{lat["p99"]} ms, header to first object p50 {t["header_to_first_object_ms"]["p50"]} ms')
+            for t in e.get('published', []):
+                lines_.append(f'    published {t["track"]}: {t["objects"]} objects')
     if s.get('clock'):
         lines_.append(f'  clock budget {s["clock"]["budget_us"]} us: {s["clock"]["hosts"]}')
     if 'namespace_seen' in s:
-        lines_.append(f'  namespace seen (ms after ingest): {s["namespace_seen"]}; missing {s["namespace_missing"]}')
+        lines_.append(f'  namespace seen (ms after ingest): {s["namespace_seen"]}; sampled once: '
+                      f'{s.get("namespace_sampled")}; missing {s["namespace_missing"]}')
     for v in s['verdicts']:
-        lines_.append(f'  {v["status"]:<5}{v["check"]}')
+        lines_.append(f'  {v["status"]:<6}{v["check"]}' + (f' (known: {v["defect"]})' if v.get('defect') else ''))
     return '\n'.join(lines_)
 
 
