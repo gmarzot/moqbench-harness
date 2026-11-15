@@ -73,7 +73,8 @@ class Provider(unittest.TestCase):
         for part in ('--network host', '--user 1000:1000', 'nofile=1048576:1048576', 'moqx-peering:latest',
                      '-v "$HOME/moqbench-fabric/fab/"nodes/r2/config.yaml:/etc/moqx/config.yaml:ro'):
             self.assertIn(part, cmd)
-        self.assertEqual(run_args({'volumes': ['/a:/b'], 'environment': {'X': '1'}}, 'root'), ['-v', '/a:/b', '-e', 'X=1'])
+        self.assertEqual(run_args({'image': 'img', 'volumes': ['/a:/b'], 'environment': {'X': '1'}, 'command': ['a b']},
+                                  'root'), ['-v', '/a:/b', '-e', 'X=1', 'img', "'a b'"])
 
     def test_nft_counts_each_peer_both_ways(self):
         text = nft_rules({'r2': '10.42.1.12', 'r3': '10.42.1.13'})

@@ -12,7 +12,7 @@ adapter   = "moqx-peering"
 image     = "moqx-peering:latest"   # bin/moqx-peering-build.sh
 topology  = "line"
 order     = ["r1", "r2", "r3"]
-draft     = 16
+draft     = 18
 
 [[nodes]]
 name  = "r1"

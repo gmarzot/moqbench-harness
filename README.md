@@ -96,6 +96,7 @@ and record the ceiling beside every number.
 | `bin/relay-capacity.sh` | Health-gated capacity search (moqperf). |
 | `bin/relay-load.sh` | One run with any load generator: `moqperf`, `moqbench`, `adaptive`, `fixed`, `loadsim`. |
 | `bin/moqx-peering-build.sh` | Build the moqx relay image with moq-peering on a fabric deployment's Docker host, at a ref, with optional local patches. |
+| `bin/laps-build.sh` | Build the LAPS relay image and its builder (lapsAdmin) image on a fabric deployment's Docker host, at a ref, with optional local patches. |
 | `bin/fabric-report.py` | Summarize fabric runs (`moqbench fabric run`). |
 | `lib/` | Helpers the commands use: `hosts.sh` (which hosts to drive), `run.sh` (one measured point) and `summarize.py`. |
 | `oci/` | The OCI testbed: Terraform module, `testbed.sh`, and `envs/` (shared env definitions, plus gitignored per-tester `*.local.tfvars` from the `.example` templates). |

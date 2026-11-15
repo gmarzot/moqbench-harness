@@ -1,0 +1,38 @@
+description = "Live delivery while path costs change through each relay's own control API: the ingest relay makes its direct session to the egress relay cheaper and then dearer again, and the transit relay makes its session to the ingest relay dearer and then cheaper again. Each change moves the egress relay's traffic between the direct link and the transit relay."
+mode        = "stream"
+publisher   = "ingest"
+subscribers = ["all"]
+sub_start_s = 2
+peering_poll_s = 5
+
+[[event]]
+at_s   = 15
+verb   = "peer.metric"
+on     = "ingest"
+peer   = "egress"
+metric = 100
+expect = "hitless"
+
+[[event]]
+at_s   = 30
+verb   = "peer.metric"
+on     = "ingest"
+peer   = "egress"
+metric = 300
+expect = "hitless"
+
+[[event]]
+at_s   = 45
+verb   = "peer.metric"
+on     = "transit"
+peer   = "ingest"
+metric = 400
+expect = "hitless"
+
+[[event]]
+at_s   = 60
+verb   = "peer.metric"
+on     = "transit"
+peer   = "ingest"
+metric = 100
+expect = "hitless"

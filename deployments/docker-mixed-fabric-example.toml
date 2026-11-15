@@ -1,0 +1,45 @@
+# Example: a mixed moq-peering triangle on the local Docker. moqx-a and moqx-b
+# run moqx, the transit relay runs LAPS, and an aiomoqt peer node joins the
+# fabric as a leaf. moqx-a's direct session to moqx-b costs 300, so its traffic
+# goes through LAPS (100 + 100) until a peer.metric event makes the direct link
+# cheaper. Clients use MoQT draft 18, the only draft LAPS clients speak.
+provider = "docker"
+host     = "local"
+tag      = "mix"
+
+[fabric]
+adapter  = "moqx-peering"
+image    = "moqx-peering:latest"          # bin/moqx-peering-build.sh
+topology = "full"
+order    = ["moqx-a", "laps", "moqx-b"]
+metrics  = [["moqx-a", "moqx-b", 300]]
+draft    = 18
+check_interval_ms = 2000
+
+[[nodes]]
+name  = "moqx-a"
+roles = ["relay"]
+cpus  = "2-3"
+
+[[nodes]]
+name        = "laps"
+roles       = ["relay"]
+adapter     = "laps"
+image       = "laps:latest"               # bin/laps-build.sh
+admin_image = "laps:builder-latest"       # carries lapsAdmin
+cpus        = "4-5"
+
+[[nodes]]
+name  = "moqx-b"
+roles = ["relay"]
+cpus  = "6-7"
+
+[[nodes]]
+name  = "probe"
+roles = ["peer"]
+dials = ["moqx-a", "laps"]
+
+[[nodes]]
+name  = "client"
+roles = ["publisher", "subscriber", "probe"]
+cpus  = "8-11"
