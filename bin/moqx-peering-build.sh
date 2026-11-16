@@ -7,7 +7,7 @@
 # Fetches openmoq/moqx at ref into ~/moqbench-build/moqx on the Docker host, applies
 # every *.patch in PATCH_DIR (default patches/local/moqx-peering, ignored by git)
 # with git apply, then builds upstream's builder and relay stages and adds
-# libmoqx_peering.so (build/moqx-peering.Dockerfile). The image is
+# libmoqx_peering.so if the build makes one (build/moqx-peering.Dockerfile). The image is
 # $IMAGE:<sha8>, or <sha8>-p<count> with patches, and $IMAGE:latest. Image labels
 # and .testbed/builds/<image>-<tag>.json record the ref, the resolved commit and
 # each patch's sha256; a patched build's version string ends in +p<count>.
