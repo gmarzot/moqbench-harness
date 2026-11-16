@@ -189,7 +189,8 @@ exits. Each exit is logged and counted as a reconnection.
 
 ## Measurement
 
-**Taps** (`tstap.py`) take the kernel receive time (`SO_TIMESTAMPNS`) of every datagram. They log:
+**Taps** (`tstap.py`) take the kernel receive time (`SO_TIMESTAMPNS`) of every datagram, moved onto
+CLOCK_MONOTONIC so that a wall-clock step never reaches a delay. They log:
 
 - every PCR, with the non-null packet count so far;
 - every video PES: PTS, key frame, first and last datagram, and whether a continuity error broke
@@ -215,9 +216,10 @@ The input tap sits on the source group in `src`; output taps sit on the output g
 | clock | 1 ms timer probe in `src` and `dst`: pauses, and wall-clock steps |
 
 - **Window.** The measurement window opens `join_s` after the first source datagram, for `seconds`.
-- **Clock steps.** A backward wall-clock step that the probe sees and a tap's own sequence shows is
-  taken out of that tap's timeline. A step only the probe sees is the monotonic clock jumping (a host
-  pause); the lanes live through it, so it stays in.
+- **Clock steps.** Taps, the playout and the calibration probe run on CLOCK_MONOTONIC. The LOC
+  lane matches against `sub_media`'s wall-clock frame log, so its source tap stamps wall-clock time
+  too; such a run is marked `clock_disturbed` when the clock probe sees a wall-clock step above
+  20 ms, and its delay figures are then unreliable.
 - **Verdicts.** P0 must read zero errors: nothing missing, no continuity errors, no breaks. Any run
   that delivers nothing fails.
 

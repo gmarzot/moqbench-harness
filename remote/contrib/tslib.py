@@ -2,6 +2,7 @@
 video access units. Standard library only."""
 import hashlib
 import struct
+import time
 
 TS = 188
 NULL_PID = 0x1FFF
@@ -253,6 +254,16 @@ def pcr_delta(a, b):
     """b - a in 27 MHz ticks across a wrap."""
     d = (b - a) % PCR_WRAP
     return d - PCR_WRAP if d > PCR_WRAP // 2 else d
+
+
+def monotonic_of(ancdata):
+    """A datagram's kernel receive time on CLOCK_MONOTONIC (ns), from its SO_TIMESTAMPNS stamp less the
+    current wall-to-monotonic offset, so that a wall-clock step does not reach the measurement; the
+    monotonic clock now when the kernel gave no stamp."""
+    t = timestamps_cmsg(ancdata)
+    if t is None:
+        return time.monotonic_ns()
+    return t - (time.time_ns() - time.monotonic_ns())
 
 
 def timestamps_cmsg(ancdata):

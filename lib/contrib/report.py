@@ -4,7 +4,9 @@ TS lanes are matched PCR by PCR (end-to-end delay of each PCR from the source gr
 video PES by PTS (keyframes apart); the LOC lane is matched frame by frame on a hash of the slice
 data. The measurement window opens join_s after the first source datagram. Output breaks are gaps of
 break_ms or more at an output; late-or-lost at budget D counts units missing, or later than the first
-live-edge delay plus D (what a playout locked at the live edge with buffer D would miss).
+live-edge delay plus D (what a playout locked at the live edge with buffer D would miss). Taps stamp
+CLOCK_MONOTONIC; a run matched against a wall-clock log (the LOC lane) whose clock probe saw a
+wall-clock step above CLOCK_STEP_MS is marked clock_disturbed.
 """
 import csv
 import json
@@ -49,49 +51,25 @@ def stats(values):
                 p999=r3(pct(values, 99.9)), max=r3(max(values)))
 
 
-def clock_steps(run):
-    """[(t_ns, step_ns)] of the wall clock, from the dst clock probe (one host clock)."""
-    return [(int(r['t_ns']), int(float(r['ms']) * 1e6)) for r in rows(run / 'clock-dst.csv') if r.get('kind') == 'step']
-
-
-def unstep(times, steps):
-    """A tap's timestamps, in arrival order, with each backward wall-clock step the clock probe saw
-    taken out where the tap's own sequence goes backward near it. A probe step that no tap sequence
-    shows is the monotonic clock jumping (a host pause), which the lanes live through: left as is."""
-    out = list(times)
-    for t_det, s in steps:
-        if s >= 0:
-            continue
-        j = next((i for i in range(1, len(out)) if out[i] < out[i - 1] and abs(out[i] - t_det) < 200_000_000), None)
-        if j is not None:
-            for i in range(j, len(out)):
-                out[i] -= s
-    return out
-
-
-def pcrs(run, name, counts=None, steps=()):
+def pcrs(run, name, counts=None):
     """{(pid, pcr): first t_ns} of a tap; counts, when given, gets {(pid, pcr): non-null packets so far}."""
-    rs = rows(run / f'{name}-pcr.csv')
-    times = unstep([int(r['t_ns']) for r in rs], steps)
     out = {}
-    for r, t in zip(rs, times):
+    for r in rows(run / f'{name}-pcr.csv'):
         k = (int(r['pid']), int(r['pcr']))
         if k not in out:
-            out[k] = t
+            out[k] = int(r['t_ns'])
             if counts is not None and r.get('n'):
                 counts[k] = int(r['n'])
     return out
 
 
-def frames(run, name, by, steps=()):
-    rs = rows(run / f'{name}-frames.csv')
-    firsts = unstep([int(r['t_first_ns']) for r in rs], steps)
-    lasts = unstep([int(r['t_last_ns']) for r in rs], steps)
+def frames(run, name, by):
     out = {}
-    for r, t0, t1 in zip(rs, firsts, lasts):
+    for r in rows(run / f'{name}-frames.csv'):
         k = r[by]
         if k and k not in out:
-            out[k] = dict(key=int(r['key']), size=int(r['size']), t_first=t0, t_last=t1, broken=int(r['broken']))
+            out[k] = dict(key=int(r['key']), size=int(r['size']), t_first=int(r['t_first_ns']),
+                          t_last=int(r['t_last_ns']), broken=int(r['broken']))
     return out
 
 
@@ -111,6 +89,9 @@ def match_units(ins, outs, w0, w1):
 
 
 SETTLE_NS = 3 * NS
+# A wall-clock step larger than this makes a run's delay figures unreliable: units in flight across it
+# carry the step.
+CLOCK_STEP_MS = 20.0
 
 
 def live_anchor(units):
@@ -175,11 +156,11 @@ def ts_counts(run, name, t0, t1):
                 bytes=sum(int(r['bytes']) for r in rs))
 
 
-def output_metrics(run, meta, name, ins, in_counts, in_frames, w0, w1, budgets, steps):
+def output_metrics(run, meta, name, ins, in_counts, in_frames, w0, w1, budgets):
     """Delay, loss, breaks and late-or-lost for one output tap."""
     break_ms = meta['break_ms']
     out_counts = {}
-    outs = pcrs(run, name, out_counts, steps)
+    outs = pcrs(run, name, out_counts)
     units = match_units(ins, outs, w0, w1)
     delays = [(o - i) / 1e6 for i, o in units if o is not None]
     missing = sum(1 for _, o in units if o is None)
@@ -193,7 +174,7 @@ def output_metrics(run, meta, name, ins, in_counts, in_frames, w0, w1, budgets, 
             res['anchor_delay_ms'] = r3((first[1] - first[0]) / 1e6)
             res['late_or_lost_pct'] = late_or_lost(units, first[1] - first[0], budgets)
     if in_frames:
-        res['frames'] = frame_metrics(in_frames, frames(run, name, 'pts', steps), w0, w1)
+        res['frames'] = frame_metrics(in_frames, frames(run, name, 'pts'), w0, w1)
     res['ts'] = ts_residual(ins, in_counts, outs, out_counts, w0, w1)
     res['ts']['cc_errors'] = ts_counts(run, name, w0, w1 + 5 * NS)['cc_errors']
     return res, units
@@ -233,24 +214,24 @@ def frame_metrics(in_frames, out_frames, w0, w1):
                 key_delay_ms=stats(key), other_delay_ms=stats(other), complete_delay_ms=stats(whole))
 
 
-def frame_log(run, steps):
-    """{sha1: frame} from the subscriber's frame logs (one per connection), arrival times unstepped."""
-    recs = []
-    for p in sorted(run.glob('frames-*.jsonl')):
-        recs += [r for r in jsonl(p) if 'sha1' in r and 'arrival_ns' in r]
-    times = unstep([int(r['arrival_ns']) for r in recs], steps)
+def frame_log(run):
+    """{sha1: frame} from the subscriber's frame logs, one per connection."""
     out = {}
-    for r, t in zip(recs, times):
-        out.setdefault(r['sha1'], dict(key=int(bool(r.get('key'))), size=r.get('size'), t_first=t, t_last=t, broken=0))
+    for p in sorted(run.glob('frames-*.jsonl')):
+        for r in jsonl(p):
+            if 'sha1' in r and 'arrival_ns' in r:
+                t = int(r['arrival_ns'])
+                out.setdefault(r['sha1'], dict(key=int(bool(r.get('key'))), size=r.get('size'), t_first=t,
+                                               t_last=t, broken=0))
     return out
 
 
-def loc_metrics(run, meta, w0, w1, budgets, steps):
+def loc_metrics(run, meta, w0, w1, budgets):
     """The LOC lane: frames matched on hash from the source tap to the subscriber's frame log (or, on
     an older subscriber, to an H.264 tap on its elementary-stream pipe)."""
-    ins = frames(run, 'in', 'hash', steps)
+    ins = frames(run, 'in', 'hash')
     logged = list(run.glob('frames-*.jsonl'))
-    outs = frame_log(run, steps) if logged else frames(run, 'raw', 'hash', steps)
+    outs = frame_log(run) if logged else frames(run, 'raw', 'hash')
     res = frame_metrics(ins, outs, w0, w1)
     units = sorted(((f['t_first'], outs[k]['t_last'] if k in outs else None) for k, f in ins.items()
                     if w0 <= f['t_first'] < w1), key=lambda x: x[0])
@@ -438,25 +419,24 @@ def analyze(run_dir):
         out['error'] = 'the source tap saw nothing'
         out['verdict'] = 'FAIL'
         return out
-    steps = clock_steps(run)
     in_counts = {}
-    ins = pcrs(run, 'in', in_counts, steps)
+    ins = pcrs(run, 'in', in_counts)
     out['source'] = dict(out['source'] if isinstance(out['source'], dict) else {'tier': out['source']},
                          in_datagrams=insum.get('datagrams'), in_cc_errors=insum.get('cc_errors'))
     if meta['lane'] == 'moqt-aiomoqt-loc' and 'raw' not in meta.get('taps', []):
-        out['frames'] = loc_metrics(run, meta, w0, w1, budgets, steps)
+        out['frames'] = loc_metrics(run, meta, w0, w1, budgets)
         main = out['frames']
     else:
-        in_frames = frames(run, 'in', 'pts', steps)
+        in_frames = frames(run, 'in', 'pts')
         out['outputs'] = {}
         raw_units = None
         for name in meta.get('taps', []):
-            res, units = output_metrics(run, meta, name, ins, in_counts, in_frames, w0, w1, budgets, steps)
+            res, units = output_metrics(run, meta, name, ins, in_counts, in_frames, w0, w1, budgets)
             out['outputs'][name] = res
             if name == 'raw':
                 raw_units = units
         if raw_units:
-            first = live_anchor(match_units(ins, pcrs(run, 'raw', steps=steps), 0, w1))
+            first = live_anchor(match_units(ins, pcrs(run, 'raw'), 0, w1))
             if first:
                 out['outputs']['raw']['playout'] = {str(b): playout_breaks(raw_units, first, b, meta['break_ms'])
                                                     for b in meta['playout_ms']}
@@ -466,6 +446,8 @@ def analyze(run_dir):
     out['socket_drops'] = socket_drops(run)
     out['reconnections'] = reconnections(run)
     out['clock'] = clock_pauses(run)
+    worst = max((abs(c['largest_step_ms']) for c in out['clock'].values()), default=0.0)
+    out['clock_disturbed'] = bool(meta.get('wall_clock')) and worst > CLOCK_STEP_MS
     out['analyser'] = analyser(run)
     out['verdict'] = verdict(out, main, meta)
     return out
@@ -499,12 +481,13 @@ def line(s):
         llol = main.get('late_or_lost_pct') or (s['outputs'].get('raw') or {}).get('late_or_lost_pct') or {}
         return (f"{head} delay p50/p99/max {d['p50']}/{d['p99']}/{d['max']} ms, PCR lost {main['pcr_lost_pct']}%, "
                 f"breaks {main['breaks']['count']} (longest {main['breaks']['longest_ms']} ms), "
-                f"cc {(main.get('ts') or {}).get('cc_errors')}, late|lost@D {llol}  {s['verdict']}")
+                f"cc {(main.get('ts') or {}).get('cc_errors')}, late|lost@D {llol}  {s['verdict']}"
+                f"{'  CLOCK' if s.get('clock_disturbed') else ''}")
     f = s.get('frames') or {}
     return (f"{head} frames {f.get('frames')} missing {f.get('missing_pct')}%, key p50/p99 "
             f"{(f.get('key_delay_ms') or {}).get('p50')}/{(f.get('key_delay_ms') or {}).get('p99')} ms, other "
             f"{(f.get('other_delay_ms') or {}).get('p50')}/{(f.get('other_delay_ms') or {}).get('p99')} ms, "
-            f"late|lost@D {f.get('late_or_lost_pct')}  {s['verdict']}")
+            f"late|lost@D {f.get('late_or_lost_pct')}  {s['verdict']}{'  CLOCK' if s.get('clock_disturbed') else ''}")
 
 
 def main(paths):

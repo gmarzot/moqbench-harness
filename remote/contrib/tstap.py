@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""TS tap: timestamps every datagram (kernel receive time) on one or more UDP ports, or every read of
-stdin, and logs PCRs, video frames, output gaps and per-second counts.
+"""TS tap: timestamps every datagram (kernel receive time, on CLOCK_MONOTONIC) on one or more UDP
+ports, or every read of stdin, and logs PCRs, video frames, output gaps and per-second counts.
+--clock real keeps wall-clock stamps, to match another process's wall-clock log.
 
   tstap.py --udp NAME=GROUP:PORT [...] --out DIR [--frames] [--hash] [--gap-ms 50] [--duration S]
   tstap.py --stdin NAME --annexb --out DIR      (an H.264 elementary-stream pipe)
@@ -136,7 +137,9 @@ def main(argv=None):
                    help='vcl: slice data only; loc: the LOC object payload an aiomoqt publisher sends')
     p.add_argument('--gap-ms', type=float, default=50.0)
     p.add_argument('--duration', type=float, default=0)
+    p.add_argument('--clock', choices=('mono', 'real'), default='mono')
     a = p.parse_args(argv)
+    real = a.clock == 'real'
     os.makedirs(a.out, exist_ok=True)
     stop = []
     signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
@@ -157,7 +160,7 @@ def main(argv=None):
                     continue
                 if not data:
                     break
-                sink.take(data, time.time_ns())
+                sink.take(data, time.time_ns() if real else time.monotonic_ns())
     else:
         socks = {}
         for spec in a.udp:
@@ -173,7 +176,8 @@ def main(argv=None):
                         data, anc, _, _ = s.recvmsg(65536, 64, socket.MSG_DONTWAIT)
                     except BlockingIOError:
                         break
-                    socks[s].take(data, tslib.timestamps_cmsg(anc) or time.time_ns())
+                    t = (tslib.timestamps_cmsg(anc) or time.time_ns()) if real else tslib.monotonic_of(anc)
+                    socks[s].take(data, t)
     for sink in sinks:
         sink.close()
     return 0

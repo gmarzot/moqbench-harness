@@ -98,6 +98,11 @@ class Lane:
         """The source tap's frame hash form ('vcl' or 'loc'), or None for no hashing."""
         return None
 
+    def wall_clock(self, ctx):
+        """True when the lane's output is a wall-clock log (sub_media's frame log), so the source tap
+        stamps wall-clock time to match it instead of CLOCK_MONOTONIC."""
+        return False
+
     def files(self, ctx):
         return {}
 
@@ -227,6 +232,9 @@ class AiomoqtLoc(Moqt):
     def in_tap_hash(self, ctx):
         return 'vcl' if self.fallback(ctx) else 'loc'
 
+    def wall_clock(self, ctx):
+        return not self.fallback(ctx)
+
     def fallback(self, ctx):
         return not ctx.features.get('frame_log')
 
@@ -272,6 +280,9 @@ class AiomoqtMsfts(AiomoqtLoc):
 
     def in_tap_hash(self, ctx):
         return None
+
+    def wall_clock(self, ctx):
+        return False
 
     def taps(self, ctx):
         return outputs(ctx.playout_ms)

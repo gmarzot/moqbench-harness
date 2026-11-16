@@ -125,7 +125,7 @@ def main(argv=None):
     def sender():
         while not stop.is_set():
             with lock:
-                now = time.time_ns()
+                now = time.monotonic_ns()
                 wake = None
                 for o in outs:
                     while o.queue and clock.due_ns(o.queue[0][0], o.buffer_ns) <= now:
@@ -135,16 +135,16 @@ def main(argv=None):
                     if o.queue:
                         due = clock.due_ns(o.queue[0][0], o.buffer_ns)
                         wake = due if wake is None or due < wake else wake
-                timeout = 0.05 if wake is None else max(0.0, min(0.05, (wake - time.time_ns()) / 1e9))
+                timeout = 0.05 if wake is None else max(0.0, min(0.05, (wake - time.monotonic_ns()) / 1e9))
                 if timeout > 0.0002:
                     lock.wait(timeout)
 
     def logger():
         with open(a.log, 'w', buffering=1) as f:
             while not stop.wait(1.0):
-                now = time.time_ns()
+                now = time.monotonic_ns()
                 with lock:
-                    row = dict(t=now / 1e9, rx_bytes=stats['rx_bytes'], reanchors=clock.reanchors, outs={})
+                    row = dict(t=time.time(), rx_bytes=stats['rx_bytes'], reanchors=clock.reanchors, outs={})
                     for o in outs:
                         depth = (clock.due_ns(o.queue[-1][0], o.buffer_ns) - now) / 1e6 if o.queue else 0.0
                         row['outs'][str(o.buffer_ns // 1_000_000)] = dict(
@@ -181,7 +181,7 @@ def main(argv=None):
             continue
         if not data:
             break
-        now = time.time_ns()
+        now = time.monotonic_ns()
         stats['rx_bytes'] += len(data)
         buf += data
         pos, n = 0, len(buf)

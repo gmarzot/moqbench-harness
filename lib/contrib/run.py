@@ -67,6 +67,8 @@ class Cell:
         bin_ = 'python3 /contrib/bin'
         form = self.lane.in_tap_hash(self.ctx)
         frames = f'--frames --hash --hash-form {form}' if form else '--frames'
+        if self.lane.wall_clock(self.ctx):
+            frames += ' --clock real'
         gap = self.scen['gap_ms']
         procs = [Proc('tap-in', 'src', 'tools',
                       f'{bin_}/tstap.py --udp in={sources.GROUP_IN}:{sources.PORT_IN} {frames} --gap-ms {gap} --out /out'),
@@ -118,6 +120,7 @@ class Cell:
                     seconds=self.seconds, join_s=self.scen['join_s'], break_ms=self.scen['break_ms'],
                     budgets_ms=self.test.budgets(self.profile.rtt_ms),
                     playout_ms=self.ctx.playout_ms, features=self.ctx.features, taps=list(self.lane.taps(self.ctx)),
+                    wall_clock=self.lane.wall_clock(self.ctx),
                     seeds=self.profile.seeds(self.repeat), topology=dict(links=prov.paths.links))
         emu.build(self.profile, self.repeat)
         meta['emulator_build'] = emu.qdisc_stats()

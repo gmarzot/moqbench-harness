@@ -178,7 +178,7 @@ class Playout(unittest.TestCase):
         self.assertEqual(due - clock.anchor[0], int((meta[1][0] - clock.anchor[1]) * 1000 / 27) + 300_000_000)
 
 
-def write_run(d, delays, lost=(), gap_at=None, lane='srt', taps=('out',), step=None):
+def write_run(d, delays, lost=(), gap_at=None, lane='srt', taps=('out',), step=None, wall_clock=False):
     """A run folder with source and output taps fed synthetic datagrams: one PCR per frame at 25 fps,
     output delayed per frame, some frames lost, an optional output gap and a backward clock step."""
     data, meta = stream(len(delays))
@@ -212,7 +212,7 @@ def write_run(d, delays, lost=(), gap_at=None, lane='srt', taps=('out',), step=N
     meta = dict(label='001-x', lane=lane, variant={}, repeat=0, placement='last-mile', profile_id='P3', rtt_ms=80,
                 source=dict(tier='mpeg2-20m'), seconds=len(delays) * 0.04 - 0.5, join_s=0.2, break_ms=200,
                 budgets_ms=[100, 300], playout_ms=[300, 200], taps=list(taps), topology=dict(links=[]),
-                emulator_final={})
+                emulator_final={}, wall_clock=wall_clock)
     (run / 'meta.json').write_text(json.dumps(meta))
     return run
 
@@ -252,11 +252,14 @@ class Analysis(unittest.TestCase):
             s = report.analyze(write_run(d, [5.0] * 50, lost=set(range(50))))
         self.assertEqual(s['verdict'], 'FAIL')
 
-    def test_backward_clock_step_is_taken_out(self):
+    def test_a_clock_step_marks_the_run(self):
         with tempfile.TemporaryDirectory() as d:
-            s = report.analyze(write_run(d, [100.0] * 200, step=(1_000_000_000_000 + 4_000_000_000, -60_000_000)))
-        self.assertGreaterEqual(s['outputs']['out']['delay_ms']['min'], 99.9)
-        self.assertLessEqual(s['outputs']['out']['delay_ms']['max'], 100.1)
+            s = report.analyze(write_run(d, [100.0] * 200, step=(1_000_000_000_000 + 4_000_000_000, -60_000_000),
+                                         wall_clock=True))
+        self.assertTrue(s['clock_disturbed'])
+        self.assertEqual(s['clock']['dst']['largest_step_ms'], -60.0)
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(report.analyze(write_run(d, [100.0] * 50, step=(1_000_000_500_000, -60_000_000)))['clock_disturbed'])
 
     def test_offline_playout_breaks(self):
         units = [(i * 20_000_000, i * 20_000_000 + 100_000_000) for i in range(100)]

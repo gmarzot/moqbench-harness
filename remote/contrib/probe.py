@@ -5,7 +5,7 @@
   probe.py send --to HOST:7000 --pps 1900 --size 1316 --seconds 60 --out FILE
 
 The echo side logs seq,t_send_ns,t_recv_ns for every packet (kernel receive time) and returns a 24-byte
-reply. The sender logs seq,t_send_ns,t_echo_ns for every reply. Forward loss, reverse loss, one-way
+reply. Every stamp is CLOCK_MONOTONIC, which one host shares and no time sync steps. The sender logs seq,t_send_ns,t_echo_ns for every reply. Forward loss, reverse loss, one-way
 delay, RTT and reordering follow from the two files.
 """
 import argparse
@@ -42,8 +42,8 @@ def echo(a):
             if len(data) < HDR.size:
                 continue
             seq, t_send = HDR.unpack_from(data)
-            t_user = time.time_ns()
-            t_recv = tslib.timestamps_cmsg(anc) or t_user
+            t_user = time.monotonic_ns()
+            t_recv = tslib.monotonic_of(anc)
             f.write(f'{seq},{t_send},{t_recv},{t_user}\n')
             s.sendto(REPLY.pack(seq, t_send, t_recv), peer)
 
@@ -68,7 +68,7 @@ def send(a):
             if now < end:
                 due = t0 + int(seq * interval)
                 if now >= due:
-                    s.sendto(HDR.pack(seq, time.time_ns()) + pad, dest)
+                    s.sendto(HDR.pack(seq, time.monotonic_ns()) + pad, dest)
                     seq += 1
                     continue
             elif drain_until is None:
@@ -79,7 +79,7 @@ def send(a):
                 data, anc, _, _ = s.recvmsg(256, 64)
                 if len(data) >= REPLY.size:
                     rseq, t_send, _ = REPLY.unpack_from(data)
-                    f.write(f'{rseq},{t_send},{tslib.timestamps_cmsg(anc) or time.time_ns()}\n')
+                    f.write(f'{rseq},{t_send},{tslib.monotonic_of(anc)}\n')
             except BlockingIOError:
                 time.sleep(0.0001)
         f.write(f'# sent {seq}\n')
