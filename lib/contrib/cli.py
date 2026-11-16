@@ -59,7 +59,7 @@ def cells(suite, a):
                 prof = profiles.load(pid)
                 for repeat in range(a.repeats or test.repeats):
                     for variant in lane.variants(test, prof):
-                        if all(str(variant.get(k, v)) == budget(v, prof, test) for k, v in
+                        if all(k not in variant or str(variant[k]) == budget(v, prof, test) for k, v in
                                (f.split('=', 1) for f in a.variant or [])):
                             yield test, lane, prof, repeat, variant
 

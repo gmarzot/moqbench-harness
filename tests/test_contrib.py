@@ -7,7 +7,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lib'))
 import config  # noqa: E402
-from contrib import calibrate, emu, lanes, profiles, sources, spec, topology  # noqa: E402
+import argparse  # noqa: E402
+from contrib import calibrate, cli, emu, lanes, profiles, sources, spec, topology  # noqa: E402
 
 # Mean forward loss in percent each profile is built for.
 TARGET_LOSS = {'P0': 0.0, 'P1': 0.02, 'P2': 0.1, 'P3': 0.5, 'P4': 0.3, 'P5': 1.0, 'P6': 3.0, 'P7': 2.0, 'P8': 0.4,
@@ -111,6 +112,13 @@ class Spec(unittest.TestCase):
         t = make_test()
         self.assertEqual(t.budgets(80), [160, 200, 240, 300, 320, 480])
         self.assertEqual(t.budgets(1), [40, 60, 80, 120, 200, 300])
+
+    def test_variant_filters_apply_only_to_their_own_keys(self):
+        a = argparse.Namespace(only=[1], lane=['srt', 'moqt-moq2ts', 'moqt-aiomoqt-msfts'], profile=['P3'], repeats=1,
+                               variant=['D=4xRTT', 'relay_cc=bbr2', 'pub_cc=bbr'])
+        got = [(lane.name, v) for _, lane, _, _, v in cli.cells(spec.load_suite('example-contrib'), a)]
+        self.assertEqual(got, [('srt', {'D': 320}), ('moqt-moq2ts', {'relay_cc': 'bbr2'}),
+                               ('moqt-aiomoqt-msfts', {'pub_cc': 'bbr', 'relay_cc': 'bbr2'})])
 
     def test_rejects(self):
         for over in (dict(lanes=['carrier-pigeon']), dict(lanes=[]), dict(source='h265'), dict(placement='middle'),
