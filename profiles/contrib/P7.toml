@@ -1,0 +1,40 @@
+id = "P7"
+name = "Cellular uplink"
+description = "Handover gaps, a handover RTT rise and a rate dip; the rate model is assumed."
+basis = "VoLTE and LTE field studies"
+rtt_ms = 60
+
+[forward]
+slot_ms = [0, 20]
+loss = { gemodel = [0.27, 10, 70, 0.2] }
+reorder_pct = 0.05
+cap = 1.5
+seed = 1701
+
+[reverse]
+slot_ms = [0, 20]
+loss = { gemodel = [0.07, 10, 70, 0.05] }
+seed = 1702
+
+[[event]]
+kind = "outage"
+label = "handover-gap"
+at_s = 45
+every_s = 45
+for_ms = 150
+
+[[event]]
+kind = "step"
+label = "handover-rtt"
+at_s = 45
+every_s = 45
+delta_ms = 60
+for_s = 2
+
+[[event]]
+kind = "rate"
+label = "rate-dip"
+at_s = 30
+every_s = 60
+factor = 0.533
+for_s = 5

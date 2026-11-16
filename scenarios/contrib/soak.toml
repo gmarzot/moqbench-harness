@@ -1,0 +1,7 @@
+description = "Soak: hours of a live encode; the headline is hours without an output break. Set seconds to the length."
+seconds     = 14400
+join_s      = 10
+drain_s     = 5
+source_mode = "live"
+break_ms    = 200
+soak        = true

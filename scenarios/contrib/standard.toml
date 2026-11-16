@@ -1,0 +1,6 @@
+description = "Comparison run: 5 minutes measured after a 10 s join window, from a pre-encoded fixture."
+seconds     = 300
+join_s      = 10
+drain_s     = 5
+source_mode = "file"
+break_ms    = 200

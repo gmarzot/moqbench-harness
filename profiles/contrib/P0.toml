@@ -1,0 +1,11 @@
+id = "P0"
+name = "Control LAN"
+description = "Negative control: every lane must read zero errors."
+rtt_ms = 1
+
+[forward]
+cap = 2.0
+seed = 1001
+
+[reverse]
+seed = 1002

@@ -1,0 +1,57 @@
+id = "P9"
+name = "Outage ladder"
+description = "P3 with 100 % loss for 0.5, 2, 5 and 30 s, forward only and then both directions."
+base = "P3"
+run_s = 460
+
+[[event]]
+kind = "outage"
+label = "fwd-0.5s"
+direction = "fwd"
+at_s = 30
+for_ms = 500
+
+[[event]]
+kind = "outage"
+label = "fwd-2s"
+direction = "fwd"
+at_s = 70
+for_ms = 2000
+
+[[event]]
+kind = "outage"
+label = "fwd-5s"
+direction = "fwd"
+at_s = 110
+for_ms = 5000
+
+[[event]]
+kind = "outage"
+label = "fwd-30s"
+direction = "fwd"
+at_s = 160
+for_ms = 30000
+
+[[event]]
+kind = "outage"
+label = "both-0.5s"
+at_s = 250
+for_ms = 500
+
+[[event]]
+kind = "outage"
+label = "both-2s"
+at_s = 290
+for_ms = 2000
+
+[[event]]
+kind = "outage"
+label = "both-5s"
+at_s = 330
+for_ms = 5000
+
+[[event]]
+kind = "outage"
+label = "both-30s"
+at_s = 380
+for_ms = 30000

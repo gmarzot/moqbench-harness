@@ -1,0 +1,15 @@
+id = "P1"
+name = "Clean regional"
+basis = "G.1050 profile A; RIST ARQ best practices, short haul"
+rtt_ms = 20
+
+[forward]
+slot_ms = [0, 2]
+loss = { gemodel = [0.0133, 66.7, 100, 0] }
+cap = 2.0
+seed = 1101
+
+[reverse]
+slot_ms = [0, 2]
+loss = { gemodel = [0.0133, 66.7, 100, 0] }
+seed = 1102

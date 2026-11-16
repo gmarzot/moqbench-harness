@@ -1,0 +1,292 @@
+"""Lanes: one transport each, as the processes a run starts in the src and dst namespaces.
+
+Every lane reads the paced source from the src multicast group and delivers TS (or, for the LOC
+fallback, H.264) to the dst output groups, where the common taps and the analyser read it. SRT and
+RIST are one hop; MoQT lanes cross the emulated WAN between publisher and relay (first-mile) or
+between relay and subscriber (last-mile), and play their TS out on its PCR at fixed buffers.
+"""
+from dataclasses import dataclass, field
+import itertools
+import json
+import math
+
+from contrib import sources, topology
+
+GROUP_IN = f'{sources.GROUP_IN}:{sources.PORT_IN}'
+OUT = topology.GROUP_OUT
+SRT_PORT, RIST_PORT, MOQT_PORT, ADMIN_PORT, INGEST_PORT, LOCAL_TS = 9000, 8193, 4433, 4500, 23106, 6010
+NAMESPACE = 'test/spts'
+PY = 'python3 /contrib/bin'
+
+
+@dataclass
+class Proc:
+    name: str
+    ns: str
+    image: str
+    cmd: str = ''
+    stage: str = 'sender'
+    env: dict = field(default_factory=dict)
+    entrypoint: bool = True
+    settle_s: float = 0.0
+
+
+@dataclass
+class Ctx:
+    """What a lane needs to render one run."""
+    paths: object
+    placement: str
+    tier: object
+    rtt_ms: float
+    variant: dict
+    playout_ms: list
+    slot_max_ms: float = 0.0
+    ingest: str = 'srt'
+    features: dict = field(default_factory=dict)
+
+
+def outputs(playout_ms):
+    """{tap name: (group, port, playout buffer or None)} of a MoQT lane: raw arrival, then each buffer."""
+    out = {'raw': (OUT, topology.PORTS_OUT['raw'], None)}
+    ports = [topology.PORTS_OUT['out'], topology.PORTS_OUT['second']] + [6003 + i for i in range(8)]
+    for b, port in zip(playout_ms, ports):
+        out[f'po{int(b)}'] = (OUT, port, int(b))
+    return out
+
+
+def srt_buffers(latency_ms, rtt_ms, mux_bps):
+    """(fc packets, buffer bytes) holding (latency + RTT + 1 s) of input at 1.5x, doubled; never below
+    libsrt's defaults."""
+    rate = mux_bps / 8 * 1.5
+    need = (latency_ms + rtt_ms + 1000) / 1000 * rate * 2
+    fc = max(25600, math.ceil(need / 1316))
+    return fc, fc * 1456
+
+
+def rist_params(rtt_ms, slot_max_ms):
+    return dict(rtt_min=max(5, int(rtt_ms / 2)), rtt_max=max(50, int(2 * rtt_ms + 40)),
+                reorder=max(25, int(slot_max_ms + 5)))
+
+
+def again(cmd, name):
+    """A receiver that reconnects after it exits, one second apart, logging each exit; its stdout is
+    one continuous stream for the next stage."""
+    return f"while :; do {cmd}; echo \"[harness] {name} exited rc=$?; reconnecting\" >&2; sleep 1; done"
+
+
+def playout_cmd(source, playout_ms):
+    outs = outputs(playout_ms)
+    args = ' '.join(f'--out {b}:{g}:{p}' for name, (g, p, b) in outs.items() if b is not None)
+    return f'{PY}/playout.py {source} {args} --raw {OUT}:{outs["raw"][1]} --log /out/playout.jsonl'
+
+
+class Lane:
+    name = ''
+    codec = 'ts'
+    relay = False
+    # Run features the lane needs from an image, probed before a run: {feature: (image, command, text)}.
+    needs = {}
+
+    def variants(self, test, profile):
+        return [{}]
+
+    def taps(self, ctx):
+        """{name: (group, port, playout buffer)} on dst."""
+        return {'out': (OUT, topology.PORTS_OUT['out'], None)}
+
+    def in_tap_hash(self):
+        return False
+
+    def files(self, ctx):
+        return {}
+
+    def procs(self, ctx):
+        raise NotImplementedError
+
+    def pending(self, features):
+        """Why the lane cannot run with these probed features, or None."""
+        return None
+
+    def label(self, variant):
+        return '-'.join(f'{k}{v}' for k, v in variant.items())
+
+
+class Srt(Lane):
+    name = 'srt'
+
+    def variants(self, test, profile):
+        return [dict(D=d) for d in test.budgets(profile.rtt_ms)]
+
+    def procs(self, ctx):
+        d, t = ctx.variant['D'], ctx.tier
+        fc, buf = srt_buffers(d, ctx.rtt_ms, t.mux_bps)
+        pps = int(t.pps)
+        rx = (f'srt-live-transmit -chunk:1316 -s:{pps} -pf:json -statsout:/out/srt-rcv.json '
+              f'"srt://:{SRT_PORT}?mode=listener&latency={d}&lossmaxttl=32&fc={fc}&rcvbuf={buf}" '
+              f'"udp://{OUT}:{topology.PORTS_OUT["out"]}?ttl=1"')
+        tx = (f'srt-live-transmit -chunk:1316 -s:{pps} -pf:json -statsout:/out/srt-snd.json "udp://{GROUP_IN}" '
+              f'"srt://{ctx.paths.dst_ip()}:{SRT_PORT}?mode=caller&latency={d}&maxbw=0&inputbw={t.mux_bps // 8}'
+              f'&oheadbw=50&lossmaxttl=32&fc={fc}&sndbuf={buf}&rcvbuf={buf}"')
+        return [Proc('srt-rcv', 'dst', 'tools', rx, 'receiver', settle_s=1),
+                Proc('srt-snd', 'src', 'tools', tx, 'sender', settle_s=2)]
+
+
+class Rist(Lane):
+    name = 'rist'
+
+    def variants(self, test, profile):
+        return [dict(D=d) for d in test.budgets(profile.rtt_ms)]
+
+    def procs(self, ctx):
+        d, t = ctx.variant['D'], ctx.tier
+        r = rist_params(ctx.rtt_ms, ctx.slot_max_ms)
+        q = f'buffer={d}&rtt-min={r["rtt_min"]}&rtt-max={r["rtt_max"]}&reorder-buffer={r["reorder"]}'
+        rx = (f'ristreceiver -p 1 -S 1000 -i "rist://@0.0.0.0:{RIST_PORT}?{q}" '
+              f'-o "udp://{OUT}:{topology.PORTS_OUT["out"]}"')
+        tx = (f'ristsender -p 1 -S 1000 -i "udp://@{GROUP_IN}" -o "rist://{ctx.paths.dst_ip()}:{RIST_PORT}?{q}'
+              f'&bandwidth={int(t.mux_bps * 1.5 / 1000)}&congestion-control=1&max-retries=10"')
+        return [Proc('rist-rcv', 'dst', 'tools', rx, 'receiver', settle_s=1),
+                Proc('rist-snd', 'src', 'tools', tx, 'sender', settle_s=2)]
+
+
+def moqx_env(cc):
+    """The relay as the setup runs it, through the image's environment."""
+    return dict(MOQX_INSECURE='true', MOQX_PORT=str(MOQT_PORT), MOQX_ADMIN_PORT=str(ADMIN_PORT),
+                MOQX_CC=cc, MOQX_SEND_PKTS='16', MOQX_RECV_PKTS='256', MOQX_UDP_BUFFER='33554432',
+                MOQX_THREADS='8', MOQX_CACHE='true', MOQX_IGNORE_PATH_MTU='true',
+                MOQX_MOQT_VERSIONS='[18, 16]', MOQX_JEMALLOC='auto', MALLOC_CONF='thp:always')
+
+
+class Moqt(Lane):
+    relay = True
+
+    def taps(self, ctx):
+        return outputs(ctx.playout_ms)
+
+    def relay_proc(self, ctx):
+        ns, _, _ = ctx.paths.relay_addresses(ctx.placement)
+        return Proc('relay', ns, 'moqx', '', 'relay', env=moqx_env(ctx.variant.get('relay_cc', 'bbr2')),
+                    entrypoint=False, settle_s=3)
+
+    def urls(self, ctx):
+        _, pub, sub = ctx.paths.relay_addresses(ctx.placement)
+        return f'moqt://{pub}:{MOQT_PORT}/moq-relay', f'moqt://{sub}:{MOQT_PORT}/moq-relay'
+
+
+class Moq2ts(Moqt):
+    name = 'moqt-moq2ts'
+
+    def variants(self, test, profile):
+        return [dict(relay_cc=cc) for cc in test.relay_cc]
+
+    def files(self, ctx):
+        cfg = {'srt_callers': [{'id': 'src', 'srt': {'mode': 'listener', 'host': '0.0.0.0', 'port': INGEST_PORT,
+                                                     'latency_ms': 100}}]}
+        return {'srt.json': json.dumps(cfg) + '\n'}
+
+    def procs(self, ctx):
+        pub_url, sub_url = self.urls(ctx)
+        pub = (f'moq2ts-cli --endpoint {pub_url} --namespace {NAMESPACE} --transparent --draft 18 '
+               '--quic-idle-timeout 3000 --insecure')
+        procs = [self.relay_proc(ctx)]
+        if ctx.ingest == 'srt':
+            procs.append(Proc('moq2ts-pub', 'src', 'moq2ts', f'{pub} --srt-config /out/srt.json', 'sender', settle_s=1))
+            procs.append(Proc('srt-ingest', 'src', 'tools',
+                              f'tsp -I ip {GROUP_IN} -O srt --caller 127.0.0.1:{INGEST_PORT} --latency 100',
+                              'sender', settle_s=1))
+        else:
+            procs.append(Proc('moq2ts-pub', 'src', 'moq2ts', f'{PY}/udp2pipe.py {GROUP_IN} | {pub} --video /dev/stdin',
+                              'sender', settle_s=1))
+        rx = again(f'moq2ts-receiver --url {sub_url} --namespace {NAMESPACE} --draft 18 --insecure --out - '
+                   '--stats-json /out/moq2ts-receiver.json', 'moq2ts-receiver')
+        rx = f'{{ {rx}; }} | {playout_cmd("--stdin", ctx.playout_ms)}'
+
+        procs.append(Proc('moq2ts-rcv', 'dst', 'moq2ts', rx, 'subscriber', settle_s=1))
+        return procs
+
+
+class AiomoqtLoc(Moqt):
+    name = 'moqt-aiomoqt-loc'
+    codec = 'h264'
+    needs = {'ts_udp': ('aiomoqt', 'python -m aiomoqt.tools.pub_media -h', 'udp://'),
+             'ts_out': ('aiomoqt', 'python -m aiomoqt.tools.sub_media -h', '--ts-out'),
+             'frame_log': ('aiomoqt', 'python -m aiomoqt.tools.sub_media -h', '--frame-log')}
+    namespace = 'test/loc'
+    pub_extra = ''
+
+    def variants(self, test, profile):
+        return [dict(pub_cc=p, relay_cc=r) for p, r in itertools.product(test.pub_cc, test.relay_cc)]
+
+    def in_tap_hash(self):
+        return True
+
+    def fallback(self, ctx):
+        return not ctx.features.get('ts_out')
+
+    def taps(self, ctx):
+        if self.fallback(ctx):
+            return {}
+        return super().taps(ctx)
+
+    def pub_cmd(self, ctx, url):
+        src = f'--ts udp://@{GROUP_IN}' if ctx.features.get('ts_udp') else '--ts -'
+        cmd = (f'python -m aiomoqt.tools.pub_media {url} -k --draft 18 -N {self.namespace} {src}{self.pub_extra} '
+               f'--cc-algo {ctx.variant["pub_cc"]} --keepalive 10 -t 0 --stats-json')
+        return cmd if ctx.features.get('ts_udp') else f'{PY}/udp2pipe.py {GROUP_IN} | {cmd}'
+
+    def procs(self, ctx):
+        pub_url, sub_url = self.urls(ctx)
+        env = dict(AIOPQUIC_GSO='0')
+        sub = f'python -m aiomoqt.tools.sub_media {sub_url} -k --draft 18 -N {self.namespace} -t 0'
+        procs = [self.relay_proc(ctx), Proc('aiomoqt-pub', 'src', 'aiomoqt', self.pub_cmd(ctx, pub_url), 'sender',
+                                            env=env, settle_s=2)]
+        if self.fallback(ctx):
+            rx = again(f'{sub} --out /tmp/media --pipe video', 'sub_media')
+            procs.append(Proc('aiomoqt-sub', 'dst', 'aiomoqt',
+                              f'{{ {rx}; }} | {PY}/tstap.py --stdin raw --annexb --out /out',
+                              'subscriber', env=env, settle_s=1))
+        else:
+            log = ' --frame-log /out/frames.jsonl' if ctx.features.get('frame_log') else ''
+            procs.append(Proc('aiomoqt-sub', 'dst', 'aiomoqt',
+                              again(f'{sub} --ts-out udp://127.0.0.1:{LOCAL_TS}{log}', 'sub_media'),
+                              'subscriber', env=env, settle_s=1))
+            procs.append(Proc('playout', 'dst', 'tools', playout_cmd(f'--udp 127.0.0.1:{LOCAL_TS}', ctx.playout_ms),
+                              'receiver'))
+        return procs
+
+
+class AiomoqtMsfts(AiomoqtLoc):
+    name = 'moqt-aiomoqt-msfts'
+    codec = 'ts'
+    needs = {'ts_udp': AiomoqtLoc.needs['ts_udp'], 'ts_out': AiomoqtLoc.needs['ts_out'],
+             'msfts': ('aiomoqt', 'python -m aiomoqt.tools.pub_media -h', '--msfts')}
+    namespace = 'test/msfts'
+    pub_extra = ' --msfts --msfts-packets 7'
+
+    def in_tap_hash(self):
+        return False
+
+    def pending(self, features):
+        missing = [f for f in ('msfts', 'ts_out') if not features.get(f)]
+        return f'aiomoqt lacks {", ".join(missing)} (pub_media --msfts, sub_media --ts-out)' if missing else None
+
+
+class AiomoqtDual(AiomoqtMsfts):
+    """One aiomoqt-relay in dst reached over two independent paths; the relay merges the two
+    publisher sessions by Location."""
+    name = 'moqt-aiomoqt-dual'
+    needs = dict(AiomoqtMsfts.needs, relay=('aiomoqt', 'python -m aiomoqt.tools.moq_interop_relay -h', '--port'))
+
+    def relay_proc(self, ctx):
+        return Proc('relay', 'dst', 'aiomoqt', f'python -m aiomoqt.tools.moq_interop_relay --quic --port {MOQT_PORT}',
+                    'relay', env=dict(AIOPQUIC_GSO='0'), settle_s=3)
+
+    def pub_cmd(self, ctx, url):
+        urls = ' '.join(f'moqt://{ctx.paths.dst_ip(k)}:{MOQT_PORT}/moq-relay' for k in range(len(ctx.paths.links)))
+        return super().pub_cmd(ctx, urls)
+
+    def urls(self, ctx):
+        return None, f'moqt://127.0.0.1:{MOQT_PORT}/moq-relay'
+
+
+LANES = {cls.name: cls() for cls in (Srt, Rist, Moq2ts, AiomoqtLoc, AiomoqtMsfts, AiomoqtDual)}

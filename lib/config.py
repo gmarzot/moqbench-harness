@@ -253,6 +253,8 @@ class Deployment:
     def __init__(self, name, data, account=None, where=None):
         self.name, self.account = name, account or {}
         where = where or f'deployments/{name}.toml'
+        if 'contribution' in data:
+            raise ConfigError(f'{where}: a contribution deployment runs with moqbench contrib (CONTRIB.md)')
         only_keys(where, data, self.KEYS)
         self.provider = data.get('provider')
         if self.provider not in PROVIDERS:
@@ -437,6 +439,8 @@ class Suite:
             if test.get('type') == 'fabric':
                 self.check_fabric_test(at, test)
                 continue
+            if test.get('type') == 'contribution':
+                raise ConfigError(f'{at}: contribution tests run with moqbench contrib (CONTRIB.md)')
             only_keys(at, test, self.TEST_KEYS)
             if not isinstance(test.get('note', ''), str) or '\n' in test.get('note', ''):
                 raise ConfigError(f'{at}: note must be one line of text')

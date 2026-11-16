@@ -1,0 +1,42 @@
+description = "Contribution transports on the profile grid: SRT and RIST at equal latency budgets, MoQT lanes at fixed playout buffers, the 20 Mb/s MPEG-2 source. Run with moqbench contrib run."
+
+[[test]]
+type       = "contribution"
+lanes      = ["srt", "rist", "moqt-moq2ts", "moqt-aiomoqt-loc", "moqt-aiomoqt-msfts"]
+profiles   = ["P0", "REF", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"]
+source     = "mpeg2-20m"
+scenario   = "standard"
+repeats    = 3
+placement  = "last-mile"
+rtt_multiples = [2, 3, 4, 6]
+rtt_floor_ms  = 20
+budgets_ms    = [200, 300]
+playout_ms    = [300, 200]
+relay_cc      = ["bbr2", "bbr", "cubic"]
+pub_cc        = ["bbr", "bbr1", "cubic", "c4"]
+note = "SRT latency and RIST buffer equal each budget D; MoQT lanes run once per congestion controller and are scored at every D"
+
+[[test]]
+type      = "contribution"
+lanes     = ["srt", "rist", "moqt-moq2ts"]
+profiles  = ["REF", "P3", "P5"]
+source    = "mpeg2-20m"
+placement = "first-mile"
+relay_cc  = ["bbr2"]
+note      = "the impairment between publisher and relay instead"
+
+[[test]]
+type     = "contribution"
+lanes    = ["srt", "rist", "moqt-moq2ts"]
+profiles = ["REF", "P3"]
+source   = "mpeg2-8m"
+relay_cc = ["bbr2"]
+suffix   = "8m"
+
+[[test]]
+type     = "contribution"
+lanes    = ["srt", "rist", "moqt-moq2ts"]
+profiles = ["REF", "P3"]
+source   = "mpeg2-40m"
+relay_cc = ["bbr2"]
+suffix   = "40m"

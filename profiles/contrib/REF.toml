@@ -1,0 +1,13 @@
+id = "REF"
+name = "Reference WAN"
+description = "netem delay 50ms loss 0.5% rate 1gbit on the forward path; the reverse path is clean."
+rtt_ms = 50
+
+[forward]
+delay_ms = 50
+loss = { random = 0.5 }
+seed = 2001
+
+[reverse]
+delay_ms = 0
+seed = 2002

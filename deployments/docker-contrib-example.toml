@@ -1,0 +1,30 @@
+# Example: the contribution path on the local Docker host. Three network namespaces (src, wan, dst)
+# joined by plain veths; each lane process runs in its own container inside one of them. Pin each
+# namespace to its own cores so the emulator and the endpoints do not share CPUs.
+provider = "docker"
+host     = "local"
+
+[contribution]
+subnet = "10.79.0.0/16"
+
+[contribution.images]
+tools   = "moqbench-contrib-tools:dev"         # build/contrib-tools.Dockerfile
+ffmpeg  = "moqbench-contrib-ffmpeg:n9.0.2"     # build/contrib-ffmpeg.Dockerfile
+moq2ts  = "moqbench-contrib-moq2ts:dev"        # build/contrib-moq2ts.Dockerfile
+aiomoqt = "moqbench-contrib-aiomoqt:0.15.0rc1" # build/contrib-aiomoqt.Dockerfile
+moqx    = "ghcr.io/openmoq/moqx:v0.3.7-amd64"
+
+[[nodes]]
+name  = "src"
+roles = ["sender"]
+cpus  = "2-5"
+
+[[nodes]]
+name  = "wan"
+roles = ["wan"]
+cpus  = "6-7"
+
+[[nodes]]
+name  = "dst"
+roles = ["receiver"]
+cpus  = "8-11"
