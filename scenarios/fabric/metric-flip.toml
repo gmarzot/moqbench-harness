@@ -1,0 +1,60 @@
+description = "Live delivery while path costs change through each relay's own control API. The ingest relay makes its direct session to the egress relay cheaper, once landing at a group's end and once mid-group, and dearer again after each; the transit relay then makes its session to the ingest relay dearer (mid-group) and cheaper again. Each change moves the egress relay's traffic between the direct link and the transit relay. The report gives where in its group the publisher was at each event."
+mode        = "stream"
+publisher   = "ingest"
+subscribers = ["all"]
+sub_start_s = 2
+peering_poll_s = 5
+
+[[event]]
+at_s   = 15
+verb   = "peer.metric"
+on     = "ingest"
+peer   = "egress"
+metric = 100
+expect = "hitless"
+label  = "onto the direct link at a group's end"
+
+[[event]]
+at_s   = 30
+verb   = "peer.metric"
+on     = "ingest"
+peer   = "egress"
+metric = 300
+expect = "hitless"
+label  = "back through the transit relay"
+
+[[event]]
+at_s   = 45.5
+verb   = "peer.metric"
+on     = "ingest"
+peer   = "egress"
+metric = 100
+expect = "hitless"
+label  = "onto the direct link mid-group"
+
+[[event]]
+at_s   = 60
+verb   = "peer.metric"
+on     = "ingest"
+peer   = "egress"
+metric = 300
+expect = "hitless"
+label  = "back through the transit relay"
+
+[[event]]
+at_s   = 75.5
+verb   = "peer.metric"
+on     = "transit"
+peer   = "ingest"
+metric = 400
+expect = "hitless"
+label  = "onto the direct link mid-group, by the transit relay"
+
+[[event]]
+at_s   = 90
+verb   = "peer.metric"
+on     = "transit"
+peer   = "ingest"
+metric = 100
+expect = "hitless"
+label  = "back through the transit relay, by the transit relay"

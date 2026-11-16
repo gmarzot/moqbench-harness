@@ -1,0 +1,7 @@
+description = "Datagrams published on the transit relay, with a reference subscriber there and on every other relay: datagrams from a publisher on the transit relay must reach the other relays."
+mode        = "stream"
+publisher   = "transit"
+subscribers = ["all"]
+datagram    = true
+sub_start_s = 2
+peering_poll_s = 5

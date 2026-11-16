@@ -8,3 +8,10 @@ state_poll_ms = 2
 settle_s    = 4
 gap_s       = 2
 warm_s      = 6
+
+# A namespace-only publisher on moqx is not pulled across peering, so remote
+# subscribers are expected to get nothing (XFAIL; XPASS once it works).
+[expect_remote]
+publisher_adapter = "moqx-peering"
+expect = "fail"
+defect = "moqx does not pull a PUBLISH_NAMESPACE-only track across peering"

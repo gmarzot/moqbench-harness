@@ -1,0 +1,7 @@
+description = "The datagram-through-transit control: the same datagrams with no subscriber on the transit relay."
+mode        = "stream"
+publisher   = "ingest"
+subscribers = ["ingest", "egress"]
+datagram    = true
+sub_start_s = 2
+peering_poll_s = 5

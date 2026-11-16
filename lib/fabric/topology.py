@@ -57,11 +57,21 @@ def normalize(pairs, order):
     return sorted(out, key=lambda p: (pos[p[0]], pos[p[1]]))
 
 
-def dial_lists(link_list, order):
-    """The peers each node dials: every link's earlier node dials the later one."""
+def dialer(a, b, order, dialers=()):
+    """Which end dials the link a-b: the one an override names, else the earlier in order."""
+    for d, listener in dialers:
+        if {d, listener} == {a, b}:
+            return d
+    first, _ = normalize([(a, b)], order)[0]
+    return first
+
+
+def dial_lists(link_list, order, dialers=()):
+    """The peers each node dials: an override's dialer, else every link's earlier node."""
     out = {n: [] for n in order}
     for a, b in normalize(link_list, order):
-        out[a].append(b)
+        d = dialer(a, b, order, dialers)
+        out[d].append(b if d == a else a)
     return out
 
 

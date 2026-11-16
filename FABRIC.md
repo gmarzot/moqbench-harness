@@ -3,8 +3,9 @@
 A fabric is several relays peered into one mesh and tested as one system: per-hop
 latency, how fast names and subscriptions cross it, and what live delivery does
 while peers change or links degrade. A fabric runs on one Docker host, or with
-one relay per VM in a cloud testbed ([VM fabrics](#vm-fabrics)). The first
-adapter is moqx with moq-peering.
+one relay per VM in a cloud testbed ([VM fabrics](#vm-fabrics)). Adapters
+exist for moqx with moq-peering and for LAPS; each relay node picks its own, so
+one fabric can mix them ([Mixed fabrics](#mixed-fabrics)).
 
 ## Quick start
 
@@ -28,18 +29,23 @@ how the relays peer:
 
 | key | default | meaning |
 |---|---|---|
-| `adapter` | `moqx-peering` | the relay and its interconnect |
-| `image` | `moqx-peering:latest` | relay image |
+| `adapter` | `moqx-peering` | the relay and its interconnect, for relay nodes that name none (`moqx-peering`, `laps`) |
+| `image` | `moqx-peering:latest` for moqx | relay image, for relay nodes of that adapter that name none |
 | `topology` | `line` | `line`, `star`, `ring`, `full` or `custom` (with `links`) |
 | `order` | relay nodes in file order | the first node is the ingest relay, the last the egress relay |
 | `hub` | first in order | the centre of a star |
 | `wire` | `full` | `full` gives every relay pair a link network, so links can be added at runtime; `topology` only the topology's |
 | `subnet` | `10.77.0.0/16` | the access network is its first /24, then one /24 per link |
-| `threads`, `check_interval_ms`, `draft` | `2`, `5000`, `16` | relay IO threads, peer reconnect interval, client MoQT draft |
+| `threads`, `check_interval_ms`, `draft` | `2`, `5000`, `18` | relay IO threads, peer reconnect interval, client MoQT draft |
+| `dial` | none | `[dialer, listener]` pairs that override which end dials a link |
+| `metrics` | none | `[node, peer, metric]`: the session metric a dialing moqx relay starts with on that link |
+| `peer_pip`, `peer_command`, `peer_image` | see [Mixed fabrics](#mixed-fabrics) | peer nodes |
 | `aiomoqt`, `aiopquic` | releases | client versions in the lab image (`build/lab-node.Dockerfile`) |
 
-Each link is dialed from one side only: the node earlier in `order` dials. Nodes
-take an optional `fabric_role` (`edge`, `via`, `stub`) and `cpus` (a cpuset).
+Each link is dialed from one side only: the node earlier in `order` dials,
+unless a `dial` entry says otherwise. Nodes take an optional `fabric_role`
+(`edge`, `via`, `stub`) and `cpus` (a cpuset); relay nodes also take `adapter`,
+`image` and `admin_image`.
 
 On the Docker host each relay is two containers, as a pod is. The holder owns
 the relay's addresses: one on the access network, one per link network. The
@@ -76,12 +82,16 @@ group), `draft`, `peering_poll_s`, `slo_ms`, `links` (custom), `suffix`, `note`.
 | scenario | measures | verdicts |
 |---|---|---|
 | `steady` | per-hop latency, jitter and loss: one publisher on the ingest relay, one reference subscriber on every relay | every subscriber gets every object once |
-| `propagation` | a PUBLISH_NAMESPACE reaching every relay's `/state`, polled every 2 ms; then subscribers nearest first, cold then warm | the namespace reaches every relay; each subscriber gets every object once |
+| `propagation` | a PUBLISH_NAMESPACE reaching every moqx relay's `/state`, polled every 2 ms, and every other relay's namespaces, sampled once at the end of the settle window; then subscribers nearest first, cold then warm | the namespace reaches every relay; the publisher's relay delivers every object once; remote subscribers of a moqx publisher are XFAIL (see `expect_remote`) |
 | `subscribe-setup` | connect to SUBSCRIBE_OK and connect to first object, for a PUBLISH-announced track, farthest relay first, cold then warm | each subscriber gets every object once |
 | `peer-churn` | gap, loss, duplicates, recovery and latency before and after each peer change during live delivery | per event: `hitless` (no loss, no duplicates) or `group-loss` (at most one group lost, no duplicates) |
 | `egress-fanout` | a load_sim audience on the egress relay beside the reference subscribers; each link's send rate | the audience holds the gate; each link carrying the track carries it once (0.5–1.6 times its payload rate) |
 | `edge-scale` | one load_sim audience per relay | every audience holds the gate on its own |
 | `late-join` | an MSF publisher (pub_media: catalog and audio), then one late `sub_media --analyze` per relay: time to catalog and to each track's first frame | catalog received, every track delivered without duplicates |
+| `metric-flip` | path changes through each relay's own control API: onto the direct link at a group's end and mid-group, then by the transit relay, each followed by a change back | per event: `hitless`; each event is labelled with where in its group the publisher was |
+| `datagram-transit-origin` | datagrams published on the transit relay, a subscriber on every relay | every subscriber gets every datagram once |
+| `datagram-through-transit` | datagrams from the ingest relay while the transit relay has a local subscriber | every subscriber, the egress relay's included, gets every datagram once |
+| `datagram-through-transit-control` | the same with no subscriber on the transit relay | as above |
 | `fetch-peer` | a joining FETCH (aiomoqt's join example) on the publisher's relay and on every other relay | FETCH_OK on the publisher's relay; across peering, `expect_across = "fail"` reports a refusal as XFAIL and a success as XPASS |
 
 The gate for an audience: over its steady samples (from the first at the full
@@ -92,10 +102,17 @@ at least 90% of the expected receive rate and a p90 at or under the test's
 Scenario keys: `mode` (`stream` or `setup`), `publisher`, `subscribers`
 (`["all"]` or node names and roles), `pub_ns`, `sub_start_s`, `peering_poll_s`,
 `state_poll_ms`, `netdev_s`, `settle_s`, `gap_s`, `warm_s`, `cold_order`,
-`namespace_check`, `audio_frames_per_group` (media), `fetch_history` and
-`expect_across` (fetch), `[[event]]` tables, and `[[population]]` tables (`edge`:
-a node, a role or `each`; `subs`; `subs_per_proc`) for load_sim audiences on
-the load hosts.
+`namespace_check`, `datagram` (the publisher sends ObjectDatagrams),
+`audio_frames_per_group` (media), `fetch_history` and `expect_across` (fetch),
+`[[event]]` tables (an event may carry a `label` for the report), and
+`[[population]]` tables (`edge`: a node, a role or `each`; `subs`;
+`subs_per_proc`) for load_sim audiences on the load hosts.
+
+`[expect_remote]` marks a known defect: when the publisher's relay runs
+`publisher_adapter`, subscribers on every other relay are expected to fail
+(`expect = "fail"`, with a `defect` description). They report XFAIL, or XPASS
+once the defect is fixed; neither counts as a pass, and XPASS fails the run so
+the expectation gets updated.
 
 ## Faults
 
@@ -199,17 +216,76 @@ and the summary reports each host's offset and a budget of twice the worst one.
 Reference subscribers share the publisher's clock and need none of it; audience
 latency on the load hosts does.
 
+## Mixed fabrics
+
+Relays of different implementations peer when they speak the same interconnect;
+moqx and LAPS both use moq-peering. `deployments/docker-mixed-fabric-example.toml`
+is a triangle of moqx-a, LAPS and moqx-b on the local Docker, with an aiomoqt peer
+node, and `suites/example-mixed-fabric.toml` runs steady delivery, propagation
+and a path change through each relay's control API (`metric-flip`).
+
+```bash
+./bin/moqx-peering-build.sh docker-mixed-fabric-example
+./bin/laps-build.sh docker-mixed-fabric-example [ref]      # laps:<sha8> and laps:builder-<sha8>, and :latest
+./bin/moqbench fabric run docker-mixed-fabric-example example-mixed-fabric
+```
+
+**LAPS** runs `lapsRelay` with its peers on the command line: `-b 0.0.0.0` (it
+binds loopback otherwise), `-p 33435` for clients, `-e <node>` as its peering
+label, `--peer_port 33434`, one `--peer` per link it dials, and the node's
+certificate. Its clients speak MoQT draft 18 only, so a run refuses any other
+draft when a fabric has a LAPS relay. It has no peer-metric flag (a `metrics`
+entry on a link LAPS dials is refused; use a `peer.metric` event), checks its
+peers every 5 s, and ignores SIGTERM, so its container stops after 2 s. Control
+is lapsAdmin (JSON-RPC over MoQ) in a sidecar container in the relay's namespace,
+from `admin_image`, by default the image's builder tag (`laps:X` -> `laps:builder-X`),
+which carries lapsAdmin. Every call is MoQ traffic that floods the fabric, so the
+harness reads LAPS state only to change a peer, once at the end of propagation's
+settle window and at the end of a run, checks readiness by its listening port,
+and checks a link from its moqx end when it has one. `bin/laps-build.sh` builds
+both images from Quicr/laps at a ref, with local patches from the ignored
+`patches/local/laps/`; a patched build is tagged `<sha8>-p<count>`. The
+datagram scenarios show the difference between a LAPS image with and without a
+fix: give the LAPS node the image to test.
+
+**Peer nodes** (`roles = ["peer"]`) join the fabric as aiomoqt peering nodes, not
+relays. Each runs `peer_command` in its own container on the access network,
+from `peer_image` (`build/fabric-peer.Dockerfile`: the lab image plus `peer_pip`,
+by default aiomoqt's peering-probe branch). The command is a template:
+
+| field | becomes |
+|---|---|
+| `{peers}` | `--peer <address>:33434` for each relay in the node's `dials` (default `["ingest"]`) |
+| `{node}` | the node's name |
+| `{seconds}` | the run's length |
+| `{output}` | the JSON report path in the run's results |
+| `{namespace}`, `{track}` | the run's track |
+
+The default is `moq-peer-probe {peers} -p 0 --node-id {node} -t {seconds} -i 5 -o {output}`;
+a node's own `command` replaces it, and its own `image` replaces `peer_image`.
+`moq-peer-bench` fits the same template, for example
+`moq-peer-bench {peers} --node-id {node} --role sub -N {namespace} -T {track} -t {seconds} -o {output}`
+receives the run's track over peering. The summary reports what each peer node
+learned: the relays it saw, how many announces and subscribes passed the hash
+check, and whether it stayed a leaf (it sent no NODE_INFO and no learned path
+runs through it). For moq-peer-bench it does so per end (`pub`, `sub`), and adds
+each received track's objects, loss, duplicates, payload check, latency
+(p50/p90/p99) and header-to-first-object time, and each published track's
+object count; a received track is checked for every object once. Peer nodes run
+on Docker fabrics only.
+
 ## Adapters
 
 `lib/fabric/adapter.py` is the relay-neutral interface: render a node's config
-and container, report readiness, add, remove, restart and re-price a peer, and
-read peer state, namespaces, raw state and metrics. A verb the relay lacks raises
-`Unsupported` and the event is reported as skipped. `lib/fabric/moqx_peering.py`
-implements all of it for moqx.
+and container (and a control sidecar when it needs one), report readiness, add,
+remove, restart and re-price a peer, and read peer state, namespaces, raw state
+and metrics. A verb the relay lacks raises `Unsupported` and the event is
+reported as skipped. `lib/fabric/moqx_peering.py` implements it for moqx and
+`lib/fabric/laps.py` for LAPS.
 
 ## Limits
 
 One Docker host shares its CPUs, memory and kernel among every relay and client:
-results are functional and relative, not capacity. Pin cores with `cpus`. Other
-relays' adapters, cross-region fabrics and per-track path visibility are later
+results are functional and relative, not capacity. Pin cores with `cpus`.
+Further adapters, cross-region fabrics and per-track path visibility are later
 phases.

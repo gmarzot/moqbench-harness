@@ -1,0 +1,7 @@
+description = "Datagrams published on the ingest relay while the transit relay has a local subscriber: the egress relay, reached through the transit relay, must receive each datagram once."
+mode        = "stream"
+publisher   = "ingest"
+subscribers = ["all"]
+datagram    = true
+sub_start_s = 2
+peering_poll_s = 5

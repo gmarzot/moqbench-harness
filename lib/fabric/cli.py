@@ -135,7 +135,7 @@ def main(argv):
             copied = fab.deploy(a.source)
             print(f'{dep.fabric.image}: copied to {", ".join(copied) or "none (every relay has it)"}')
         elif a.verb == 'state':
-            show({n: fab.adapter.peer_state(fab, n) for n in (a.nodes or fab.order)})
+            show({n: fab.adapter_for(n).peer_state(fab, n) for n in (a.nodes or fab.order)})
         elif a.verb == 'peer':
             ev = dict(verb=f'peer.{a.action}', on=a.on, peer=a.peer)
             if a.metric is not None:

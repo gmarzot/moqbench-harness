@@ -135,7 +135,7 @@ def apply(fab, ev):
         else:
             a = topology.resolve(ev['on'], fab.order)
             b = topology.resolve(ev['peer'], fab.order)
-            ad = fab.adapter
+            ad = fab.adapter_for(a)
             call = {'peer.add': lambda: ad.peer_add(fab, a, b, ev.get('metric')),
                     'peer.remove': lambda: ad.peer_remove(fab, a, b),
                     'peer.restart': lambda: ad.peer_restart(fab, a, b),
