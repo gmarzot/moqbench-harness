@@ -197,7 +197,7 @@ The input tap sits on the source group in `src`; output taps sit on the output g
 | frame delay | per video PES matched on PTS (on a slice-data hash for the LOC lane): first byte in to first byte out, key frames and others apart, and to the last byte out |
 | PCR lost, programme lost | PCRs of the window never output; × the PCR interval |
 | residual TS loss | 1 − output/input non-null packets between the first and last PCR both taps saw |
-| output breaks | gaps ≥ `break_ms` (200) at an output; on each playout buffer, and offline from raw arrivals |
+| output breaks | gaps ≥ `break_ms` (200) at an output, on each playout buffer and offline from raw arrivals; and the longest stretch without one (the soak headline) |
 | late or lost at D | units missing, or with delay above the live-edge delay + D |
 | overhead | forward and reverse wire bytes (nft, before any qdisc) against the source |
 | applied impairment | netem, cap and outage drops per direction; the events as applied, with host times |

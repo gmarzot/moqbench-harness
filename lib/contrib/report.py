@@ -155,12 +155,17 @@ def breaks_of(times, break_ms):
 
 
 def tap_breaks(run, name, w0, w1, break_ms):
+    """Output gaps of break_ms or more in the window, and the longest stretch without one."""
     gaps = []
     for r in rows(run / f'{name}-gaps.csv'):
         a, b = int(r['t_before_ns']), int(r['t_after_ns'])
         if b >= w0 and a <= w1 and (b - a) / 1e6 >= break_ms:
-            gaps.append((b - a) / 1e6)
-    return dict(count=len(gaps), longest_ms=r3(max(gaps)) if gaps else 0.0, total_s=r3(sum(gaps) / 1000))
+            gaps.append((a, b))
+    edges = [w0] + [x for g in gaps for x in g] + [w1]
+    clear = max((edges[i + 1] - edges[i] for i in range(0, len(edges) - 1, 2)), default=w1 - w0)
+    ms = [(b - a) / 1e6 for a, b in gaps]
+    return dict(count=len(ms), longest_ms=r3(max(ms)) if ms else 0.0, total_s=r3(sum(ms) / 1000),
+                break_free_s=r3(max(clear, 0) / 1e9))
 
 
 def ts_counts(run, name, t0, t1):

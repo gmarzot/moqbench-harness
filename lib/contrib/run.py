@@ -101,7 +101,12 @@ class Cell:
         self.out.mkdir(parents=True, exist_ok=True)
         run_dir = prov.run_dir(self.label, self.out)
         bin_dir = prov.bin_dir()
-        folder, name = ensure_source(prov, self.tier, self.length)
+        live = self.scen['source_mode'] == 'live'
+        if live:
+            folder, name = None, 'live'
+            prov.sh(f'mkfifo {shlex.quote(run_dir)}/source.fifo')
+        else:
+            folder, name = ensure_source(prov, self.tier, self.length)
         for fname, text in self.lane.files(self.ctx).items():
             prov.write(run_dir, fname, text)
         emu = emulator.Emulator(prov.paths, prov.wan_exec, self.tier.mux_bps)
@@ -125,8 +130,12 @@ class Cell:
                 self.names.append((prov.start(p, run_dir, bin_dir, self.cid(p), sources_dir=folder), p.name))
             time.sleep(1.0)
             lane_procs = self.lane.procs(self.ctx)
-            source = Proc('source', 'src', 'tools', sources.tsp_cmd(f'/sources/{name}'), 'source')
-            ordered = sorted(lane_procs + [source], key=lambda p: STAGES.index(p.stage))
+            source = [Proc('source', 'src', 'tools',
+                           sources.tsp_cmd('/out/source.fifo' if live else f'/sources/{name}'), 'source')]
+            if live:
+                args = ' '.join(shlex.quote(a) for a in self.tier.ffmpeg_args(self.length))
+                source.insert(0, Proc('encoder', 'src', 'ffmpeg', f'ffmpeg {args} -y /out/source.fifo', 'source'))
+            ordered = sorted(lane_procs + source, key=lambda p: STAGES.index(p.stage))
             meta['commands'] = {p.name: dict(ns=p.ns, image=prov.image(p.image), cmd=p.cmd, env=p.env)
                                 for p in helpers + ordered}
             t_source = None

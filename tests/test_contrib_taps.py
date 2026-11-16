@@ -229,6 +229,8 @@ class Analysis(unittest.TestCase):
         self.assertGreaterEqual(o['delay_ms']['max'], 400.0)
         self.assertEqual(o['breaks']['count'], 1)
         self.assertGreater(o['breaks']['longest_ms'], 300)
+        self.assertGreater(o['breaks']['break_free_s'], 4.5)
+        self.assertLess(o['breaks']['break_free_s'], 6.2)
         lol = o['late_or_lost_pct']
         self.assertGreater(lol['100'], lol['300'])
         self.assertAlmostEqual(o['ts']['residual_loss_pct'], 100 * 2 / 200, delta=0.6)
