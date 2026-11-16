@@ -12,7 +12,10 @@
 # $IMAGE:<tag>. The tag is <sha8>, or <sha8>-p<count> with patches; $IMAGE:latest
 # and $IMAGE:builder-latest follow them. Image labels and
 # .testbed/builds/<image>-<tag>.json record the ref, the resolved commit, the
-# submodule commits and each patch's sha256.
+# submodule commits, each patch's sha256 and the moq-peering commit the build used.
+#
+# LAPS fetches moq-peering from a branch at build time, so the builder stage is
+# built without the layer cache; LAPS_BUILD_CACHE=1 reuses it.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 DEP=${1:?usage: laps-build.sh <deployment> [ref]}
@@ -61,22 +64,35 @@ PATCH_LABEL=$(for p in "${PATCHES[@]}"; do printf '%s:%s,' "$(basename "$p")" "$
 push "$STAGE" "moqbench-build/stage-laps-$TAG"
 
 echo "== $IMAGE:$TAG from $SHA ($DESCRIBE), ${#PATCHES[@]} local patch(es)"
+NOCACHE=--no-cache
+[[ ${LAPS_BUILD_CACHE:-0} == 1 ]] && NOCACHE=
 LABELS="--label org.moqbench.repo=$REPO --label org.moqbench.ref='$REF' --label org.moqbench.revision=$SHA \
   --label org.moqbench.submodules='$SUBMODULES' --label org.moqbench.patches='$PATCH_LABEL'"
 run "set -euo pipefail; S=moqbench-build/stage-laps-$TAG; cd $WORK
   for p in \$(ls ~/\$S/patches/*.patch 2>/dev/null | sort); do git apply --whitespace=nowarn \"\$p\"; echo \"  applied \$(basename \$p)\"; done
   export DOCKER_BUILDKIT=1
-  $DOCKER build -q --target builder $LABELS -t $IMAGE:builder-$TAG -f Dockerfile . >/dev/null
+  $DOCKER build -q $NOCACHE --target builder $LABELS -t $IMAGE:builder-$TAG -f Dockerfile . >/dev/null
   $DOCKER build -q $LABELS -t $IMAGE:$TAG -f Dockerfile . >/dev/null
   $DOCKER tag $IMAGE:$TAG $IMAGE:latest
   $DOCKER tag $IMAGE:builder-$TAG $IMAGE:builder-latest
   git reset -q --hard"
 IMAGE_ID=$(run "$DOCKER image inspect $IMAGE:$TAG --format '{{.Id}}'")
 ADMIN=$(run "$DOCKER run --rm --entrypoint ls $IMAGE:builder-$TAG /ws/build/src/lapsAdmin 2>/dev/null" || true)
+PEERING=$(run "$DOCKER run --rm -i --entrypoint sh $IMAGE:builder-$TAG" <<'SH' || true
+g=$(find / -path /proc -prune -o -type d -path "*moq-peering*-src/.git" -print 2>/dev/null | head -n1)
+[ -n "$g" ] || exit 0
+h=$(cat "$g/HEAD")
+case $h in
+  ref:*) r=${h#ref: }; if [ -f "$g/$r" ]; then cat "$g/$r"; else grep " $r\$" "$g/packed-refs" | cut -d" " -f1; fi ;;
+  *) echo "$h" ;;
+esac
+SH
+)
+echo "  moq-peering ${PEERING:-unknown}"
 mkdir -p "$ROOT/.testbed/builds"
 OUT="$ROOT/.testbed/builds/${IMAGE//\//_}-$TAG.json"
 REPO="$REPO" REF="$REF" SHA="$SHA" DESCRIBE="$DESCRIBE" IMAGE_TAG="$IMAGE:$TAG" IMAGE_ID="$IMAGE_ID" \
-SUBMODULES="$SUBMODULES" ADMIN="$ADMIN" python3 - "$OUT" "${PATCHES[@]}" <<'PY'
+SUBMODULES="$SUBMODULES" ADMIN="$ADMIN" PEERING="$PEERING" python3 - "$OUT" "${PATCHES[@]}" <<'PY'
 import datetime, hashlib, json, os, pathlib, sys
 patches = [dict(name=pathlib.Path(p).name, sha256=hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest())
            for p in sys.argv[2:]]
@@ -84,6 +100,7 @@ doc = dict(repository=os.environ['REPO'], ref=os.environ['REF'], revision=os.env
            describe=os.environ['DESCRIBE'], submodules=os.environ['SUBMODULES'].split(), patches=patches,
            image=os.environ['IMAGE_TAG'], builder_image=os.environ['IMAGE_TAG'].replace(':', ':builder-', 1),
            image_id=os.environ['IMAGE_ID'], admin_bin=os.environ['ADMIN'] or None,
+           moq_peering=os.environ['PEERING'] or None,
            built_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
 pathlib.Path(sys.argv[1]).write_text(json.dumps(doc, indent=2) + '\n')
 PY
