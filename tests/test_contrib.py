@@ -141,6 +141,7 @@ class Topology(unittest.TestCase):
         self.assertIn('ip route add 10.79.1.0/24 via 10.79.2.1', cmds['dst'])
         self.assertTrue(any('gso off gro off tso off tx-udp-segmentation off' in c for c in cmds['wan']))
         self.assertTrue(any('239.0.0.0/8 dev mc0' in c for c in cmds['dst']))
+        self.assertEqual(p.rx_devs()['dst'], ['wb0', 'mc0'])
         self.assertEqual(p.veth_cmds({'src': 1, 'wan': 2, 'dst': 3})[0],
                          'ip link add va0 netns 2 type veth peer name wa0 netns 1')
 
@@ -212,21 +213,29 @@ class Lanes(unittest.TestCase):
 
     def test_aiomoqt_lanes_follow_the_probed_flags(self):
         loc = lanes.LANES['moqt-aiomoqt-loc']
-        old = {p.name: p for p in loc.procs(ctx(dict(pub_cc='bbr1', relay_cc='bbr2')))}
+        old_ctx = ctx(dict(pub_cc='bbr1', relay_cc='bbr2'))
+        old = {p.name: p for p in loc.procs(old_ctx)}
         self.assertIn('udp2pipe.py 239.79.0.1:5000 | python -m aiomoqt.tools.pub_media', old['aiomoqt-pub'].cmd)
         self.assertIn('--cc-algo bbr1', old['aiomoqt-pub'].cmd)
         self.assertIn('--annexb', old['aiomoqt-sub'].cmd)
+        self.assertEqual(loc.in_tap_hash(old_ctx), 'vcl')
         self.assertEqual(old['aiomoqt-pub'].env['AIOPQUIC_GSO'], '0')
-        self.assertEqual(loc.taps(ctx({})), {})
-        new_ctx = ctx(dict(pub_cc='bbr', relay_cc='bbr2'), features=dict(ts_udp=True, ts_out=True, frame_log=True))
+        self.assertEqual(loc.taps(old_ctx), {})
+        new_ctx = ctx(dict(pub_cc='bbr', relay_cc='bbr2'), features=dict(ts_udp=True, ts_out=True, frame_log=True, msfts=True))
         new = {p.name: p for p in loc.procs(new_ctx)}
         self.assertIn('--ts udp://@239.79.0.1:5000', new['aiomoqt-pub'].cmd)
-        self.assertIn('--ts-out udp://127.0.0.1:6010 --frame-log /out/frames.jsonl', new['aiomoqt-sub'].cmd)
-        self.assertIn('playout', new)
+        self.assertIn('--frame-log /out/frames-$(date +%s%N).jsonl', new['aiomoqt-sub'].cmd)
+        self.assertIn('--draft 18', new['aiomoqt-sub'].cmd)
+        self.assertEqual(loc.in_tap_hash(new_ctx), 'loc')
         msfts = lanes.LANES['moqt-aiomoqt-msfts']
         self.assertIn('--msfts', msfts.pending({}))
-        self.assertIsNone(msfts.pending(dict(msfts=True, ts_out=True)))
-        self.assertIn('--msfts --msfts-packets 7', {p.name: p for p in msfts.procs(new_ctx)}['aiomoqt-pub'].cmd)
+        self.assertIsNone(msfts.pending(dict(ts_udp=True, msfts=True, ts_out=True)))
+        procs = {p.name: p for p in msfts.procs(new_ctx)}
+        self.assertIn('--ts udp://@239.79.0.1:5000 --msfts --msfts-packets 7', procs['aiomoqt-pub'].cmd)
+        self.assertIn('--ts-out udp://127.0.0.1:6010', procs['aiomoqt-sub'].cmd)
+        self.assertIn('--udp 127.0.0.1:6010', procs['playout'].cmd)
+        self.assertIn('po300', msfts.taps(new_ctx))
+        self.assertIsNone(msfts.in_tap_hash(new_ctx))
 
 
 class FakeWan:

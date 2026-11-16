@@ -65,7 +65,8 @@ class Cell:
     def helpers(self):
         """Taps, analyser and probes for this lane."""
         bin_ = 'python3 /contrib/bin'
-        frames = '--frames --hash' if self.lane.in_tap_hash() else '--frames'
+        form = self.lane.in_tap_hash(self.ctx)
+        frames = f'--frames --hash --hash-form {form}' if form else '--frames'
         gap = self.scen['gap_ms']
         procs = [Proc('tap-in', 'src', 'tools',
                       f'{bin_}/tstap.py --udp in={sources.GROUP_IN}:{sources.PORT_IN} {frames} --gap-ms {gap} --out /out'),

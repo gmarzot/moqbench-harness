@@ -69,9 +69,10 @@ class Paths:
         return dict(src=src, wan=wan, dst=dst)
 
     def rx_devs(self):
-        """{namespace: veths} whose receive queues get RPS, so a flow keeps its order whichever CPU sends."""
-        return dict(src=[ln['src_if'] for ln in self.links], wan=self.fwd_dev + self.rev_dev,
-                    dst=[ln['dst_if'] for ln in self.links])
+        """{namespace: interfaces} whose receive queues get RPS, so a flow keeps its order whichever CPU
+        sends: the veths, and the dummy that loops the local multicast groups back."""
+        return dict(src=[ln['src_if'] for ln in self.links] + ['mc0'], wan=self.fwd_dev + self.rev_dev,
+                    dst=[ln['dst_if'] for ln in self.links] + ['mc0'])
 
     def relay_addresses(self, placement):
         """(namespace the relay runs in, address the publisher dials, address the subscriber dials)."""

@@ -12,7 +12,8 @@ latency budgets, recovery overhead, and recovery from outages. The lanes are SRT
 docker build -t moqbench-contrib-tools:dev   -f build/contrib-tools.Dockerfile build
 docker build -t moqbench-contrib-ffmpeg:n9.0.2 -f build/contrib-ffmpeg.Dockerfile build
 docker build -t moqbench-contrib-moq2ts:dev  -f build/contrib-moq2ts.Dockerfile build
-docker build -t moqbench-contrib-aiomoqt:0.15.0rc1 -f build/contrib-aiomoqt.Dockerfile build
+docker build -t moqbench-contrib-aiomoqt:dev --build-arg AIOMOQT=git+https://github.com/gmarzot/aiomoqt@gmarzot-msfts \
+    -f build/contrib-aiomoqt.Dockerfile build
 docker pull ghcr.io/openmoq/moqx:v0.3.7-amd64
 
 ./bin/moqbench contrib up docker-contrib-example          # namespaces, veths, routes; prints the checks
@@ -36,7 +37,8 @@ with `suite.json` and `host.json` beside them. `results/` is ignored by git.
 - Three network namespaces, each held by a container (`mbc-<deployment>-src|wan|dst`), joined by
   plain veth pairs: no bridge, NAT or conntrack. `wan` routes between the two /24s.
 - Segmentation offloads are off on every veth, and RPS steers each veth's receive queue to its
-  namespace's CPUs. Without RPS a sender that migrates between CPUs reorders its own packets.
+  namespace's CPUs, and so does the multicast dummy in each endpoint. Without RPS a sender that
+  migrates between CPUs reorders its own packets.
 - Each lane process runs in its own container inside one namespace. Its signals reach every process
   of its pipeline, so files flush on stop. Every container carries the label
   `org.moqbench.contrib=<deployment>`, and `down` removes only those.
@@ -123,8 +125,8 @@ Profiles are `profiles/contrib/<ID>.toml`:
 | `srt` | `srt-live-transmit` from the source group, caller | `srt-live-transmit` listener to the output group |
 | `rist` | `ristsender -p 1` | `ristreceiver -p 1` |
 | `moqt-moq2ts` | `tsp` → SRT (latency 100) → `moq2ts-cli --transparent --draft 18 --quic-idle-timeout 3000` → moqx | `moq2ts-receiver --draft 18` → PCR-locked playout |
-| `moqt-aiomoqt-loc` | `pub_media --ts` (LOC) → moqx | `sub_media` → frame tap, or `--ts-out` → playout |
-| `moqt-aiomoqt-msfts` | `pub_media --msfts --msfts-packets 7` → moqx | `sub_media --ts-out` → playout |
+| `moqt-aiomoqt-loc` | `pub_media --ts udp://@…` (LOC) → moqx | `sub_media --frame-log` (sha1 per frame) |
+| `moqt-aiomoqt-msfts` | `pub_media --ts udp://@… --msfts --msfts-packets 7` → moqx | `sub_media --ts-out` → PCR-locked playout |
 | `moqt-aiomoqt-dual` | `pub_media` to one aiomoqt-relay over two paths | `sub_media --ts-out` → playout |
 
 **SRT** sets `-chunk:1316` and `lossmaxttl=32` on both ends, and takes its input from UDP, never a
@@ -150,11 +152,16 @@ least 25 ms (more than the profile's slot), and `bandwidth` = 1.5 × the multipl
 
 **aiomoqt** lanes probe the image's tools before a run:
 
-- `pub_media --ts udp://...` reads the source group directly; without it, `udp2pipe.py` feeds
-  `--ts -`.
-- `sub_media --ts-out` feeds the playout and the taps. Without it the LOC lane falls back to
-  `--pipe video` into an H.264 frame tap.
-- The MSFTS lane needs `--msfts` and `--ts-out`, and reports PENDING until the image has them.
+- `pub_media --ts udp://@GROUP:PORT` reads the source group directly; without it, `udp2pipe.py`
+  feeds `--ts -`.
+- The LOC lane matches frames on the sha1 that `sub_media --frame-log` writes; the source tap
+  hashes each H.264 frame as the LOC payload aiomoqt's demuxer yields. Without `--frame-log` it
+  falls back to `--pipe video` into an H.264 tap matched on slice data.
+- The MSFTS lane carries the TS packets unmodified (`--msfts`, 7 per object), and `sub_media
+  --ts-out` writes them on arrival to the common playout and taps. It reports PENDING until the
+  image has `--ts udp://`, `--msfts` and `--ts-out`.
+- Each `sub_media` also writes its own `--analyze` report (and, for MSFTS, `--arrival-log`), kept
+  as diagnostics.
 - Build an image from a branch with `--build-arg AIOMOQT=git+https://github.com/<owner>/aiomoqt@<branch>`.
 - MoQT publishers run with `AIOPQUIC_GSO=0`.
 

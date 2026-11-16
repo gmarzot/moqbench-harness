@@ -9,7 +9,7 @@ ARG TSDUCK_SHA256=318317926aa2c04d1e1d4da11143e696fd27aaf4cfcdba3902c0c9fdcdf142
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git build-essential cmake pkg-config meson ninja-build tclsh libssl-dev \
-      iproute2 nftables ethtool socat iperf3 procps tcpdump python3 \
+      iproute2 iputils-ping nftables ethtool socat iperf3 procps tcpdump python3 \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 --branch ${SRT_REF} https://github.com/Haivision/srt.git /src/srt \
     && cmake -S /src/srt -B /src/srt/build -DCMAKE_BUILD_TYPE=Release -DENABLE_APPS=ON \
@@ -25,7 +25,6 @@ RUN curl -fsSL -o /tmp/tsduck.deb \
     && echo "${TSDUCK_SHA256}  /tmp/tsduck.deb" | sha256sum -c - \
     && apt-get update && apt-get install -y --no-install-recommends /tmp/tsduck.deb \
     && rm -rf /var/lib/apt/lists/* /tmp/tsduck.deb
-RUN apt-get update && apt-get install -y --no-install-recommends iputils-ping && rm -rf /var/lib/apt/lists/*
 RUN { srt-live-transmit -version 2>&1 | head -1; ristsender -h 2>&1 | grep -i -m1 version; tsp --version 2>&1 | head -1; } \
       > /etc/contrib-tools-versions.txt; cat /etc/contrib-tools-versions.txt
 LABEL org.moqbench.srt="${SRT_REF}" org.moqbench.rist="${RIST_REF}" org.moqbench.tsduck="${TSDUCK_VERSION}"

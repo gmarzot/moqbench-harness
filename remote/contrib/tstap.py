@@ -25,7 +25,7 @@ SO_TIMESTAMPNS = 35
 
 
 class Sink:
-    def __init__(self, name, out, frames, hashes, gap_ms, annexb=False):
+    def __init__(self, name, out, frames, hashes, gap_ms, annexb=False, form='vcl'):
         self.name, self.out = name, out
         self.f_pcr = open(os.path.join(out, f'{name}-pcr.csv'), 'w', buffering=1 << 16)
         self.f_pcr.write('pid,pcr,t_ns,n\n')
@@ -37,7 +37,8 @@ class Sink:
         self.f_sec.write('t_s,datagrams,bytes,packets,nulls,cc_errors\n')
         self.gap_ns = int(gap_ms * 1e6)
         on_frame = self.frame if (frames or annexb) else None
-        self.dmx = None if annexb else tslib.Demux(on_pcr=self.pcr, on_frame=on_frame, frames=frames, hashes=hashes)
+        self.dmx = None if annexb else tslib.Demux(on_pcr=self.pcr, on_frame=on_frame, frames=frames, hashes=hashes,
+                                                     form=form)
         self.annexb = tslib.AnnexB(self.frame) if annexb else None
         self.first = self.last = None
         self.datagrams = self.bytes = 0
@@ -131,6 +132,8 @@ def main(argv=None):
     p.add_argument('--out', required=True)
     p.add_argument('--frames', action='store_true', help='log video PES records')
     p.add_argument('--hash', action='store_true', help='hash each video frame (frame matching)')
+    p.add_argument('--hash-form', choices=('vcl', 'loc'), default='vcl',
+                   help='vcl: slice data only; loc: the LOC object payload an aiomoqt publisher sends')
     p.add_argument('--gap-ms', type=float, default=50.0)
     p.add_argument('--duration', type=float, default=0)
     a = p.parse_args(argv)
@@ -160,7 +163,7 @@ def main(argv=None):
         for spec in a.udp:
             name, _, addr = spec.partition('=')
             s = udp_socket(addr)
-            socks[s] = Sink(name, a.out, a.frames, a.hash, a.gap_ms)
+            socks[s] = Sink(name, a.out, a.frames, a.hash, a.gap_ms, form=a.hash_form)
         sinks = list(socks.values())
         while not stop and (end is None or time.monotonic() < end):
             r, _, _ = select.select(list(socks), [], [], 0.2)

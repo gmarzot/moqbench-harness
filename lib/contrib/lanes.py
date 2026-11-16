@@ -94,8 +94,9 @@ class Lane:
         """{name: (group, port, playout buffer)} on dst."""
         return {'out': (OUT, topology.PORTS_OUT['out'], None)}
 
-    def in_tap_hash(self):
-        return False
+    def in_tap_hash(self, ctx):
+        """The source tap's frame hash form ('vcl' or 'loc'), or None for no hashing."""
+        return None
 
     def files(self, ctx):
         return {}
@@ -205,70 +206,85 @@ class Moq2ts(Moqt):
         return procs
 
 
+PUB_MEDIA = 'python -m aiomoqt.tools.pub_media'
+SUB_MEDIA = 'python -m aiomoqt.tools.sub_media'
+STAMP = '$(date +%s%N)'
+
+
 class AiomoqtLoc(Moqt):
+    """pub_media repackages the source's H.264 and AAC as LOC; sub_media logs every frame it receives
+    with the sha1 of its payload, which the source tap computes the same way."""
     name = 'moqt-aiomoqt-loc'
     codec = 'h264'
-    needs = {'ts_udp': ('aiomoqt', 'python -m aiomoqt.tools.pub_media -h', 'udp://'),
-             'ts_out': ('aiomoqt', 'python -m aiomoqt.tools.sub_media -h', '--ts-out'),
-             'frame_log': ('aiomoqt', 'python -m aiomoqt.tools.sub_media -h', '--frame-log')}
+    needs = {'ts_udp': ('aiomoqt', f'{PUB_MEDIA} -h', 'udp://'),
+             'frame_log': ('aiomoqt', f'{SUB_MEDIA} -h', '--frame-log')}
     namespace = 'test/loc'
     pub_extra = ''
 
     def variants(self, test, profile):
         return [dict(pub_cc=p, relay_cc=r) for p, r in itertools.product(test.pub_cc, test.relay_cc)]
 
-    def in_tap_hash(self):
-        return True
+    def in_tap_hash(self, ctx):
+        return 'vcl' if self.fallback(ctx) else 'loc'
 
     def fallback(self, ctx):
-        return not ctx.features.get('ts_out')
+        return not ctx.features.get('frame_log')
 
     def taps(self, ctx):
-        if self.fallback(ctx):
-            return {}
-        return super().taps(ctx)
+        return {}
 
     def pub_cmd(self, ctx, url):
         src = f'--ts udp://@{GROUP_IN}' if ctx.features.get('ts_udp') else '--ts -'
-        cmd = (f'python -m aiomoqt.tools.pub_media {url} -k --draft 18 -N {self.namespace} {src}{self.pub_extra} '
+        cmd = (f'{PUB_MEDIA} {url} -k --draft 18 -N {self.namespace} {src}{self.pub_extra} '
                f'--cc-algo {ctx.variant["pub_cc"]} --keepalive 10 -t 0 --stats-json')
         return cmd if ctx.features.get('ts_udp') else f'{PY}/udp2pipe.py {GROUP_IN} | {cmd}'
+
+    def sub_cmd(self, url):
+        return f'{SUB_MEDIA} {url} -k --draft 18 -N {self.namespace} -t 0'
 
     def procs(self, ctx):
         pub_url, sub_url = self.urls(ctx)
         env = dict(AIOPQUIC_GSO='0')
-        sub = f'python -m aiomoqt.tools.sub_media {sub_url} -k --draft 18 -N {self.namespace} -t 0'
         procs = [self.relay_proc(ctx), Proc('aiomoqt-pub', 'src', 'aiomoqt', self.pub_cmd(ctx, pub_url), 'sender',
                                             env=env, settle_s=2)]
-        if self.fallback(ctx):
-            rx = again(f'{sub} --out /tmp/media --pipe video', 'sub_media')
-            procs.append(Proc('aiomoqt-sub', 'dst', 'aiomoqt',
-                              f'{{ {rx}; }} | {PY}/tstap.py --stdin raw --annexb --out /out',
-                              'subscriber', env=env, settle_s=1))
-        else:
-            log = ' --frame-log /out/frames.jsonl' if ctx.features.get('frame_log') else ''
-            procs.append(Proc('aiomoqt-sub', 'dst', 'aiomoqt',
-                              again(f'{sub} --ts-out udp://127.0.0.1:{LOCAL_TS}{log}', 'sub_media'),
-                              'subscriber', env=env, settle_s=1))
-            procs.append(Proc('playout', 'dst', 'tools', playout_cmd(f'--udp 127.0.0.1:{LOCAL_TS}', ctx.playout_ms),
-                              'receiver'))
+        procs += self.receiver_procs(ctx, sub_url, env)
         return procs
+
+    def receiver_procs(self, ctx, url, env):
+        if self.fallback(ctx):
+            rx = again(f'{self.sub_cmd(url)} --out /tmp/media --pipe video', 'sub_media')
+            return [Proc('aiomoqt-sub', 'dst', 'aiomoqt', f'{{ {rx}; }} | {PY}/tstap.py --stdin raw --annexb --out /out',
+                         'subscriber', env=env, settle_s=1)]
+        rx = (f'{self.sub_cmd(url)} --analyze -i 5 --report /out/sub-analyze-{STAMP}.jsonl '
+              f'--frame-log /out/frames-{STAMP}.jsonl')
+        return [Proc('aiomoqt-sub', 'dst', 'aiomoqt', again(rx, 'sub_media'), 'subscriber', env=env, settle_s=1)]
 
 
 class AiomoqtMsfts(AiomoqtLoc):
+    """pub_media carries the source's TS packets unmodified (MSFTS, 7 per object); sub_media writes
+    them out on arrival to the common playout and taps."""
     name = 'moqt-aiomoqt-msfts'
     codec = 'ts'
-    needs = {'ts_udp': AiomoqtLoc.needs['ts_udp'], 'ts_out': AiomoqtLoc.needs['ts_out'],
-             'msfts': ('aiomoqt', 'python -m aiomoqt.tools.pub_media -h', '--msfts')}
+    needs = {'ts_udp': AiomoqtLoc.needs['ts_udp'], 'ts_out': ('aiomoqt', f'{SUB_MEDIA} -h', '--ts-out'),
+             'msfts': ('aiomoqt', f'{PUB_MEDIA} -h', '--msfts')}
     namespace = 'test/msfts'
     pub_extra = ' --msfts --msfts-packets 7'
 
-    def in_tap_hash(self):
-        return False
+    def in_tap_hash(self, ctx):
+        return None
+
+    def taps(self, ctx):
+        return outputs(ctx.playout_ms)
 
     def pending(self, features):
-        missing = [f for f in ('msfts', 'ts_out') if not features.get(f)]
-        return f'aiomoqt lacks {", ".join(missing)} (pub_media --msfts, sub_media --ts-out)' if missing else None
+        missing = [f for f in ('ts_udp', 'msfts', 'ts_out') if not features.get(f)]
+        return f'aiomoqt lacks {", ".join(missing)} (pub_media --ts udp:// and --msfts, sub_media --ts-out)' if missing else None
+
+    def receiver_procs(self, ctx, url, env):
+        rx = (f'{self.sub_cmd(url)} --ts-out udp://127.0.0.1:{LOCAL_TS} --analyze -i 5 '
+              f'--report /out/sub-analyze-{STAMP}.jsonl --arrival-log /out/arrival-{STAMP}.jsonl')
+        return [Proc('aiomoqt-sub', 'dst', 'aiomoqt', again(rx, 'sub_media'), 'subscriber', env=env, settle_s=1),
+                Proc('playout', 'dst', 'tools', playout_cmd(f'--udp 127.0.0.1:{LOCAL_TS}', ctx.playout_ms), 'receiver')]
 
 
 class AiomoqtDual(AiomoqtMsfts):

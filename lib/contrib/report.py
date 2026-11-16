@@ -233,10 +233,24 @@ def frame_metrics(in_frames, out_frames, w0, w1):
                 key_delay_ms=stats(key), other_delay_ms=stats(other), complete_delay_ms=stats(whole))
 
 
+def frame_log(run, steps):
+    """{sha1: frame} from the subscriber's frame logs (one per connection), arrival times unstepped."""
+    recs = []
+    for p in sorted(run.glob('frames-*.jsonl')):
+        recs += [r for r in jsonl(p) if 'sha1' in r and 'arrival_ns' in r]
+    times = unstep([int(r['arrival_ns']) for r in recs], steps)
+    out = {}
+    for r, t in zip(recs, times):
+        out.setdefault(r['sha1'], dict(key=int(bool(r.get('key'))), size=r.get('size'), t_first=t, t_last=t, broken=0))
+    return out
+
+
 def loc_metrics(run, meta, w0, w1, budgets, steps):
-    """The LOC lane: frames matched on slice-data hash from the source to the subscriber's output."""
+    """The LOC lane: frames matched on hash from the source tap to the subscriber's frame log (or, on
+    an older subscriber, to an H.264 tap on its elementary-stream pipe)."""
     ins = frames(run, 'in', 'hash', steps)
-    outs = frames(run, 'raw', 'hash', steps)
+    logged = list(run.glob('frames-*.jsonl'))
+    outs = frame_log(run, steps) if logged else frames(run, 'raw', 'hash', steps)
     res = frame_metrics(ins, outs, w0, w1)
     units = sorted(((f['t_first'], outs[k]['t_last'] if k in outs else None) for k, f in ins.items()
                     if w0 <= f['t_first'] < w1), key=lambda x: x[0])
@@ -333,6 +347,9 @@ def protocol_stats(run, lane):
                 out['moq2ts_receiver'] = rx.read_text()[:500]
         out['relay'] = relay_counters(run)
         out['playout'] = playout_stats(run)
+        subs = [jsonl(p) for p in sorted(run.glob('sub-analyze-*.jsonl'))]
+        if subs:
+            out['sub_media'] = [s[-1] for s in subs if s]
     return out
 
 

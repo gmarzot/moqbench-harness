@@ -34,21 +34,30 @@ def pes_payload(pes):
 
 
 def nal_units(es):
-    """NAL unit bodies of an Annex-B byte string."""
+    """NAL unit bodies of an Annex-B byte string, trailing zero bytes stripped."""
     out, i, n = [], es.find(b'\x00\x00\x01'), len(es)
     while 0 <= i < n:
         j = es.find(b'\x00\x00\x01', i + 3)
-        body = es[i + 3:j if j >= 0 else n]
-        out.append(body.rstrip(b'\x00') if j >= 0 else body)
+        out.append(es[i + 3:j if j >= 0 else n].rstrip(b'\x00'))
         i = j
     return [u for u in out if u]
 
 
-def video_info(codec, es, want_hash=True):
-    """(key frame, hash of the coded picture or ''). For H.264 and HEVC the hash covers slice data
-    only, so it survives remuxing and parameter sets or delimiters being added or dropped."""
+def loc_payload(units):
+    """An H.264 access unit as a LOC object carries it from a TS source: 4-byte length-prefixed NAL
+    units with SPS, PPS and delimiters left out."""
+    return b''.join(len(u).to_bytes(4, 'big') + u for u in units if (u[0] & 0x1F) not in (7, 8, 9))
+
+
+def video_info(codec, es, want_hash=True, form='vcl'):
+    """(key frame, hash of the coded picture or ''). For H.264 and HEVC the 'vcl' hash covers slice
+    data only, so it survives remuxing and parameter sets or delimiters being added or dropped; the
+    'loc' hash (H.264) is the sha1 of the LOC object payload."""
     if codec in ('h264', 'hevc'):
         units = nal_units(es)
+        if form == 'loc' and codec == 'h264':
+            key = any((u[0] & 0x1F) == 5 for u in units)
+            return key, hashlib.sha1(loc_payload(units)).hexdigest() if want_hash else ''
         if codec == 'h264':
             vcl = [u for u in units if 1 <= (u[0] & 0x1F) <= 5]
             key = any((u[0] & 0x1F) == 5 for u in units)
@@ -66,9 +75,9 @@ class Demux:
     datagram it came in. Calls on_pcr(pid, pcr, t), on_frame(record) for each completed video PES and
     on_packet(pid, t) for each packet; counts packets, nulls and continuity errors per PID."""
 
-    def __init__(self, on_pcr=None, on_frame=None, frames=False, hashes=False):
+    def __init__(self, on_pcr=None, on_frame=None, frames=False, hashes=False, form='vcl'):
         self.on_pcr, self.on_frame = on_pcr, on_frame
-        self.frames, self.hashes = frames, hashes
+        self.frames, self.hashes, self.form = frames, hashes, form
         self.buf = bytearray()
         self.cc, self.counts, self.cc_errors = {}, {}, {}
         self.packets = self.nulls = self.sync_losses = self.tei = 0
@@ -180,7 +189,7 @@ class Demux:
         es = pes_payload(data)
         if self.on_frame is None or pts is None:
             return
-        key, digest = video_info(self.video_codec, bytes(es), self.hashes)
+        key, digest = video_info(self.video_codec, bytes(es), self.hashes, self.form)
         self.on_frame(dict(pts=pts, key=int(key), size=len(es), t_first=t0, t_last=t1, broken=int(broken),
                            hash=digest))
 

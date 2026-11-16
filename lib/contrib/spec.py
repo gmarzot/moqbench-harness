@@ -14,7 +14,7 @@ DEPLOYMENT_KEYS = {'provider', 'host', 'region', 'zone', 'arch', 'tag', 'contrib
 CONTRIB_KEYS = {'subnet', 'images', 'stack_dir', 'uid', 'gid'}
 NODE_KEYS = {'name', 'roles', 'cpus', 'instance', 'ocpus', 'memory_gb', 'vcpus'}
 IMAGES = {'tools': 'moqbench-contrib-tools:dev', 'ffmpeg': 'moqbench-contrib-ffmpeg:n9.0.2',
-          'moq2ts': 'moqbench-contrib-moq2ts:dev', 'aiomoqt': 'moqbench-contrib-aiomoqt:0.15.0rc1',
+          'moq2ts': 'moqbench-contrib-moq2ts:dev', 'aiomoqt': 'moqbench-contrib-aiomoqt:dev',
           'moqx': 'ghcr.io/openmoq/moqx:v0.3.7-amd64'}
 PLACEMENTS = ('last-mile', 'first-mile')
 TEST_KEYS = {'type', 'lanes', 'profiles', 'source', 'scenario', 'repeats', 'placement', 'rtt_multiples',
