@@ -207,6 +207,7 @@ class Lanes(unittest.TestCase):
         self.assertIn('--out 300:239.79.0.2:6000', rx)
         self.assertIn('--out 200:239.79.0.2:6001', rx)
         self.assertIn('reconnecting', rx)
+        self.assertIn("trap 'kill -TERM $pid 2>/dev/null; wait $pid; exit 0' TERM INT", rx)
         relay = procs['relay']
         self.assertEqual(relay.ns, 'src')
         self.assertEqual(relay.env['MOQX_MOQT_VERSIONS'], '[18, 16]')

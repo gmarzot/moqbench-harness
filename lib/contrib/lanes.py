@@ -70,8 +70,11 @@ def rist_params(rtt_ms, slot_max_ms):
 
 def again(cmd, name):
     """A receiver that reconnects after it exits, one second apart, logging each exit; its stdout is
-    one continuous stream for the next stage."""
-    return f"while :; do {cmd}; echo \"[harness] {name} exited rc=$?; reconnecting\" >&2; sleep 1; done"
+    one continuous stream for the next stage. On TERM or INT the loop passes TERM to the receiver and
+    waits for it, so the receiver's end-of-run summary is written before the container stops."""
+    return (f"trap 'kill -TERM $pid 2>/dev/null; wait $pid; exit 0' TERM INT; "
+            f"while :; do {cmd} & pid=$!; wait $pid; "
+            f"echo \"[harness] {name} exited rc=$?; reconnecting\" >&2; sleep 1; done")
 
 
 def playout_cmd(source, playout_ms):

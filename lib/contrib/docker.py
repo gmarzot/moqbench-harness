@@ -152,9 +152,9 @@ class DockerContrib:
             base += ['--user', self.user or self.ids()]
         img = self.image(proc.image)
         if proc.entrypoint:
-            # The shell outlives its job until the job exits, so a signal reaches every process of a
-            # pipeline (tini forwards it to the group) and each can flush before the container stops.
-            args = base + ['--entrypoint', 'sh', img, '-c', f"{proc.cmd} & trap '' TERM INT; wait $!"]
+            # The shell outlives every process of its job, so a signal reaches each of a pipeline (tini
+            # forwards it to the group) and each can flush before the container stops.
+            args = base + ['--entrypoint', 'sh', img, '-c', f"{proc.cmd} & trap '' TERM INT; wait"]
         else:
             args = base + [img] + (shlex.split(proc.cmd) if proc.cmd else [])
         self.sh(' '.join(shlex.quote(a) for a in args))
