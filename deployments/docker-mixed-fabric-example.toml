@@ -1,4 +1,4 @@
-# Example: a mixed moq-peering triangle on the local Docker. moqx-a and moqx-b
+# Example: a mixed moq-fabric triangle on the local Docker. moqx-a and moqx-b
 # run moqx, the transit relay runs LAPS, and two aiomoqt peer nodes join the
 # fabric as leaves: one observes, one receives the run's track. moqx-a's direct
 # session to moqx-b costs 300, so its traffic goes through LAPS (100 + 100)

@@ -71,7 +71,7 @@ class Rendering(unittest.TestCase):
         self.assertEqual(argv, ['/usr/local/bin/lapsRelay', '-b', '0.0.0.0', '-p', '33435', '-e', 'laps',
                                 '--peer_port', '33434', '--peer', '10.77.3.12:33434',
                                 '-c', '/certs/relay.pem', '-k', '/certs/relay.key'])
-        peers = json.loads(fab.adapter_for('moqx-a').render('moqx-a', fab.ctx())['config.yaml'])['peering']['moq_peering']['peers']
+        peers = json.loads(fab.adapter_for('moqx-a').render('moqx-a', fab.ctx())['config.yaml'])['peering']['moq_fabric']['peers']
         self.assertEqual(peers, [{'host': '10.77.1.12', 'port': 33434}, {'host': '10.77.2.12', 'port': 33434, 'metric': 300}])
         self.assertEqual(fab.client_url('laps'), 'moqt://10.77.0.102:33435')
         self.assertEqual(fab.client_url('moqx-b'), 'moqt://10.77.0.103:4433/moq-relay')
@@ -79,7 +79,7 @@ class Rendering(unittest.TestCase):
     def test_dial_override_moves_the_peer_flag(self):
         fab = DockerFabric(deployment(fabric={'dial': [['moqx-b', 'laps']]}))
         self.assertNotIn('--peer', fab.adapter_for('laps').command('laps', fab.ctx()))
-        peers = json.loads(fab.adapter_for('moqx-b').render('moqx-b', fab.ctx())['config.yaml'])['peering']['moq_peering']['peers']
+        peers = json.loads(fab.adapter_for('moqx-b').render('moqx-b', fab.ctx())['config.yaml'])['peering']['moq_fabric']['peers']
         self.assertEqual(peers, [{'host': '10.77.3.11', 'port': 33434}])
 
     def test_compose_sidecar_and_peer(self):
