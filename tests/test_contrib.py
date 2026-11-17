@@ -235,7 +235,9 @@ class Lanes(unittest.TestCase):
         c.relay = 'aiomoqt'
         relay = {p.name: p for p in msfts.procs(c)}['relay']
         self.assertEqual((relay.ns, relay.image), ('src', 'aiomoqt'))
-        self.assertIn('moq_interop_relay --quic --port 4433 --cc-algo bbr1', relay.cmd)
+        for part in ('openssl req -x509', 'moq_interop_relay --quic --port 4433', '--cert /tmp/cert.pem',
+                     '--key /tmp/priv.key', '--cc-algo bbr1'):
+            self.assertIn(part, relay.cmd)
         self.assertEqual(relay.env['AIOPQUIC_GSO'], '0')
         self.assertEqual(msfts.relay_impl(c), 'aiomoqt')
         dual = lanes.LANES['moqt-aiomoqt-dual']

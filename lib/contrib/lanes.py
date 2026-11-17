@@ -172,7 +172,11 @@ def moqx_env(cc):
 
 
 def aiomoqt_relay_proc(ns, cc=None):
-    cmd = f'python -m aiomoqt.tools.moq_interop_relay --quic --port {MOQT_PORT}'
+    """aiomoqt-relay on a self-signed certificate; the clients dial it insecure."""
+    cert = ('openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=relay -keyout /tmp/priv.key '
+            '-out /tmp/cert.pem 2>/dev/null && ')
+    cmd = (f'{cert}python -m aiomoqt.tools.moq_interop_relay --quic --port {MOQT_PORT} '
+           '--cert /tmp/cert.pem --key /tmp/priv.key')
     return Proc('relay', ns, 'aiomoqt', f'{cmd} --cc-algo {cc}' if cc else cmd, 'relay',
                 env=dict(AIOPQUIC_GSO='0'), settle_s=3)
 
