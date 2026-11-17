@@ -1,0 +1,6 @@
+description = "Short developer run: 60 s measured after a 10 s join window."
+seconds     = 60
+join_s      = 10
+drain_s     = 5
+source_mode = "file"
+break_ms    = 200

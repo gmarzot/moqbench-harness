@@ -1,0 +1,39 @@
+id = "P6"
+name = "Bad intercontinental"
+basis = "G.1050 profile C; G.1050 (2007) severity G"
+rtt_ms = 400
+
+[forward]
+slot_ms = [0, 50]
+loss = { gemodel = [0.1, 2, 60, 0.1] }
+reorder_pct = 0.1
+cap = 1.2
+seed = 1601
+
+[reverse]
+slot_ms = [0, 50]
+loss = { gemodel = [0.1, 2, 60, 0.1] }
+seed = 1602
+
+[[event]]
+kind = "outage"
+label = "outage-1600ms"
+at_s = 60
+every_s = 120
+for_ms = 1600
+
+[[event]]
+kind = "step"
+label = "route-step-64ms"
+at_s = 90
+every_s = 120
+delta_ms = 64
+for_s = 30
+
+[[event]]
+kind = "outage"
+label = "loss-run"
+direction = "fwd"
+at_s = 30
+every_s = 60
+for_ms = 500

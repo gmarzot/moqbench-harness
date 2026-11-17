@@ -1,0 +1,32 @@
+id = "P8"
+name = "LEO satellite"
+description = "Reconfiguration every 15 s: a loss burst and an RTT step; magnitudes are assumed."
+basis = "LEO measurement campaigns: mean RTT 63 ms, median loss 0.4 %"
+rtt_ms = 60
+
+[forward]
+slot_ms = [0, 14]
+loss = { gemodel = [0.31, 77, 100, 0] }
+reorder_pct = 0.01
+cap = 1.5
+seed = 1801
+
+[reverse]
+slot_ms = [0, 14]
+loss = { gemodel = [0.31, 77, 100, 0] }
+seed = 1802
+
+[[event]]
+kind = "outage"
+label = "reconfig-burst"
+at_s = 15
+every_s = 15
+for_ms = 45
+
+[[event]]
+kind = "step"
+label = "reconfig-rtt"
+at_s = 15
+every_s = 30
+delta_ms = 10
+for_s = 15

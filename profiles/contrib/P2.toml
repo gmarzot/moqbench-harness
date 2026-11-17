@@ -1,0 +1,29 @@
+id = "P2"
+name = "Managed national"
+basis = "G.1050 profile B; G.1050 (2007) severity B; RIST ARQ best practices, medium haul"
+rtt_ms = 60
+
+[forward]
+slot_ms = [0, 6]
+loss = { gemodel = [0.05, 50, 100, 0] }
+reorder_pct = 0.001
+cap = 1.5
+seed = 1201
+
+[reverse]
+slot_ms = [0, 6]
+loss = { gemodel = [0.05, 50, 100, 0] }
+seed = 1202
+
+[[event]]
+kind = "outage"
+label = "loss-run-200ms"
+direction = "fwd"
+at_s = 60
+for_ms = 200
+
+[[event]]
+kind = "outage"
+label = "link-fail-64ms"
+at_s = 150
+for_ms = 64

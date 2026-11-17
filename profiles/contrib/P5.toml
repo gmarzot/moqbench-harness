@@ -1,0 +1,31 @@
+id = "P5"
+name = "Long-haul unmanaged"
+basis = "Backbone trans-Pacific hub RTT; RIST ARQ best practices, long haul; Elliott fit of backbone traces"
+rtt_ms = 250
+
+[forward]
+slot_ms = [0, 20]
+loss = { gemodel = [0.097, 5, 50, 0.05] }
+reorder_pct = 0.05
+cap = 1.3
+seed = 1501
+
+[reverse]
+slot_ms = [0, 20]
+loss = { gemodel = [0.097, 5, 50, 0.05] }
+seed = 1502
+
+[[event]]
+kind = "outage"
+label = "outage-400ms"
+at_s = 60
+every_s = 480
+for_ms = 400
+
+[[event]]
+kind = "step"
+label = "route-step-16ms"
+at_s = 120
+every_s = 480
+delta_ms = 16
+for_s = 60
