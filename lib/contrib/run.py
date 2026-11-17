@@ -58,7 +58,8 @@ class Cell:
         slot = profile.forward.slot_ms
         self.ctx = lanes.Ctx(paths=prov.paths, placement=test.placement, tier=self.tier, rtt_ms=profile.rtt_ms,
                              variant=variant, playout_ms=list(test.playout_ms),
-                             slot_max_ms=slot[1] if slot else 0.0, ingest=test.ingest, features=features or {})
+                             slot_max_ms=slot[1] if slot else 0.0, ingest=test.ingest, features=features or {},
+                             relay=test.relay)
         self.names = []
         self.samples = []
 
@@ -83,11 +84,8 @@ class Cell:
             main = next(name for name in taps if name != 'raw')
             g, p, _ = taps[main]
             procs.append(Proc('analyser', 'dst', 'tools', f'tsp -I ip {g}:{p} -P continuity -P pcrverify -O drop'))
-        if self.lane.relay:
-            ns, _, _ = self.prov.paths.relay_addresses(self.test.placement)
-            if self.lane.name == 'moqt-aiomoqt-dual':
-                ns = 'dst'
-            procs.append(Proc('relay-admin', ns, 'tools',
+        if self.lane.relay and self.lane.relay_impl(self.ctx) == 'moqx':
+            procs.append(Proc('relay-admin', self.lane.relay_ns(self.ctx), 'tools',
                               f'{bin_}/sampler.py --url metrics=http://127.0.0.1:{lanes.ADMIN_PORT}/metrics '
                               f'--interval 1 --out /out/relay-admin.jsonl'))
         return procs

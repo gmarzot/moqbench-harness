@@ -43,6 +43,7 @@ class Ctx:
     slot_max_ms: float = 0.0
     ingest: str = 'srt'
     features: dict = field(default_factory=dict)
+    relay: str = 'moqx'
 
 
 def outputs(playout_ms):
@@ -92,6 +93,10 @@ class Lane:
 
     def variants(self, test, profile):
         return [{}]
+
+    def cc_on_wan(self, placement):
+        """The congestion-controller keys (pub_cc, relay_cc) this lane sweeps on the impaired hop."""
+        return set()
 
     def taps(self, ctx):
         """{name: (group, port, playout buffer)} on dst."""
@@ -166,14 +171,36 @@ def moqx_env(cc):
                 MOQX_MOQT_VERSIONS='[18, 16]', MOQX_JEMALLOC='auto', MALLOC_CONF='thp:always')
 
 
+def aiomoqt_relay_proc(ns, cc=None):
+    cmd = f'python -m aiomoqt.tools.moq_interop_relay --quic --port {MOQT_PORT}'
+    return Proc('relay', ns, 'aiomoqt', f'{cmd} --cc-algo {cc}' if cc else cmd, 'relay',
+                env=dict(AIOPQUIC_GSO='0'), settle_s=3)
+
+
+def relay_variant(test):
+    """The relay implementation as a variant key, left out for the default (moqx)."""
+    return {} if test.relay == 'moqx' else {'relay': test.relay}
+
+
 class Moqt(Lane):
     relay = True
 
     def taps(self, ctx):
         return outputs(ctx.playout_ms)
 
+    def cc_on_wan(self, placement):
+        return {'pub_cc'} if placement == 'first-mile' else {'relay_cc'}
+
+    def relay_impl(self, ctx):
+        return ctx.relay
+
+    def relay_ns(self, ctx):
+        return ctx.paths.relay_addresses(ctx.placement)[0]
+
     def relay_proc(self, ctx):
-        ns, _, _ = ctx.paths.relay_addresses(ctx.placement)
+        ns = self.relay_ns(ctx)
+        if ctx.relay == 'aiomoqt':
+            return aiomoqt_relay_proc(ns, ctx.variant.get('relay_cc', 'bbr'))
         return Proc('relay', ns, 'moqx', '', 'relay', env=moqx_env(ctx.variant.get('relay_cc', 'bbr2')),
                     entrypoint=False, settle_s=3)
 
@@ -186,7 +213,10 @@ class Moq2ts(Moqt):
     name = 'moqt-moq2ts'
 
     def variants(self, test, profile):
-        return [dict(relay_cc=cc) for cc in test.relay_cc]
+        return [dict(relay_variant(test), relay_cc=cc) for cc in test.relay_cc]
+
+    def cc_on_wan(self, placement):
+        return {'relay_cc'} if placement == 'last-mile' else set()
 
     def files(self, ctx):
         cfg = {'srt_callers': [{'id': 'src', 'srt': {'mode': 'listener', 'host': '0.0.0.0', 'port': INGEST_PORT,
@@ -230,7 +260,7 @@ class AiomoqtLoc(Moqt):
     pub_extra = ''
 
     def variants(self, test, profile):
-        return [dict(pub_cc=p, relay_cc=r) for p, r in itertools.product(test.pub_cc, test.relay_cc)]
+        return [dict(relay_variant(test), pub_cc=p, relay_cc=r) for p, r in itertools.product(test.pub_cc, test.relay_cc)]
 
     def in_tap_hash(self, ctx):
         return 'vcl' if self.fallback(ctx) else 'loc'
@@ -282,7 +312,7 @@ class AiomoqtMsfts(AiomoqtLoc):
     pub_extra = ' --msfts --msfts-packets 7'
 
     def variants(self, test, profile):
-        return [dict(pub_cc=p, relay_cc=r, timing=t)
+        return [dict(relay_variant(test), pub_cc=p, relay_cc=r, timing=t)
                 for p, r, t in itertools.product(test.pub_cc, test.relay_cc, test.pub_timing)]
 
     def pub_cmd(self, ctx, url):
@@ -317,9 +347,17 @@ class AiomoqtDual(AiomoqtMsfts):
     name = 'moqt-aiomoqt-dual'
     needs = dict(AiomoqtMsfts.needs, relay=('aiomoqt', 'python -m aiomoqt.tools.moq_interop_relay -h', '--port'))
 
+    def cc_on_wan(self, placement):
+        return {'pub_cc'}
+
+    def relay_impl(self, ctx):
+        return 'aiomoqt'
+
+    def relay_ns(self, ctx):
+        return 'dst'
+
     def relay_proc(self, ctx):
-        return Proc('relay', 'dst', 'aiomoqt', f'python -m aiomoqt.tools.moq_interop_relay --quic --port {MOQT_PORT}',
-                    'relay', env=dict(AIOPQUIC_GSO='0'), settle_s=3)
+        return aiomoqt_relay_proc('dst')
 
     def pub_cmd(self, ctx, url):
         urls = ' '.join(f'moqt://{ctx.paths.dst_ip(k)}:{MOQT_PORT}/moq-relay' for k in range(len(ctx.paths.links)))
