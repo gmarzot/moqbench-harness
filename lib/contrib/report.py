@@ -330,7 +330,7 @@ def protocol_stats(run, lane):
         out['playout'] = playout_stats(run)
         subs = [jsonl(p) for p in sorted(run.glob('sub-analyze-*.jsonl'))]
         if subs:
-            out['sub_media'] = [s[-1] for s in subs if s]
+            out['sub_media'] = [next((r for r in reversed(s) if r.get('type') == 'summary'), s[-1]) for s in subs if s]
     return out
 
 

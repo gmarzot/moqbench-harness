@@ -118,7 +118,8 @@ class Spec(unittest.TestCase):
                                variant=['D=4xRTT', 'relay_cc=bbr2', 'pub_cc=bbr'])
         got = [(lane.name, v) for _, lane, _, _, v in cli.cells(spec.load_suite('example-contrib'), a)]
         self.assertEqual(got, [('srt', {'D': 320}), ('moqt-moq2ts', {'relay_cc': 'bbr2'}),
-                               ('moqt-aiomoqt-msfts', {'pub_cc': 'bbr', 'relay_cc': 'bbr2'})])
+                               ('moqt-aiomoqt-msfts', {'pub_cc': 'bbr', 'relay_cc': 'bbr2', 'timing': 'none'}),
+                               ('moqt-aiomoqt-msfts', {'pub_cc': 'bbr', 'relay_cc': 'bbr2', 'timing': 'mapping'})])
 
     def test_rejects(self):
         for over in (dict(lanes=['carrier-pigeon']), dict(lanes=[]), dict(source='h265'), dict(placement='middle'),
@@ -240,6 +241,14 @@ class Lanes(unittest.TestCase):
         self.assertIsNone(msfts.pending(dict(ts_udp=True, msfts=True, ts_out=True)))
         procs = {p.name: p for p in msfts.procs(new_ctx)}
         self.assertIn('--ts udp://@239.79.0.1:5000 --msfts --msfts-packets 7', procs['aiomoqt-pub'].cmd)
+        self.assertNotIn('--timestamp-mapping', procs['aiomoqt-pub'].cmd)
+        for p in procs.values():
+            self.assertNotIn(' -T ', p.cmd)
+        mapped = ctx(dict(pub_cc='bbr', relay_cc='bbr2', timing='mapping'), features=new_ctx.features)
+        self.assertIn('--msfts --msfts-packets 7 --timestamp-mapping',
+                      {p.name: p for p in msfts.procs(mapped)}['aiomoqt-pub'].cmd)
+        t = make_test(pub_timing=['none', 'mapping'])
+        self.assertEqual([v['timing'] for v in msfts.variants(t, profiles.load('P3'))], ['none', 'mapping'])
         self.assertIn('--ts-out udp://127.0.0.1:6010', procs['aiomoqt-sub'].cmd)
         self.assertIn('--udp 127.0.0.1:6010', procs['playout'].cmd)
         self.assertIn('po300', msfts.taps(new_ctx))

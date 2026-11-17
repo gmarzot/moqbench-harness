@@ -14,6 +14,7 @@ budgets_ms    = [200, 300]
 playout_ms    = [300, 200]
 relay_cc      = ["bbr2", "bbr", "cubic"]
 pub_cc        = ["bbr", "bbr1", "cubic", "c4"]
+pub_timing    = ["none", "mapping"]
 note = "SRT latency and RIST buffer equal each budget D; MoQT lanes run once per congestion controller and are scored at every D"
 
 [[test]]

@@ -278,6 +278,16 @@ class AiomoqtMsfts(AiomoqtLoc):
     namespace = 'test/msfts'
     pub_extra = ' --msfts --msfts-packets 7'
 
+    def variants(self, test, profile):
+        return [dict(pub_cc=p, relay_cc=r, timing=t)
+                for p, r, t in itertools.product(test.pub_cc, test.relay_cc, test.pub_timing)]
+
+    def pub_cmd(self, ctx, url):
+        cmd = super().pub_cmd(ctx, url)
+        if ctx.variant.get('timing') == 'mapping':
+            cmd = cmd.replace(self.pub_extra, self.pub_extra + ' --timestamp-mapping')
+        return cmd
+
     def in_tap_hash(self, ctx):
         return None
 
