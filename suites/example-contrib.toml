@@ -13,18 +13,18 @@ rtt_floor_ms  = 20
 budgets_ms    = [200, 300]
 playout_ms    = [300, 200]
 relay_cc      = ["bbr2", "bbr", "cubic"]
-pub_cc        = ["bbr", "bbr1", "cubic", "c4"]
 pub_timing    = ["none", "mapping"]
-note = "SRT latency and RIST buffer equal each budget D; MoQT lanes run once per congestion controller and are scored at every D"
+note = "SRT latency and RIST buffer equal each budget D; MoQT lanes run once per relay congestion controller, the one on the impaired hop, and are scored at every D"
 
 [[test]]
 type      = "contribution"
-lanes     = ["srt", "rist", "moqt-moq2ts"]
-profiles  = ["REF", "P3", "P5"]
+lanes     = ["srt", "rist", "moqt-moq2ts", "moqt-aiomoqt-loc", "moqt-aiomoqt-msfts"]
+profiles  = ["REF", "P3", "P5", "P6"]
 source    = "mpeg2-20m"
 placement = "first-mile"
 relay_cc  = ["bbr2"]
-note      = "the impairment between publisher and relay instead"
+pub_cc    = ["bbr", "bbr1", "cubic", "c4"]
+note      = "the impairment between publisher and relay instead, so the aiomoqt publisher's congestion controller is on the impaired hop"
 
 [[test]]
 type     = "contribution"

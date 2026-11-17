@@ -181,8 +181,9 @@ exits. Each exit is logged and counted as a reconnection.
 - **Budgets.** D = each of `rtt_multiples` (2, 3, 4, 6) × max(RTT, `rtt_floor_ms` = 20), plus
   `budgets_ms` (200, 300).
 - **SRT and RIST** run once per D, with SRT latency and RIST buffer set to D.
-- **MoQT lanes** run once per congestion controller: `relay_cc` for moqx (bbr2, bbr, cubic), and
-  `pub_cc` for the aiomoqt publisher (bbr, bbr1, cubic, c4). The MSFTS lane also runs once per
+- **MoQT lanes** run once per congestion controller on the impaired hop: `relay_cc` for moqx
+  (bbr2, bbr, cubic) in `last-mile`, `pub_cc` for the aiomoqt publisher (bbr, bbr1, cubic, c4) in
+  `first-mile`. The MSFTS lane also runs once per
   `pub_timing` (`none`, or `mapping` for `--timestamp-mapping`). Each run is scored at every D from
   the raw arrival times.
 - **Filters.** `--variant D=4xRTT`, `--variant relay_cc=bbr2`, `--lane` and `--profile` narrow a
