@@ -21,6 +21,7 @@ docker pull ghcr.io/openmoq/moqx:v0.3.7-amd64
 ./bin/moqbench contrib run docker-contrib-example example-contrib --scenario dev \
     --lane srt --lane moqt-moq2ts --profile REF --variant D=4xRTT --variant relay_cc=bbr2 --repeats 1
 ./bin/moqbench contrib report results/contrib/<run>       # re-analyze run folders
+./bin/moqbench contrib explain results/contrib/<run>      # why each late stretch was late
 ```
 
 Results land in `results/contrib/<deployment>-<stamp>/<NNN>-<lane>-<profile>-<variant>-r<repeat>/`,
@@ -256,6 +257,29 @@ its per-interval statistics are recorded on every run. moqx writes no qlog. qlog
 packet, which costs the endpoints some CPU. Captures and qlogs are gzipped when the run is collected;
 at 20 Mb/s a 5-minute `headers` run keeps a few tens of MB per interface and per qlog, and `full`
 adds about 750 MB per interface.
+
+**Explaining a run.** `moqbench contrib explain <results or run folder> ...` finds, at each D, the
+units late or lost exactly as the score counts them, groups consecutive ones into stretches, and
+gives each stretch the first cause that fits, with the numbers that decided it:
+
+| cause | means | needs |
+|---|---|---|
+| `outage` | the stretch overlaps an outage or the recovery after it (at least 1 s, or 10 RTTs) | `faults.jsonl` and a clock anchor |
+| `sender-below-media-rate` | the sender's WAN egress fell behind the source; its backlog covers half the stretch's median excess delay | `src0.pcap`, or a covering qlog; qlog adds cwnd, bytes in flight and pacing, SRT stats its send buffer |
+| `queueing` | one-way WAN delay above its floor covers half that excess | both pcaps (packets matched on their captured bytes), or `qdisc-wan.jsonl` |
+| `repair` | WAN losses in the stretch or just before it, with their repair latency | SRT: both pcaps; QUIC: a covering qlog, else both pcaps (losses only) |
+| `head-of-line` | MoQT units whose own data was not lost waited behind a repaired loss in their stream | a covering qlog of the WAN sender |
+| `unexplained` | nothing fits; lists the causes whose inputs were absent | — |
+
+- **Clocks.** Taps and qlog run on CLOCK_MONOTONIC; pcaps, faults, qdisc and SRT stats on
+  CLOCK_REALTIME. The offset comes from the sender's first Initial in qlog and the src pcap, SRT's
+  PCRs in the src pcap, or sub_media's arrival log, corrected by the clock probe's steps. Without
+  them, the source start time gives a coarse offset that widens outage windows by 0.5 s.
+- **Output.** Each run gets `explain.json`: stretches with start, end, units, D, cause and
+  evidence, and totals by cause per D, checked against `summary.json`. Each results folder gets
+  `explain.md`: per profile, late-or-lost % by arm and D with the share by cause, and, at each D
+  where the SRT run at latency D has fewer late units than a MoQT arm, the difference and the
+  causes behind it.
 
 ## Calibration
 

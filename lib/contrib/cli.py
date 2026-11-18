@@ -8,6 +8,7 @@
   moqbench contrib run <deployment> <suite> [--only N] [--lane L ...] [--profile P ...]
                        [--repeats N] [--seconds S] [--scenario NAME] [--keep]
   moqbench contrib report <run folder> ...
+  moqbench contrib explain <results or run folder> ...   why late stretches were late; explain.json, explain.md
   moqbench contrib render-vm <deployment>           the commands a VM deployment would run
 
 Only the docker provider runs; a VM deployment renders its commands and stops.
@@ -20,7 +21,7 @@ import sys
 
 import config
 from fabric.docker import FabricError
-from contrib import calibrate, lanes, profiles, report, run, sources, spec, topology
+from contrib import calibrate, explain, lanes, profiles, report, run, sources, spec, topology
 from contrib.docker import DockerContrib
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -155,6 +156,7 @@ def main(argv):
     c.add_argument('--scenario')
     c.add_argument('--keep', action='store_true', help='leave the namespaces up afterwards')
     sub.add_parser('report').add_argument('runs', nargs='+')
+    sub.add_parser('explain').add_argument('runs', nargs='+')
     a = p.parse_args(argv)
     try:
         if a.verb == 'run':
@@ -163,6 +165,8 @@ def main(argv):
             return cmd_calibrate(a)
         if a.verb == 'report':
             return report.main(a.runs)
+        if a.verb == 'explain':
+            return explain.main(a.runs)
         dep = spec.load_deployment(a.deployment)
         if a.verb == 'render-vm':
             nodes = {ns: n.get('instance') for ns, n in dep.nodes.items()}
