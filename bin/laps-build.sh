@@ -12,9 +12,9 @@
 # $IMAGE:<tag>. The tag is <sha8>, or <sha8>-p<count> with patches; $IMAGE:latest
 # and $IMAGE:builder-latest follow them. Image labels and
 # .testbed/builds/<image>-<tag>.json record the ref, the resolved commit, the
-# submodule commits, each patch's sha256 and the moq-peering commit the build used.
+# submodule commits, each patch's sha256 and the moq-fabric commit the build used.
 #
-# LAPS fetches moq-peering from a branch at build time, so the builder stage is
+# LAPS fetches moq-fabric from a branch at build time, so the builder stage is
 # built without the layer cache; LAPS_BUILD_CACHE=1 reuses it.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -79,7 +79,7 @@ run "set -euo pipefail; S=moqbench-build/stage-laps-$TAG; cd $WORK
 IMAGE_ID=$(run "$DOCKER image inspect $IMAGE:$TAG --format '{{.Id}}'")
 ADMIN=$(run "$DOCKER run --rm --entrypoint ls $IMAGE:builder-$TAG /ws/build/src/lapsAdmin 2>/dev/null" || true)
 PEERING=$(run "$DOCKER run --rm -i --entrypoint sh $IMAGE:builder-$TAG" <<'SH' || true
-g=$(find / -path /proc -prune -o -type d -path "*moq-peering*-src/.git" -print 2>/dev/null | head -n1)
+g=$(find / -path /proc -prune -o -type d \( -path "*moq-fabric*-src/.git" -o -path "*moq-peering*-src/.git" \) -print 2>/dev/null | head -n1)
 [ -n "$g" ] || exit 0
 h=$(cat "$g/HEAD")
 case $h in
@@ -88,7 +88,7 @@ case $h in
 esac
 SH
 )
-echo "  moq-peering ${PEERING:-unknown}"
+echo "  moq-fabric ${PEERING:-unknown}"
 mkdir -p "$ROOT/.testbed/builds"
 OUT="$ROOT/.testbed/builds/${IMAGE//\//_}-$TAG.json"
 REPO="$REPO" REF="$REF" SHA="$SHA" DESCRIBE="$DESCRIBE" IMAGE_TAG="$IMAGE:$TAG" IMAGE_ID="$IMAGE_ID" \
@@ -100,7 +100,7 @@ doc = dict(repository=os.environ['REPO'], ref=os.environ['REF'], revision=os.env
            describe=os.environ['DESCRIBE'], submodules=os.environ['SUBMODULES'].split(), patches=patches,
            image=os.environ['IMAGE_TAG'], builder_image=os.environ['IMAGE_TAG'].replace(':', ':builder-', 1),
            image_id=os.environ['IMAGE_ID'], admin_bin=os.environ['ADMIN'] or None,
-           moq_peering=os.environ['PEERING'] or None,
+           moq_fabric=os.environ['PEERING'] or None,
            built_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
 pathlib.Path(sys.argv[1]).write_text(json.dumps(doc, indent=2) + '\n')
 PY

@@ -115,12 +115,12 @@ class MoqxConfig(unittest.TestCase):
             self.assertEqual(cfg['listeners']['relay']['moqt_versions'], [16, 18])
             self.assertTrue(cfg['services']['default']['cache']['enabled'])
             self.assertEqual(cfg['admin']['address'], '127.0.0.1')
-            peering = cfg['peering']['moq_peering']
+            peering = cfg['peering']['moq_fabric']
             self.assertEqual((peering['node_id'], peering['listen_port']), (n, 33434))
             self.assertNotIn('cluster', cfg)
-        self.assertEqual(cfgs['r1']['peering']['moq_peering']['peers'], [{'host': '10.77.1.12', 'port': 33434}])
-        self.assertEqual(cfgs['r2']['peering']['moq_peering']['peers'], [{'host': '10.77.3.12', 'port': 33434}])
-        self.assertEqual(cfgs['r3']['peering']['moq_peering']['peers'], [])
+        self.assertEqual(cfgs['r1']['peering']['moq_fabric']['peers'], [{'host': '10.77.1.12', 'port': 33434}])
+        self.assertEqual(cfgs['r2']['peering']['moq_fabric']['peers'], [{'host': '10.77.3.12', 'port': 33434}])
+        self.assertEqual(cfgs['r3']['peering']['moq_fabric']['peers'], [])
 
     def test_compose(self):
         c = self.fab.compose(1001, 1002)

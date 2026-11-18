@@ -1,4 +1,4 @@
-# Example: three moqx relays peered with moq-peering and one client container,
+# Example: three moqx relays peered with moq-fabric and one client container,
 # all on one Docker host. host = "local" runs Docker here; a copy named
 # <name>.local.toml (ignored by git) can name an ssh target instead. Each relay
 # has its own pinned cores; the client runs every publisher and subscriber, so

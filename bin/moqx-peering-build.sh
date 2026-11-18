@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the moqx relay image with moq-peering on a fabric deployment's Docker host,
+# Build the moqx relay image with moq-fabric on a fabric deployment's Docker host,
 # or for a VM fabric on its first relay host (then: moqbench fabric deploy).
 #
 #   ./bin/moqx-peering-build.sh <deployment> [ref]   # ref: branch, tag or commit; default peering/moq-peering

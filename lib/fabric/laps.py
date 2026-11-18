@@ -5,7 +5,7 @@ has no peer-metric flag. Control is JSON-RPC over MoQ through lapsAdmin, which
 runs in a sidecar container in the relay's network namespace; every call is
 MoQ traffic that floods the mesh, so callers keep them sparse. LAPS clients
 speak MoQT draft 18 only. The client listener binds 127.0.0.1 unless -b is
-given, and moq-peering writes a sequence file beside the certificate.
+given, and moq-fabric writes a sequence file beside the certificate.
 """
 import json
 import shlex
