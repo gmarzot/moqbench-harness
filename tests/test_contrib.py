@@ -123,6 +123,7 @@ class Spec(unittest.TestCase):
 
     def test_rejects(self):
         for over in (dict(lanes=['carrier-pigeon']), dict(lanes=[]), dict(source='h265'), dict(placement='middle'),
+                     dict(relay='quiche'),
                      dict(type='fabric'), dict(colour='red')):
             with self.subTest(over=over), self.assertRaises(config.ConfigError):
                 make_test(**over)
@@ -188,7 +189,8 @@ class Lanes(unittest.TestCase):
         self.assertIn('udp://@239.79.0.1:5000', procs['rist-snd'].cmd)
 
     def test_variants(self):
-        t = make_test(relay_cc=['bbr2', 'bbr', 'cubic'], pub_cc=['bbr', 'bbr1'])
+        t = make_test(lanes=['srt', 'moqt-moq2ts', 'moqt-aiomoqt-loc', 'moqt-aiomoqt-dual'],
+                      relay_cc=['bbr2', 'bbr', 'cubic'], pub_cc=['bbr', 'bbr1'])
         p = profiles.load('P3')
         self.assertEqual([v['D'] for v in lanes.LANES['srt'].variants(t, p)], t.budgets(80))
         self.assertEqual(len(lanes.LANES['moqt-moq2ts'].variants(t, p)), 3)
@@ -220,6 +222,36 @@ class Lanes(unittest.TestCase):
         c = ctx(dict(relay_cc='bbr2'))
         c.ingest = 'stdin'
         self.assertIn('--video /dev/stdin', {p.name: p for p in lanes.Moq2ts().procs(c)}['moq2ts-pub'].cmd)
+
+    def test_relay_choice(self):
+        moqx = make_test()
+        self.assertEqual(moqx.relay_cc, ['bbr2'])
+        self.assertNotIn('relay', lanes.LANES['moqt-moq2ts'].variants(moqx, profiles.load('P3'))[0])
+        t = make_test(lanes=['moqt-moq2ts', 'moqt-aiomoqt-msfts'], relay='aiomoqt', relay_cc=['bbr', 'bbr1'])
+        msfts = lanes.LANES['moqt-aiomoqt-msfts']
+        self.assertEqual([v['relay'] for v in msfts.variants(t, profiles.load('P3'))], ['aiomoqt', 'aiomoqt'])
+        self.assertEqual(make_test(relay='aiomoqt').relay_cc, ['bbr'])
+        c = ctx(dict(relay='aiomoqt', pub_cc='bbr', relay_cc='bbr1'))
+        c.relay = 'aiomoqt'
+        relay = {p.name: p for p in msfts.procs(c)}['relay']
+        self.assertEqual((relay.ns, relay.image), ('src', 'aiomoqt'))
+        for part in ('openssl req -x509', 'moq_interop_relay --quic --port 4433', '--cert /tmp/cert.pem',
+                     '--key /tmp/priv.key', '--cc-algo bbr1'):
+            self.assertIn(part, relay.cmd)
+        self.assertEqual(relay.env['AIOPQUIC_GSO'], '0')
+        self.assertEqual(msfts.relay_impl(c), 'aiomoqt')
+        dual = lanes.LANES['moqt-aiomoqt-dual']
+        self.assertEqual((dual.relay_ns(c), dual.relay_impl(ctx({}))), ('dst', 'aiomoqt'))
+
+    def test_controller_sweeps_must_reach_the_impaired_hop(self):
+        for over in (dict(pub_cc=['bbr', 'bbr1']),
+                     dict(placement='first-mile', relay_cc=['bbr2', 'cubic']),
+                     dict(lanes=['srt', 'moqt-moq2ts'], placement='first-mile', pub_cc=['bbr', 'c4'])):
+            with self.subTest(over=over), self.assertRaises(config.ConfigError):
+                make_test(**over)
+        make_test(placement='first-mile', pub_cc=['bbr', 'bbr1'])
+        make_test(lanes=['moqt-aiomoqt-dual'], pub_cc=['bbr', 'bbr1'])
+        make_test(relay_cc=['bbr2', 'cubic'])
 
     def test_aiomoqt_lanes_follow_the_probed_flags(self):
         loc = lanes.LANES['moqt-aiomoqt-loc']

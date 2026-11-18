@@ -144,6 +144,10 @@ least 25 ms (more than the profile's slot), and `bandwidth` = 1.5 × the multipl
 - every MoQT lane uses draft 18;
 - admin counters are sampled every second.
 
+**aiomoqt-relay** replaces moqx with `relay = "aiomoqt"` in a test: `moq_interop_relay --quic` from
+the aiomoqt image, with `--cc-algo` from `relay_cc` (default `bbr`). The relay-admin sampler runs
+only for moqx.
+
 **moq2ts** is built from pinned commits against moqxr v0.4.18, and the receiver against moq5.
 
 - **Carriage.** Transparent (`--transparent`, an alias of `--unmodified`): every source packet is
@@ -181,11 +185,12 @@ exits. Each exit is logged and counted as a reconnection.
 - **Budgets.** D = each of `rtt_multiples` (2, 3, 4, 6) × max(RTT, `rtt_floor_ms` = 20), plus
   `budgets_ms` (200, 300).
 - **SRT and RIST** run once per D, with SRT latency and RIST buffer set to D.
-- **MoQT lanes** run once per congestion controller on the impaired hop: `relay_cc` for moqx
-  (bbr2, bbr, cubic) in `last-mile`, `pub_cc` for the aiomoqt publisher (bbr, bbr1, cubic, c4) in
-  `first-mile`. The MSFTS lane also runs once per
-  `pub_timing` (`none`, or `mapping` for `--timestamp-mapping`). Each run is scored at every D from
-  the raw arrival times.
+- **MoQT lanes** run once per congestion controller on the impaired hop: `relay_cc` for the relay
+  (moqx: bbr2, bbr, cubic; aiomoqt-relay: picoquic's names) in `last-mile`, `pub_cc` for the
+  aiomoqt publisher (bbr, bbr1, cubic, c4) in `first-mile` and in the dual-path lane. A test that
+  sweeps a controller no lane runs on the impaired hop is rejected. The MSFTS lane also runs once
+  per `pub_timing` (`none`, or `mapping` for `--timestamp-mapping`). Each run is scored at every D
+  from the raw arrival times.
 - **Filters.** `--variant D=4xRTT`, `--variant relay_cc=bbr2`, `--lane` and `--profile` narrow a
   suite.
 

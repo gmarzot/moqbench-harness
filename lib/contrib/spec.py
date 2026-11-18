@@ -17,9 +17,10 @@ IMAGES = {'tools': 'moqbench-contrib-tools:dev', 'ffmpeg': 'moqbench-contrib-ffm
           'moq2ts': 'moqbench-contrib-moq2ts:dev', 'aiomoqt': 'moqbench-contrib-aiomoqt:dev',
           'moqx': 'ghcr.io/openmoq/moqx:v0.3.7-amd64'}
 PLACEMENTS = ('last-mile', 'first-mile')
+RELAYS = {'moqx': 'bbr2', 'aiomoqt': 'bbr'}
 TEST_KEYS = {'type', 'lanes', 'profiles', 'source', 'scenario', 'repeats', 'placement', 'rtt_multiples',
              'rtt_floor_ms', 'budgets_ms', 'playout_ms', 'relay_cc', 'pub_cc', 'seconds', 'note', 'suffix',
-             'dual_path', 'ingest', 'pub_timing'}
+             'dual_path', 'ingest', 'pub_timing', 'relay'}
 SUITE_KEYS = {'description', 'requires', 'test', 'lane'}
 SCENARIO_KEYS = {'description', 'seconds', 'join_s', 'drain_s', 'source_mode', 'gap_ms', 'break_ms',
                  'calibration_s', 'soak'}
@@ -27,7 +28,8 @@ SCENARIO_DEFAULTS = dict(seconds=300, join_s=10, drain_s=5, source_mode='file', 
                          calibration_s=60, soak=False)
 TEST_DEFAULTS = dict(source='mpeg2-20m', scenario='standard', repeats=1, placement='last-mile',
                      rtt_multiples=[2, 3, 4, 6], rtt_floor_ms=20, budgets_ms=[200, 300], playout_ms=[300, 200],
-                     relay_cc=['bbr2'], pub_cc=['bbr'], dual_path=False, ingest='srt', pub_timing=['none'])
+                     relay='moqx', relay_cc=None, pub_cc=['bbr'], dual_path=False, ingest='srt',
+                     pub_timing=['none'])
 
 
 class Deployment:
@@ -95,6 +97,15 @@ class Test:
             raise config.ConfigError(f'{where}: source is one of {", ".join(sorted(sources.TIERS))}')
         if self.placement not in PLACEMENTS:
             raise config.ConfigError(f'{where}: placement is last-mile or first-mile')
+        if self.relay not in RELAYS:
+            raise config.ConfigError(f'{where}: relay is {" or ".join(RELAYS)}')
+        if self.relay_cc is None:
+            self.relay_cc = [RELAYS[self.relay]]
+        for key in ('pub_cc', 'relay_cc'):
+            if len(getattr(self, key)) > 1 and not any(key in lanes.LANES[n].cc_on_wan(self.placement)
+                                                        for n in self.lanes):
+                raise config.ConfigError(f'{where}: {key} sweeps a controller that no lane runs on the impaired '
+                                         f'hop in {self.placement}')
         if self.ingest not in ('srt', 'stdin'):
             raise config.ConfigError(f'{where}: ingest is srt or stdin')
         if not set(self.pub_timing) <= {'none', 'mapping'}:

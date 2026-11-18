@@ -41,3 +41,12 @@ profiles = ["REF", "P3"]
 source   = "mpeg2-40m"
 relay_cc = ["bbr2"]
 suffix   = "40m"
+
+[[test]]
+type      = "contribution"
+lanes     = ["moqt-moq2ts", "moqt-aiomoqt-msfts"]
+profiles  = ["REF", "P3", "P5", "P6"]
+source    = "mpeg2-20m"
+relay     = "aiomoqt"
+relay_cc  = ["bbr", "bbr1"]
+note      = "aiomoqt-relay in place of moqx on the impaired last-mile hop, so picoquic's controllers carry it"
