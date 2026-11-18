@@ -6,9 +6,11 @@ fixed qdisc tree built once per run on the emulator's egress interface for that 
   root 1: netem  delay, slot jitter, rate (keeps jitter FIFO), loss, seed
   10:     netem  delay 1ms reorder P%          (only with reorder_pct)
   20:     tbf    rate = cap x stream L2 rate   (only with cap)
+  30:     fq_codel                             (only with cap_aqm = "fq_codel"; replaces tbf's FIFO)
 
 Events change the tree in place (`tc qdisc change`, restating every netem parameter) or add nft drop
-rules for outages; nothing replaces a root qdisc during a run.
+rules for outages; nothing replaces a root qdisc during a run. A cross event runs an iperf3 flow from
+src to dst through the same tree, so it competes with the lane for the bottleneck and its buffer.
 """
 from dataclasses import dataclass, field
 
@@ -20,11 +22,14 @@ ORDER_RATE = '1gbit'
 L2_OVERHEAD = 14 + 20 + 8
 DATAGRAM = 1316
 SIDE_KEYS = {'delay_ms', 'slot_ms', 'rate', 'loss', 'reorder_pct', 'cap', 'cap_mbit', 'cap_latency_ms',
-             'cap_burst', 'seed', 'limit'}
+             'cap_burst', 'cap_aqm', 'seed', 'limit'}
+AQMS = ('fifo', 'fq_codel')
+CROSS_PORT, CROSS_MAX = 5201, 8
 PROFILE_KEYS = {'id', 'name', 'description', 'basis', 'rtt_ms', 'run_s', 'base', 'forward', 'reverse', 'event'}
 EVENT_KINDS = {'outage': {'at_s', 'every_s', 'for_ms', 'direction', 'label'},
                'step': {'at_s', 'every_s', 'delta_ms', 'for_s', 'direction', 'label'},
-               'rate': {'at_s', 'every_s', 'factor', 'for_s', 'label'}}
+               'rate': {'at_s', 'every_s', 'factor', 'for_s', 'label'},
+               'cross': {'at_s', 'every_s', 'for_s', 'proto', 'load', 'streams', 'cc', 'label'}}
 DIRECTIONS = {'fwd', 'rev', 'both'}
 
 
@@ -57,6 +62,7 @@ class Side:
     cap_mbit: float = None
     cap_latency_ms: float = 60.0
     cap_burst: str = '64kb'
+    cap_aqm: str = 'fifo'
     seed: int = None
     limit: int = NETEM_LIMIT
 
@@ -107,6 +113,8 @@ class Side:
                         f'reorder {fmt(self.reorder_pct)}%')
         if self.cap_bps(mux_bps):
             cmds.append(f'tc qdisc add dev {dev} parent {self.tbf_parent()} handle 20: tbf {self.tbf_args(mux_bps)}')
+            if self.cap_aqm == 'fq_codel':
+                cmds.append(f'tc qdisc add dev {dev} parent 20:1 handle 30: fq_codel')
         return cmds
 
     def change_delay(self, dev, delay_ms, seed=None):
@@ -158,14 +166,24 @@ class Profile:
                     d = ev.get('direction', 'both')
                     out.append((at, 'delay', dict(name=name, direction=d, delta_ms=ev['delta_ms'])))
                     out.append((at + ev['for_s'], 'delay', dict(name=name, direction=d, delta_ms=0)))
-                else:
+                elif ev['kind'] == 'rate':
                     out.append((at, 'rate', dict(name=name, factor=ev['factor'])))
                     out.append((at + ev['for_s'], 'rate', dict(name=name, factor=1.0)))
+                else:
+                    port = CROSS_PORT + self.cross_events().index(i)
+                    flow = dict(proto=ev.get('proto', 'tcp'), load=ev.get('load'), streams=ev.get('streams', 1),
+                                cc=ev.get('cc'), for_s=ev['for_s'])
+                    out.append((at, 'cross_on', dict(name=name, port=port, **flow)))
+                    out.append((at + ev['for_s'], 'cross_off', dict(name=name, port=port)))
                 if not every:
                     break
                 t += every
                 k += 1
         return sorted(out, key=lambda x: x[0])
+
+    def cross_events(self):
+        """Indices of the cross events; the k-th gets iperf3 port CROSS_PORT + k."""
+        return [i for i, ev in enumerate(self.events) if ev['kind'] == 'cross']
 
     def summary(self, mux_bps):
         cap = self.forward.cap_bps(mux_bps)
@@ -173,7 +191,10 @@ class Profile:
                     fwd_loss_pct=round(self.forward.mean_loss_pct(), 4),
                     rev_loss_pct=round(self.reverse.mean_loss_pct(), 4),
                     fwd_netem=self.forward.netem_args(), rev_netem=self.reverse.netem_args(),
-                    cap_mbit=round(cap / 1e6, 3) if cap else None, events=len(self.events))
+                    cap_mbit=round(cap / 1e6, 3) if cap else None,
+                    cap_latency_ms=self.forward.cap_latency_ms if cap else None,
+                    cap_aqm=self.forward.cap_aqm if cap else None, events=len(self.events),
+                    cross=len(self.cross_events()))
 
 
 def side_from(where, data, default_delay):
@@ -203,6 +224,11 @@ def side_from(where, data, default_delay):
         if key in data:
             setattr(s, key, data[key])
     s.cap_burst = data.get('cap_burst', s.cap_burst)
+    s.cap_aqm = data.get('cap_aqm', s.cap_aqm)
+    if s.cap_aqm not in AQMS:
+        raise config.ConfigError(f'{where}: cap_aqm is one of {", ".join(AQMS)}')
+    if s.cap_aqm != 'fifo' and not s.cap_bps(1e6):
+        raise config.ConfigError(f'{where}: cap_aqm needs cap or cap_mbit')
     s.seed = data.get('seed')
     return s
 
@@ -232,14 +258,25 @@ def parse(data, where, base=None):
             raise config.ConfigError(f'{at}: at_s is seconds from the start of measurement')
         if ev.get('direction', 'both') not in DIRECTIONS:
             raise config.ConfigError(f'{at}: direction is fwd, rev or both')
-        need = {'outage': 'for_ms', 'step': 'delta_ms', 'rate': 'factor'}[kind]
+        need = {'outage': 'for_ms', 'step': 'delta_ms', 'rate': 'factor', 'cross': 'for_s'}[kind]
         if need not in ev:
             raise config.ConfigError(f'{at}: a {kind} event needs {need}')
         if kind != 'outage' and 'for_s' not in ev:
             raise config.ConfigError(f'{at}: a {kind} event needs for_s')
         if kind == 'rate' and not p.forward.cap_bps(1e6):
             raise config.ConfigError(f'{at}: a rate event needs a forward cap')
+        if kind == 'cross':
+            if ev.get('proto', 'tcp') not in ('tcp', 'udp'):
+                raise config.ConfigError(f'{at}: proto is tcp or udp')
+            if ev.get('proto') == 'udp' and not (isinstance(ev.get('load'), (int, float)) and ev['load'] > 0):
+                raise config.ConfigError(f'{at}: a udp cross event needs load, its rate as a multiple of the stream\'s')
+            if ev.get('proto', 'tcp') == 'tcp' and 'load' in ev:
+                raise config.ConfigError(f'{at}: a tcp cross event takes what its controller gets; load is for udp')
+            if not (isinstance(ev.get('streams', 1), int) and ev.get('streams', 1) >= 1):
+                raise config.ConfigError(f'{at}: streams is a positive integer')
         p.events.append(dict(ev))
+    if len(p.cross_events()) > CROSS_MAX:
+        raise config.ConfigError(f'{where}: at most {CROSS_MAX} cross events')
     return p
 
 

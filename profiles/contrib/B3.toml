@@ -1,0 +1,11 @@
+id = "B3"
+name = "Cable uplink with FQ-CoDel"
+description = "B1 with FQ-CoDel at the bottleneck (default 5 ms target, 100 ms interval) in place of drop-tail."
+basis = "RFC 8290 (FQ-CoDel); RFC 7567 (IETF recommendations on active queue management)"
+base = "B1"
+
+[forward]
+cap = 2.5
+cap_latency_ms = 500
+cap_aqm = "fq_codel"
+seed = 3101

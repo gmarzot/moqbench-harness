@@ -62,14 +62,21 @@ direction has a fixed tree built once per run, on its egress interface:
 root 1:  netem limit 100000 delay D [slot MIN MAX] rate 1gbit [loss gemodel p r 1-h 1-k] seed S
 10:      netem delay 1ms reorder P%       (when the profile reorders)
 20:      tbf rate CAP burst 64kb latency 60ms   (CAP = cap x the stream's Ethernet rate)
+30:      fq_codel                         (cap_aqm = "fq_codel": replaces tbf's drop-tail FIFO)
 ```
 
 - **Jitter** uses `slot`. `rate 1gbit` keeps the delay line FIFO, so jitter does not reorder;
   reordering is a separate, small stage.
 - **Events** change the tree in place (`tc qdisc change`, restating every netem parameter). Outages
   add the direction's ingress interface to an nft set that one counted drop rule matches.
-- **Counters.** nft accounting counters count every packet per direction before any qdisc. Each run
-  records them every second, with every qdisc's packets and drops.
+- **Bottleneck buffer.** `cap_latency_ms` sizes the tbf FIFO as queueing delay at the cap rate (60 ms
+  by default). The B profiles deepen it to bloated sizes; with `cap_aqm = "fq_codel"` FQ-CoDel at its
+  defaults manages that queue instead.
+- **Cross traffic.** A `cross` event runs iperf3 from `src` to a server in `dst` through the same
+  tree, so the queue it builds depends on load: a TCP flow (the kernel's controller, or `cc`) fills
+  the bottleneck buffer the way a competing upload does. The k-th cross event uses port 5201 + k.
+- **Counters.** nft accounting counters count every packet per direction before any qdisc, and cross
+  traffic apart. Each run records them every second, with every qdisc's packets, drops and backlog.
 - **Reported loss** is the loss applied, not the loss commanded: netem drops, cap drops and outage
   drops are reported apart.
 - **Seeds.** The two directions have different seeds; every lane of a repeat sees the same loss
@@ -90,13 +97,18 @@ Profiles are `profiles/contrib/<ID>.toml`:
 | P7 | cellular uplink | 60 ms | 0–20 ms | GE 2 % | 1.5× | handover gap and RTT rise; rate dip to 0.8× |
 | P8 | LEO satellite | 60 ms | 0–14 ms | GE 0.4 % | 1.5× | 45 ms burst and RTT step every 15 s |
 | P9 | outage ladder | P3 | P3 | P3 | 1.5× | 0.5, 2, 5, 30 s: forward only, then both |
+| B1 | bloated cable uplink | 30 ms | — | — | 2.5×, 500 ms FIFO | TCP upload 20 s on, 20 s off |
+| B2 | cellular uplink, deep buffer | 60 ms | 0–10 ms | — | 1.2×, 1 s FIFO | rate dips to 0.8× (8 s) and 0.5× (5 s) every 30 s |
+| B3 | B1 with FQ-CoDel | 30 ms | — | — | 2.5×, FQ-CoDel | as B1 |
 
 - **Profile keys.** `forward`, `reverse`: `delay_ms` (default RTT/2), `slot_ms`, `rate`,
   `loss = { gemodel = [...] }` or `{ random = PCT }`, `reorder_pct`, `cap` or `cap_mbit`,
-  `cap_latency_ms`, `seed`. `[[event]]` tables have a `kind`:
+  `cap_latency_ms`, `cap_aqm` (`fifo` or `fq_codel`), `seed`. `[[event]]` tables have a `kind`:
   - `outage`: `for_ms`, `direction`;
   - `step`: `delta_ms`, `for_s`;
-  - `rate`: `factor`, `for_s`.
+  - `rate`: `factor`, `for_s`;
+  - `cross`: `for_s`, `proto` (`tcp`, default, or `udp`), `load` (udp: its rate as a multiple of the
+    stream's), `streams`, `cc` (tcp).
 
   Every event takes `at_s` and an optional `every_s`.
 - **Inheritance.** `base` extends another profile.
@@ -215,7 +227,8 @@ The input tap sits on the source group in `src`; output taps sit on the output g
 | output breaks | gaps ≥ `break_ms` (200) at an output, on each playout buffer and offline from raw arrivals; and the longest stretch without one (the soak headline) |
 | late or lost at D | units missing, or with delay above the live-edge delay + D |
 | overhead | forward and reverse wire bytes (nft, before any qdisc) against the source |
-| applied impairment | netem, cap and outage drops per direction; the events as applied, with host times |
+| applied impairment | netem, cap, AQM and outage drops per direction, and cross-traffic packets; the events as applied, with host times |
+| cross traffic | iperf3 JSON per flow from the client (`cross-<event>.json`: per-second rate, retransmissions, cwnd, RTT) and the server |
 | relay | moqx admin counters, first to last sample (sent, losses, retransmissions, PTO, cwnd-blocked, pacer lag, RTT) |
 | publisher | moq2ts objects and SRT ingest loss and drops; aiomoqt `--stats-json`; SRT and RIST JSON statistics |
 | receiver | playout buffer depth against target, late packets, reconnections, socket drops (`ss -uamn`) |

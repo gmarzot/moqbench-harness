@@ -2,11 +2,13 @@
 
 Accounting counters see every packet entering wan, before any qdisc, per direction. An outage adds
 the direction's ingress interface to an nft set that one counted drop rule matches, so outage drops
-are counted apart from netem's. The trees are built once per run; events change them in place.
+are counted apart from netem's. Cross traffic is also counted on its own, so it can be told apart from
+the lane's. The trees are built once per run; events change them in place.
 """
 import json
 import time
 
+from contrib.profiles import CROSS_MAX, CROSS_PORT
 from fabric import faults
 
 TABLE = 'mbc'
@@ -18,6 +20,12 @@ def nft_script(paths):
     for ln in paths.links:
         rules.append(f'    iifname "{ln["wan_a"]}" oifname "{ln["wan_b"]}" counter comment "fwd{ln["k"]}"')
         rules.append(f'    iifname "{ln["wan_b"]}" oifname "{ln["wan_a"]}" counter comment "rev{ln["k"]}"')
+    ports = f'{CROSS_PORT}-{CROSS_PORT + CROSS_MAX - 1}'
+    for ln in paths.links:
+        rules.append(f'    iifname "{ln["wan_a"]}" oifname "{ln["wan_b"]}" meta l4proto {{ tcp, udp }} th dport {ports} '
+                     f'counter comment "cross-fwd{ln["k"]}"')
+        rules.append(f'    iifname "{ln["wan_b"]}" oifname "{ln["wan_a"]}" meta l4proto {{ tcp, udp }} th sport {ports} '
+                     f'counter comment "cross-rev{ln["k"]}"')
     rules.append('    iifname @blocked counter drop comment "outage"')
     return '\n'.join([f'table inet {TABLE} {{', '  set blocked { type ifname; }',
                       f'  chain {CHAIN} {{ type filter hook forward priority -10; policy accept;',
@@ -96,8 +104,10 @@ class Emulator:
             rec['drops'] = self.outage_drops()
         return rec
 
-    def run_timeline(self, actions, start, log_path, stop=lambda: False):
-        """Apply (t_s, action, args) at start + t_s (time.monotonic); every record goes to log_path."""
+    def run_timeline(self, actions, start, log_path, stop=lambda: False, handlers=None):
+        """Apply (t_s, action, args) at start + t_s (time.monotonic); every record goes to log_path.
+        handlers maps an action the emulator does not run itself (cross traffic) to fn(args) -> record."""
+        handlers = handlers or {}
         done = []
         with open(log_path, 'a') as log:
             for t_s, action, args in actions:
@@ -105,7 +115,7 @@ class Emulator:
                     if stop():
                         return done
                     time.sleep(min(0.01, start + t_s - time.monotonic()))
-                rec = self.apply(action, args)
+                rec = handlers[action](args) if action in handlers else self.apply(action, args)
                 rec['at_s'] = t_s
                 done.append(rec)
                 log.write(json.dumps(rec) + '\n')
@@ -131,14 +141,15 @@ class Emulator:
         return self.counters().get('outage', {}).get('packets')
 
     def qdisc_stats(self):
-        """[{dev, kind, handle, packets, bytes, drops, overlimits}] for every qdisc in wan."""
+        """[{dev, kind, handle, packets, bytes, drops, overlimits, backlog, qlen}] for every qdisc in wan."""
         rc, out = self.exec('tc -s -j qdisc show')
         if rc:
             return []
         return [dict(dev=q.get('dev'), kind=q.get('kind'), handle=q.get('handle'), parent=q.get('parent'),
                      packets=q.get('packets'), bytes=q.get('bytes'), drops=q.get('drops'),
-                     overlimits=q.get('overlimits'), options=q.get('options'))
-                for q in json.loads(out) if q.get('kind') in ('netem', 'tbf')]
+                     overlimits=q.get('overlimits'), backlog=q.get('backlog'), qlen=q.get('qlen'),
+                     options=q.get('options'))
+                for q in json.loads(out) if q.get('kind') in ('netem', 'tbf', 'fq_codel')]
 
     def clear(self):
         cmds = [f'nft delete table inet {TABLE} 2>/dev/null']
@@ -146,5 +157,5 @@ class Emulator:
         self.exec('; '.join(cmds) + '; true')
 
     def leftovers(self):
-        rc, out = self.exec(f"tc qdisc show | grep -E 'netem|tbf'; nft list table inet {TABLE} 2>/dev/null | head -1; true")
+        rc, out = self.exec(f"tc qdisc show | grep -E 'netem|tbf|fq_codel'; nft list table inet {TABLE} 2>/dev/null | head -1; true")
         return [ln for ln in out.splitlines() if ln.strip()]

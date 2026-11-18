@@ -1,0 +1,31 @@
+id = "B2"
+name = "Cellular uplink"
+description = "A 1.2x uplink behind a 1 s buffer, with 0-10 ms scheduling jitter; every 30 s the rate dips to 0.8x for 8 s and to 0.5x for 5 s."
+basis = "Jiang et al., Tackling Bufferbloat in 3G/4G Networks (IMC 2012); Winstein et al., Sprout (NSDI 2013)"
+rtt_ms = 60
+
+[forward]
+slot_ms = [0, 10]
+cap = 1.2
+cap_latency_ms = 1000
+seed = 3201
+
+[reverse]
+slot_ms = [0, 10]
+seed = 3202
+
+[[event]]
+kind = "rate"
+label = "dip-0.8x"
+at_s = 10
+every_s = 30
+factor = 0.6667
+for_s = 8
+
+[[event]]
+kind = "rate"
+label = "dip-0.5x"
+at_s = 21
+every_s = 30
+factor = 0.4167
+for_s = 5

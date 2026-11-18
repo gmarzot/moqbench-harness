@@ -267,6 +267,11 @@ def impairment(meta, run):
         out[name] = dict(offered=offered, netem_drops=loss_drops, cap_drops=(cap or {}).get('drops', 0),
                          netem_loss_pct=r3(100 * loss_drops / offered) if offered else 0.0,
                          cap_drop_pct=r3(100 * (cap or {}).get('drops', 0) / offered) if offered and cap else 0.0)
+        if '30:' in qs:
+            out[name]['aqm_drops'] = qs['30:'].get('drops', 0)
+        cross = final.get('nft', {}).get(f'cross-{name}')
+        if cross and cross.get('packets'):
+            out[name]['cross_packets'] = cross['packets']
     nft = final.get('nft', {})
     out['nft'] = nft
     out['outage_drops'] = nft.get('outage', {}).get('packets')

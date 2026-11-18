@@ -8,11 +8,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lib'))
 import config  # noqa: E402
 import argparse  # noqa: E402
-from contrib import calibrate, cli, emu, lanes, profiles, sources, spec, topology  # noqa: E402
+from contrib import calibrate, cli, emu, lanes, profiles, run, sources, spec, topology  # noqa: E402
 
 # Mean forward loss in percent each profile is built for.
 TARGET_LOSS = {'P0': 0.0, 'P1': 0.02, 'P2': 0.1, 'P3': 0.5, 'P4': 0.3, 'P5': 1.0, 'P6': 3.0, 'P7': 2.0, 'P8': 0.4,
-               'P9': 0.5, 'REF': 0.5}
+               'P9': 0.5, 'REF': 0.5, 'B1': 0.0, 'B2': 0.0, 'B3': 0.0}
 
 
 def make_test(**over):
@@ -86,8 +86,35 @@ class Profiles(unittest.TestCase):
         off = {args['name']: t for t, kind, args in p9.timeline(p9.run_s) if kind == 'outage_off'}
         self.assertAlmostEqual(off['fwd-30s'] - 160, 30)
 
+    def test_bufferbloat_profiles(self):
+        b1, b2, b3 = (profiles.load(n) for n in ('B1', 'B2', 'B3'))
+        tree = b1.forward.build('vb0', 20e6, seed=7)
+        self.assertIn('handle 20: tbf rate 51595744bit burst 64kb latency 500ms', tree[2])
+        self.assertEqual(len(tree), 3)
+        tree = b3.forward.build('vb0', 20e6, seed=7)
+        self.assertEqual(tree[3], 'tc qdisc add dev vb0 parent 20:1 handle 30: fq_codel')
+        self.assertEqual(b3.events, b1.events)
+        self.assertIn('latency 1000ms', b2.forward.build('vb0', 20e6)[2])
+        acts = b1.timeline(300, start_s=10)
+        on = [a for a in acts if a[1] == 'cross_on']
+        off = [a for a in acts if a[1] == 'cross_off']
+        self.assertEqual(len(on), 7)
+        self.assertEqual(on[0], (30, 'cross_on', dict(name='tcp-upload#1', port=5201, proto='tcp', load=None, streams=1,
+                                                       cc=None, for_s=20)))
+        self.assertEqual(off[0], (50, 'cross_off', dict(name='tcp-upload#1', port=5201)))
+        self.assertEqual(b1.summary(20e6)['cross'], 1)
+        self.assertEqual(b3.summary(20e6)['cap_aqm'], 'fq_codel')
+        two = profiles.parse(dict(id='X', forward=dict(cap=2), event=[
+            dict(kind='cross', at_s=1, for_s=2), dict(kind='cross', at_s=5, for_s=2, proto='udp', load=0.5)]), 't')
+        self.assertEqual([a[2]['port'] for a in two.timeline(10) if a[1] == 'cross_on'], [5201, 5202])
+
     def test_rejects(self):
         bad = [dict(id='X', forward=dict(loss={'gemodel': [120]})), dict(id='X', forward=dict(slot_ms=[5, 1])),
+               dict(id='X', forward=dict(cap_aqm='fq_codel')), dict(id='X', forward=dict(cap=2, cap_aqm='red')),
+               dict(id='X', event=[dict(kind='cross', at_s=1, for_s=2, proto='udp')]),
+               dict(id='X', event=[dict(kind='cross', at_s=1, for_s=2, load=0.5)]),
+               dict(id='X', event=[dict(kind='cross', at_s=1, for_s=2, proto='sctp')]),
+               dict(id='X', event=[dict(kind='cross', at_s=1)]),
                dict(id='X', event=[dict(kind='outage', at_s=1)]), dict(id='X', event=[dict(kind='rate', at_s=1, factor=0.5, for_s=1)]),
                dict(id='X', forward=dict(jitter=3))]
         for data in bad:
@@ -328,7 +355,60 @@ class Emulator(unittest.TestCase):
     def test_nft_script_counts_before_dropping(self):
         script = emu.nft_script(topology.Paths('10.79.0.0/16'))
         self.assertLess(script.index('comment "fwd0"'), script.index('@blocked counter drop'))
+        self.assertLess(script.index('comment "cross-rev0"'), script.index('@blocked counter drop'))
+        self.assertIn('iifname "va0" oifname "vb0" meta l4proto { tcp, udp } th dport 5201-5208 counter', script)
         self.assertIn('set blocked { type ifname; }', script)
+
+    def test_timeline_hands_cross_traffic_to_its_handlers(self):
+        wan = FakeWan()
+        e = emu.Emulator(topology.Paths('10.79.0.0/16'), wan, 20e6)
+        e.build(profiles.load('B1'))
+        seen = []
+        handlers = {'cross_on': lambda a: seen.append(a) or dict(action='cross_on', t0=1.0)}
+        acts = [(0, 'cross_on', dict(name='c#1', port=5201)), (0, 'rate', dict(name='r', factor=0.5))]
+        with tempfile.TemporaryDirectory() as d:
+            done = e.run_timeline(acts, 0, f'{d}/faults.jsonl', handlers=handlers)
+        self.assertEqual(seen, [dict(name='c#1', port=5201)])
+        self.assertEqual([r['action'] for r in done], ['cross_on', 'rate'])
+        self.assertIn('tbf rate 25797872bit', wan.cmds[-1])
+
+
+class FakeProv:
+    def __init__(self):
+        self.paths = topology.Paths('10.79.0.0/16')
+        self.started, self.stopped = [], []
+
+    def start(self, proc, run_dir, bin_dir, cell, sources_dir=None):
+        self.started.append(proc)
+        return f'mbc-{cell}'
+
+    def stop(self, names, signal='TERM', grace_s=5):
+        self.stopped.append((names, signal))
+
+
+class Cell(unittest.TestCase):
+    def cell(self, profile, **over):
+        test = make_test(lanes=['srt'], profiles=[profile], **over)
+        return run.Cell(FakeProv(), test, spec.load_scenario('standard'), lanes.LANES['srt'], profiles.load(profile),
+                        {}, 0, 'r001-srt', '/nonexistent')
+
+    def test_cross_servers_and_clients(self):
+        c = self.cell('B1')
+        servers = [p for p in c.helpers() if p.name.startswith('cross-srv')]
+        self.assertEqual([(p.name, p.ns, p.cmd) for p in servers],
+                         [('cross-srv1', 'dst', 'iperf3 -s -p 5201 -J --logfile /out/cross-srv1.json')])
+        on, off = (c.cross_handlers('/run', '/bin')[k] for k in ('cross_on', 'cross_off'))
+        rec = on(dict(name='tcp-upload#2', port=5201, proto='tcp', load=None, streams=2, cc='cubic', for_s=20))
+        proc = c.prov.started[-1]
+        self.assertEqual((proc.name, proc.ns), ('cross-tcp-upload-2', 'src'))
+        self.assertEqual(proc.cmd, 'iperf3 -c 10.79.2.10 -p 5201 -t 20 -i 1 -J --connect-timeout 3000 '
+                                   '--logfile /out/cross-tcp-upload-2.json -P 2 -C cubic')
+        self.assertEqual(rec['action'], 'cross_on')
+        off(dict(name='tcp-upload#2', port=5201))
+        self.assertEqual(c.prov.stopped, [(['mbc-r001-cross-tcp-upload-2'], 'INT')])
+        on(dict(name='u', port=5202, proto='udp', load=0.5, streams=1, cc=None, for_s=5))
+        self.assertTrue(c.prov.started[-1].cmd.endswith('-u -l 1200 -b 10319148'))
+        self.assertFalse(any(p.name.startswith('cross') for p in self.cell('P3').helpers()))
 
 
 class Calibration(unittest.TestCase):

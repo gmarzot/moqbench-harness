@@ -2,17 +2,18 @@
 
 Order: emulator tree and counters; taps, analyser and probes; the lane's relay, receivers and senders;
 the paced source; subscribers. The measurement window opens join_s after the first source datagram;
-profile events are timed from it. At the end the source stops, the lane drains, everything stops, and
+profile events are timed from it, cross-traffic flows included (iperf3 from src to a server in dst). At the end the source stops, the lane drains, everything stops, and
 logs, counters and the summary land in the run folder.
 """
 import json
 from pathlib import Path
+import re
 import shlex
 import threading
 import time
 
 from contrib import emu as emulator
-from contrib import lanes, report, sources
+from contrib import lanes, profiles, report, sources
 from contrib.lanes import Proc
 
 STAGES = ('relay', 'receiver', 'sender', 'source', 'subscriber')
@@ -62,6 +63,7 @@ class Cell:
                              relay=test.relay)
         self.names = []
         self.samples = []
+        self.cross = {}
 
     def helpers(self):
         """Taps, analyser and probes for this lane."""
@@ -84,11 +86,39 @@ class Cell:
             main = next(name for name in taps if name != 'raw')
             g, p, _ = taps[main]
             procs.append(Proc('analyser', 'dst', 'tools', f'tsp -I ip {g}:{p} -P continuity -P pcrverify -O drop'))
+        for k, _ in enumerate(self.profile.cross_events()):
+            procs.append(Proc(f'cross-srv{k + 1}', 'dst', 'tools',
+                              f'iperf3 -s -p {profiles.CROSS_PORT + k} -J --logfile /out/cross-srv{k + 1}.json'))
         if self.lane.relay and self.lane.relay_impl(self.ctx) == 'moqx':
             procs.append(Proc('relay-admin', self.lane.relay_ns(self.ctx), 'tools',
                               f'{bin_}/sampler.py --url metrics=http://127.0.0.1:{lanes.ADMIN_PORT}/metrics '
                               f'--interval 1 --out /out/relay-admin.jsonl'))
         return procs
+
+    def cross_handlers(self, run_dir, bin_dir):
+        """Timeline handlers that start a cross flow's iperf3 client in src and stop it."""
+        def on(args):
+            name = 'cross-' + re.sub(r'[^A-Za-z0-9]+', '-', args['name']).strip('-')
+            cmd = (f"iperf3 -c {self.prov.paths.dst_ip()} -p {args['port']} -t {profiles.fmt(args['for_s'])} -i 1 -J "
+                   f"--connect-timeout 3000 --logfile /out/{name}.json")
+            if args['proto'] == 'udp':
+                cmd += f" -u -l 1200 -b {int(args['load'] * profiles.l2_bps(self.tier.mux_bps))}"
+            else:
+                cmd += (f" -P {args['streams']}" if args['streams'] > 1 else '') + (f" -C {args['cc']}" if args['cc'] else '')
+            proc = Proc(name, 'src', 'tools', cmd)
+            t0 = time.time()
+            n = self.prov.start(proc, run_dir, bin_dir, self.cid(proc))
+            self.names.append((n, name))
+            self.cross[args['name']] = n
+            return dict(action='cross_on', **args, command=cmd, t0=t0, t1=time.time())
+
+        def off(args):
+            n = self.cross.pop(args['name'], None)
+            t0 = time.time()
+            if n:
+                self.prov.stop([n], signal='INT', grace_s=2)
+            return dict(action='cross_off', **args, t0=t0, t1=time.time())
+        return {'cross_on': on, 'cross_off': off}
 
     def sample_emulator(self, emu, stop):
         while not stop.wait(1.0):
@@ -125,6 +155,7 @@ class Cell:
         stop = threading.Event()
         sampler = threading.Thread(target=self.sample_emulator, args=(emu, stop), daemon=True)
         procs = []
+        timeline = None
         try:
             sampler.start()
             helpers = self.helpers()
@@ -155,7 +186,8 @@ class Cell:
             actions = self.profile.timeline(self.seconds, start_s=self.scen['join_s'])
             meta['events_planned'] = [dict(t_s=t, action=a, **args) for t, a, args in actions]
             timeline = threading.Thread(target=emu.run_timeline,
-                                        args=(actions, t_source, str(self.out / 'faults.jsonl'), stop.is_set),
+                                        args=(actions, t_source, str(self.out / 'faults.jsonl'), stop.is_set,
+                                              self.cross_handlers(run_dir, bin_dir)),
                                         daemon=True)
             timeline.start()
             end = t_source + self.scen['join_s'] + self.seconds + 2
@@ -167,6 +199,8 @@ class Cell:
             time.sleep(self.scen['drain_s'])
         finally:
             stop.set()
+            if timeline:
+                timeline.join(timeout=10)
             meta['ended'] = time.time()
             lane_names = [n for _, n in reversed(procs)]
             prov.stop(lane_names)
