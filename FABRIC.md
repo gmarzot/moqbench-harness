@@ -4,7 +4,7 @@ A fabric is several relays peered into one mesh and tested as one system: per-ho
 latency, how fast names and subscriptions cross it, and what live delivery does
 while peers change or links degrade. A fabric runs on one Docker host, or with
 one relay per VM in a cloud testbed ([VM fabrics](#vm-fabrics)). Adapters
-exist for moqx with moq-peering and for LAPS; each relay node picks its own, so
+exist for moqx with moq-fabric and for LAPS; each relay node picks its own, so
 one fabric can mix them ([Mixed fabrics](#mixed-fabrics)).
 
 ## Quick start
@@ -219,7 +219,7 @@ latency on the load hosts does.
 ## Mixed fabrics
 
 Relays of different implementations peer when they speak the same interconnect;
-moqx and LAPS both use moq-peering. `deployments/docker-mixed-fabric-example.toml`
+moqx and LAPS both use moq-fabric. `deployments/docker-mixed-fabric-example.toml`
 is a triangle of moqx-a, LAPS and moqx-b on the local Docker, with an aiomoqt peer
 node, and `suites/example-mixed-fabric.toml` runs steady delivery, propagation
 and a path change through each relay's control API (`metric-flip`).

@@ -64,7 +64,7 @@ class Provider(unittest.TestCase):
     def test_configs_dial_private_addresses(self):
         fab, _ = fabric()
         cfg = json.loads(fab.adapter.render('r1', fab.ctx())['config.yaml'])
-        self.assertEqual(cfg['peering']['moq_peering']['peers'], [{'host': '10.42.1.12', 'port': 33434}])
+        self.assertEqual(cfg['peering']['moq_fabric']['peers'], [{'host': '10.42.1.12', 'port': 33434}])
         self.assertEqual(cfg['admin']['address'], '127.0.0.1')
 
     def test_relay_runs_with_host_networking(self):

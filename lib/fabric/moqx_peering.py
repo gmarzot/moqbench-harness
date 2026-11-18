@@ -1,4 +1,4 @@
-"""moqx with moq-peering: per-node config, admin API peer verbs and state.
+"""moqx with moq-fabric: per-node config, admin API peer verbs and state.
 
 Every listener offers drafts 16 and 18, the cache is on, and the admin server
 listens on the node's loopback only. Peering listens on UDP 33434; each link is
@@ -48,7 +48,7 @@ class MoqxPeering(Adapter):
                 'max_subscription_buffer_kb': 51200,
             }},
             'admin': {'address': '127.0.0.1', 'port': 8000, 'plaintext': True, 'track_metrics_enabled': True},
-            'peering': {'method': 'moq-peering', 'moq_peering': {
+            'peering': {'method': 'moq-fabric', 'moq_fabric': {
                 'node_id': node,
                 'node_type': ctx['roles'].get(node, 'edge'),
                 'node_metric': 100,

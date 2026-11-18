@@ -96,7 +96,7 @@ and record the ceiling beside every number.
 | `bin/bw-baseline.sh` | iperf3 TCP and UDP between every node and the relay, both ways, then all nodes at once: the path ceiling every result is read against. |
 | `bin/relay-capacity.sh` | Health-gated capacity search (moqperf). |
 | `bin/relay-load.sh` | One run with any load generator: `moqperf`, `moqbench`, `adaptive`, `fixed`, `loadsim`. |
-| `bin/moqx-peering-build.sh` | Build the moqx relay image with moq-peering on a fabric deployment's Docker host, at a ref, with optional local patches. |
+| `bin/moqx-peering-build.sh` | Build the moqx relay image with moq-fabric on a fabric deployment's Docker host, at a ref, with optional local patches. |
 | `bin/laps-build.sh` | Build the LAPS relay image and its builder (lapsAdmin) image on a fabric deployment's Docker host, at a ref, with optional local patches. |
 | `bin/fabric-report.py` | Summarize fabric runs (`moqbench fabric run`). |
 | `lib/` | Helpers the commands use: `hosts.sh` (which hosts to drive), `run.sh` (one measured point) and `summarize.py`. |
