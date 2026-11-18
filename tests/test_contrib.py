@@ -376,7 +376,10 @@ class Emulator(unittest.TestCase):
 class FakeProv:
     def __init__(self):
         self.paths = topology.Paths('10.79.0.0/16')
-        self.started, self.stopped = [], []
+        self.started, self.stopped, self.shell = [], [], []
+
+    def sh(self, script, check=True, timeout=300):
+        self.shell.append(script)
 
     def start(self, proc, run_dir, bin_dir, cell, sources_dir=None):
         self.started.append(proc)
@@ -387,10 +390,44 @@ class FakeProv:
 
 
 class Cell(unittest.TestCase):
-    def cell(self, profile, **over):
-        test = make_test(lanes=['srt'], profiles=[profile], **over)
-        return run.Cell(FakeProv(), test, spec.load_scenario('standard'), lanes.LANES['srt'], profiles.load(profile),
-                        {}, 0, 'r001-srt', '/nonexistent')
+    def cell(self, profile, lane='srt', out='/nonexistent', variant=None, **over):
+        test = make_test(lanes=[lane], profiles=[profile], **over)
+        return run.Cell(FakeProv(), test, spec.load_scenario('standard'), lanes.LANES[lane], profiles.load(profile),
+                        variant or {}, 0, f'r001-{lane}', out)
+
+    def test_capture(self):
+        self.assertFalse(any(p.name.startswith(('pcap', 'qdisc')) for p in self.cell('B1').helpers()))
+        procs = {p.name: p for p in self.cell('B1', capture='headers').helpers()}
+        self.assertEqual(procs['pcap-src0'].cmd, 'tcpdump -i wa0 -p -n -s 96 -U -w /out/src0.pcap not portrange 5201-5208')
+        self.assertEqual((procs['pcap-dst0'].ns, procs['pcap-dst0'].root), ('dst', True))
+        self.assertIn('--cmd fwd="tc -s -j qdisc show dev vb0" --cmd rev="tc -s -j qdisc show dev va0" --interval 0.1',
+                      procs['qdisc-wan'].cmd)
+        full = {p.name: p for p in self.cell('B1', capture='full').helpers()}
+        self.assertIn('-s 0 ', full['pcap-src0'].cmd)
+        c = self.cell('P3', lane='moqt-aiomoqt-msfts', capture='full', placement='first-mile',
+                      variant=dict(pub_cc='bbr', relay_cc='bbr2', pub_timing='none'))
+        lane_procs = c.lane.procs(c.ctx)
+        self.assertEqual(c.capture_env(lane_procs, '/run'), ['qlog-aiomoqt-pub', 'qlog-aiomoqt-sub'])
+        pub = next(p for p in lane_procs if p.name == 'aiomoqt-pub')
+        self.assertEqual(pub.env['AIOPQUIC_QLOG_DIR'], '/out/qlog-aiomoqt-pub')
+        self.assertEqual(pub.env['SSLKEYLOGFILE'], '/out/keys-aiomoqt-pub.log')
+        self.assertEqual(pub.env['AIOPQUIC_TEXTLOG_FILE'], '/dev/null')
+        self.assertIn('mkdir -p -m 777 /run/qlog-aiomoqt-pub', c.prov.shell)
+        with self.assertRaises(config.ConfigError):
+            make_test(capture='yes')
+
+    def test_captures_are_gzipped(self):
+        import gzip
+        with tempfile.TemporaryDirectory() as d:
+            c = self.cell('B1', out=d, capture='headers')
+            (c.out / 'qlog-aiomoqt-pub').mkdir(parents=True)
+            (c.out / 'src0.pcap').write_bytes(b'pcap')
+            (c.out / 'qlog-aiomoqt-pub' / 'x.qlog').write_text('{}')
+            (c.out / 'srt-snd.json').write_text('{}')
+            c.compress_captures()
+            self.assertEqual(sorted(str(f.relative_to(c.out)) for f in c.out.rglob('*') if f.is_file()),
+                             ['qlog-aiomoqt-pub/x.qlog.gz', 'src0.pcap.gz', 'srt-snd.json'])
+            self.assertEqual(gzip.open(c.out / 'src0.pcap.gz').read(), b'pcap')
 
     def test_cross_servers_and_clients(self):
         c = self.cell('B1')

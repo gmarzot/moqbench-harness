@@ -4,11 +4,18 @@ Order: emulator tree and counters; taps, analyser and probes; the lane's relay, 
 the paced source; subscribers. The measurement window opens join_s after the first source datagram;
 profile events are timed from it, cross-traffic flows included (iperf3 from src to a server in dst). At the end the source stops, the lane drains, everything stops, and
 logs, counters and the summary land in the run folder.
+
+With capture set, tcpdump records each endpoint's WAN-facing interface (headers: 96 bytes per packet;
+full: whole packets, and the aiomoqt endpoints' TLS keys), every aiomoqt endpoint writes picoquic
+qlog, and the bottleneck's qdiscs are sampled every 100 ms. Captures and qlogs are gzipped on
+collection.
 """
+import gzip
 import json
 from pathlib import Path
 import re
 import shlex
+import shutil
 import threading
 import time
 
@@ -17,6 +24,7 @@ from contrib import lanes, profiles, report, sources
 from contrib.lanes import Proc
 
 STAGES = ('relay', 'receiver', 'sender', 'source', 'subscriber')
+SNAPLEN = {'headers': 96, 'full': 0}
 
 
 def source_seconds(scenario, profile, test):
@@ -86,6 +94,18 @@ class Cell:
             main = next(name for name in taps if name != 'raw')
             g, p, _ = taps[main]
             procs.append(Proc('analyser', 'dst', 'tools', f'tsp -I ip {g}:{p} -P continuity -P pcrverify -O drop'))
+        if self.test.capture != 'none':
+            snap = SNAPLEN[self.test.capture]
+            ports = f'{profiles.CROSS_PORT}-{profiles.CROSS_PORT + profiles.CROSS_MAX - 1}'
+            for ln in self.prov.paths.links:
+                for ns, dev in (('src', ln['src_if']), ('dst', ln['dst_if'])):
+                    procs.append(Proc(f'pcap-{ns}{ln["k"]}', ns, 'tools',
+                                      f'tcpdump -i {dev} -p -n -s {snap} -U -w /out/{ns}{ln["k"]}.pcap '
+                                      f'not portrange {ports}', root=True))
+            sides = ' '.join(f'--cmd {d}="tc -s -j qdisc show dev {dev}"'
+                             for d, devs in (('fwd', self.prov.paths.fwd_dev), ('rev', self.prov.paths.rev_dev))
+                             for dev in devs[:1])
+            procs.append(Proc('qdisc-wan', 'wan', 'tools', f'{bin_}/sampler.py {sides} --interval 0.1 --out /out/qdisc-wan.jsonl'))
         for k, _ in enumerate(self.profile.cross_events()):
             procs.append(Proc(f'cross-srv{k + 1}', 'dst', 'tools',
                               f'iperf3 -s -p {profiles.CROSS_PORT + k} -J --logfile /out/cross-srv{k + 1}.json'))
@@ -119,6 +139,30 @@ class Cell:
                 self.prov.stop([n], signal='INT', grace_s=2)
             return dict(action='cross_off', **args, t0=t0, t1=time.time())
         return {'cross_on': on, 'cross_off': off}
+
+    def capture_env(self, procs, run_dir):
+        """qlog (and with full capture, TLS keys) for every aiomoqt endpoint; returns the qlog folders."""
+        if self.test.capture == 'none':
+            return []
+        dirs = []
+        for p in procs:
+            if p.image != 'aiomoqt':
+                continue
+            dirs.append(f'qlog-{p.name}')
+            self.prov.sh(f'mkdir -p -m 777 {shlex.quote(run_dir)}/{dirs[-1]}')
+            # A text log raises picoquic's log level, so qlog keeps every packet rather than the first 100.
+            p.env = dict(p.env, AIOPQUIC_QLOG_DIR=f'/out/{dirs[-1]}', AIOPQUIC_TEXTLOG_FILE='/dev/null')
+            if self.test.capture == 'full':
+                p.env['SSLKEYLOGFILE'] = f'/out/keys-{p.name}.log'
+        return dirs
+
+    def compress_captures(self):
+        """gzip the run's pcaps and qlogs in place."""
+        for f in [*self.out.glob('*.pcap'), *self.out.glob('qlog-*/*')]:
+            if f.is_file() and f.suffix != '.gz':
+                with open(f, 'rb') as src, gzip.open(f'{f}.gz', 'wb', compresslevel=1) as dst:
+                    shutil.copyfileobj(src, dst, 1 << 20)
+                f.unlink()
 
     def sample_emulator(self, emu, stop):
         while not stop.wait(1.0):
@@ -163,6 +207,7 @@ class Cell:
                 self.names.append((prov.start(p, run_dir, bin_dir, self.cid(p), sources_dir=folder), p.name))
             time.sleep(1.0)
             lane_procs = self.lane.procs(self.ctx)
+            meta['capture'] = dict(mode=self.test.capture, qlog=self.capture_env(lane_procs, run_dir))
             source = [Proc('source', 'src', 'tools',
                            sources.tsp_cmd('/out/source.fifo' if live else f'/sources/{name}'), 'source')]
             if live:
@@ -215,6 +260,8 @@ class Cell:
                 (self.out / f'{short}.log').write_text(prov.logs(n))
             prov.remove([n for n, _ in self.names])
             prov.collect(run_dir, self.out)
+            if self.test.capture != 'none':
+                self.compress_captures()
             (self.out / 'emu-samples.jsonl').write_text(''.join(json.dumps(s) + '\n' for s in self.samples))
             (self.out / 'meta.json').write_text(json.dumps(meta, indent=1, default=str) + '\n')
         summary = report.analyze(self.out)

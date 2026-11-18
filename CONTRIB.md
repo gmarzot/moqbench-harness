@@ -243,6 +243,20 @@ The input tap sits on the source group in `src`; output taps sit on the output g
 - **Verdicts.** P0 must read zero errors: nothing missing, no continuity errors, no breaks. Any run
   that delivers nothing fails.
 
+**Captures.** `capture` in a test records what a late frame needs explained:
+
+| `capture` | records |
+|---|---|
+| `none` (default) | nothing more |
+| `headers` | tcpdump on the WAN-facing interface in `src` and `dst` (`src0.pcap`, `dst0.pcap`), 96 bytes per packet, cross traffic left out; picoquic qlog from every aiomoqt endpoint (`qlog-<process>/`, through `AIOPQUIC_QLOG_DIR`); the bottleneck's qdiscs every 100 ms (`qdisc-wan.jsonl`) |
+| `full` | as `headers`, with whole packets, and each aiomoqt endpoint's TLS keys (`keys-<process>.log`) so the QUIC captures can be decrypted |
+
+SRT runs unencrypted, so its headers in the capture carry sequence numbers and retransmission flags;
+its per-interval statistics are recorded on every run. moqx writes no qlog. qlog records every
+packet, which costs the endpoints some CPU. Captures and qlogs are gzipped when the run is collected;
+at 20 Mb/s a 5-minute `headers` run keeps a few tens of MB per interface and per qlog, and `full`
+adds about 750 MB per interface.
+
 ## Calibration
 
 `moqbench contrib calibrate` runs a sequenced UDP probe at the stream's packet rate through each

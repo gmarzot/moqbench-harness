@@ -29,6 +29,7 @@ class Proc:
     env: dict = field(default_factory=dict)
     entrypoint: bool = True
     settle_s: float = 0.0
+    root: bool = False
 
 
 @dataclass

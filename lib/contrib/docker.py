@@ -148,7 +148,7 @@ class DockerContrib:
                 '--network', f'container:{self.holder(proc.ns)}', '-v', f'{run_dir}:/out',
                 '-v', f'{bin_dir}:/contrib/bin:ro', *(['-v', f'{sources_dir}:/sources:ro'] if sources_dir else []),
                 *env, *(['--cpuset-cpus', str(cpus)] if cpus else [])]
-        if proc.image != 'moqx':
+        if proc.image != 'moqx' and not proc.root:
             base += ['--user', self.user or self.ids()]
         img = self.image(proc.image)
         if proc.entrypoint:
