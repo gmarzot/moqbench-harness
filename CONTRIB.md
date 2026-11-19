@@ -178,6 +178,8 @@ only for moqx. `relay = "none"` takes no `relay_cc`; its runs carry the variant 
 
 - `pub_media --ts udp://@GROUP:PORT` reads the source group directly; without it, `udp2pipe.py`
   feeds `--ts -`.
+- `pub_media` runs with `--reconnect`: a session lost in an outage longer than QUIC's idle timeout is
+  redialled and published again, as SRT's caller reconnects.
 - The LOC lane matches frames on the sha1 that `sub_media --frame-log` writes; the source tap
   hashes each H.264 frame as the LOC payload aiomoqt's demuxer yields. Without `--frame-log` it
   falls back to `--pipe video` into an H.264 tap matched on slice data.

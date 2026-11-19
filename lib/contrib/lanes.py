@@ -303,7 +303,7 @@ class AiomoqtLoc(Moqt):
         src = f'--ts udp://@{GROUP_IN}' if ctx.features.get('ts_udp') else '--ts -'
         mode = ' --pub-ns' if ctx.relay == 'none' else ''
         cmd = (f'{PUB_MEDIA} {url} -k{mode} --draft 18 -N {self.namespace} {src}{self.pub_extra} '
-               f'--cc-algo {ctx.variant["pub_cc"]} --keepalive 10 -t 0 --stats-json')
+               f'--cc-algo {ctx.variant["pub_cc"]} --keepalive 10 --reconnect -t 0 --stats-json')
         return cmd if ctx.features.get('ts_udp') else f'{PY}/udp2pipe.py {GROUP_IN} | {cmd}'
 
     def sub_cmd(self, url, ctx=None):

@@ -284,7 +284,7 @@ class Lanes(unittest.TestCase):
         pub = procs['aiomoqt-pub']
         self.assertEqual((pub.ns, pub.image), ('src', 'aiomoqt'))
         for part in ('pub_media moqt://10.79.2.10:4433/ -k --pub-ns --draft 18', '--msfts --msfts-packets 7',
-                     '--cc-algo bbr '):
+                     '--cc-algo bbr ', ' --reconnect '):
             self.assertIn(part, pub.cmd)
         sub = procs['aiomoqt-sub']
         self.assertEqual(sub.ns, 'dst')
@@ -295,6 +295,7 @@ class Lanes(unittest.TestCase):
         relayed = {p.name: p for p in msfts.procs(ctx(dict(pub_cc='bbr', relay_cc='bbr2', timing='none'),
                                                       placement='first-mile', features=c.features))}
         self.assertIn('pub_media moqt://10.79.2.10:4433/moq-relay -k --draft 18', relayed['aiomoqt-pub'].cmd)
+        self.assertIn(' --reconnect ', relayed['aiomoqt-pub'].cmd)
         self.assertIn('sub_media moqt://127.0.0.1:4433/moq-relay -k --draft 18', relayed['aiomoqt-sub'].cmd)
         self.assertNotIn('openssl', relayed['aiomoqt-sub'].cmd)
 
