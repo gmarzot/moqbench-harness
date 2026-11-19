@@ -115,10 +115,13 @@ class Fabric:
     KEYS = {'adapter', 'image', 'topology', 'order', 'hub', 'links', 'wire', 'subnet', 'threads',
             'check_interval_ms', 'draft', 'aiomoqt', 'aiopquic', 'lab_image', 'stack_dir', 'client_python',
             'dial', 'metrics', 'peer_pip', 'peer_command', 'peer_image'}
-    ADAPTERS = {'moqx-peering', 'laps'}
+    ADAPTERS = {'moqx-peering', 'laps', 'aiomoqt-relay'}
     DEFAULT_IMAGES = {'moqx-peering': 'moqx-peering:latest'}
     # Adapters whose relays take a session metric at startup.
     START_METRICS = {'moqx-peering'}
+    # Adapters whose relays take a node metric (node_metric) at startup.
+    NODE_METRICS = {'moqx-peering', 'aiomoqt-relay'}
+    DEFAULT_NODE_METRIC = 100
     PEER_COMMAND = 'moq-peer-probe {peers} -p 0 --node-id {node} -t {seconds} -i 5 -o {output}'
     PEER_FIELDS = {'peers', 'node', 'seconds', 'output', 'namespace', 'track'}
 
@@ -148,7 +151,7 @@ class Fabric:
         self.lab_image = data.get('lab_image') or f'moqbench-lab:{self.aiomoqt}-{self.aiopquic}'
         self.stack_dir = data.get('stack_dir', 'moqbench-fabric')
         self.client_python = data.get('client_python', 'Projects/aiomoqt/.venv/bin/python')
-        self.peer_pip = data.get('peer_pip', 'git+https://github.com/gmarzot/aiomoqt@gmarzot-peering-data')
+        self.peer_pip = data.get('peer_pip', 'git+https://github.com/gmarzot/aiomoqt@gmarzot-0.15.0')
         self.peer_command = data.get('peer_command', self.PEER_COMMAND)
         spec_id = hashlib.sha256(self.peer_pip.encode()).hexdigest()[:8]
         self.peer_image = data.get('peer_image') or f'moqbench-peer:{self.aiomoqt}-{self.aiopquic}-{spec_id}'
@@ -158,6 +161,12 @@ class Fabric:
                 raise ConfigError(f'{where}: node {n}: adapter must be one of {", ".join(sorted(self.ADAPTERS))}')
             if not self.node_image(n):
                 raise ConfigError(f'{where}: node {n}: a {adapter} relay needs an image')
+            metric = self.nodes.get(n, {}).get('node_metric')
+            if metric is not None:
+                if adapter not in self.NODE_METRICS:
+                    raise ConfigError(f'{where}: node {n}: a {adapter} relay takes no node_metric')
+                if not isinstance(metric, int) or isinstance(metric, bool) or metric < 0:
+                    raise ConfigError(f'{where}: node {n}: node_metric must be an integer of 0 or more')
         self.peers = [name for name, node in self.nodes.items() if 'peer' in node.get('roles', [])]
         for name in self.peers:
             node = self.nodes[name]
@@ -201,11 +210,16 @@ class Fabric:
         return self.nodes.get(name, {}).get('adapter', self.adapter)
 
     def node_image(self, name):
+        """A relay's own image, else its adapter's: the fabric image, a default, or for aiomoqt-relay the peer image."""
         node = self.nodes.get(name, {})
         if 'image' in node:
             return node['image']
         adapter = self.node_adapter(name)
-        return self.image if adapter == self.adapter else self.DEFAULT_IMAGES.get(adapter)
+        image = self.image if adapter == self.adapter else self.DEFAULT_IMAGES.get(adapter)
+        return image or (self.peer_image if adapter == 'aiomoqt-relay' else None)
+
+    def node_metric(self, name):
+        return self.nodes.get(name, {}).get('node_metric', self.DEFAULT_NODE_METRIC)
 
     def node_admin_image(self, name):
         """The image a relay's control sidecar runs, when its adapter needs one."""
@@ -245,8 +259,8 @@ class Fabric:
 
 class Deployment:
     NODE_KEYS = {'name', 'instance', 'roles', 'vcpus', 'ocpus', 'memory_gb', 'address', 'cpus', 'fabric_role',
-                 'adapter', 'image', 'admin_image', 'dials', 'command'}
-    RELAY_ONLY = {'adapter', 'admin_image'}
+                 'adapter', 'image', 'admin_image', 'dials', 'command', 'node_metric'}
+    RELAY_ONLY = {'adapter', 'admin_image', 'node_metric'}
     PEER_ONLY = {'dials', 'command'}
     KEYS = {'provider', 'region', 'zone', 'arch', 'tag', 'network_type', 'nodes', 'host', 'fabric'}
 
@@ -300,6 +314,9 @@ class Deployment:
                        if 'fabric' in data else None)
         if self.fabric is None and any('peer' in n['roles'] for n in self.nodes):
             raise ConfigError(f'{where}: peer nodes need a [fabric] table')
+        if (self.fabric is not None and self.provider != 'docker'
+                and any(self.fabric.node_adapter(n) == 'aiomoqt-relay' for n in self.fabric.order)):
+            raise ConfigError(f'{where}: aiomoqt-relay fabric nodes run on docker deployments only')
         if self.fabric is None and len(relays) != 1:
             raise ConfigError(f'{where}: exactly one node has the relay role (several need a [fabric] table)')
         if not self.with_role('subscriber'):

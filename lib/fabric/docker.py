@@ -175,10 +175,12 @@ class DockerFabric:
             for pair, link in a['links'].items():
                 if n in pair:
                     attach[link['name']] = {'ipv4_address': link[n]}
-            services[n] = {**common, 'container_name': self.holder(n), 'hostname': n, 'cap_add': ['NET_ADMIN'],
-                           'networks': attach}
             adapter = self.adapter_for(n)
+            shared = [f'./nodes/{n}/{sub}:{path}' for sub, path in adapter.shared_dirs(n).items()]
+            services[n] = {**common, 'container_name': self.holder(n), 'hostname': n, 'cap_add': ['NET_ADMIN'],
+                           'networks': attach, 'volumes': common['volumes'] + shared}
             relay = adapter.service(n, ctx)
+            relay['volumes'] = relay.get('volumes', []) + shared
             relay.update({'container_name': self.relay(n), 'network_mode': f'service:{n}', 'depends_on': [n],
                           'user': f'{uid}:{gid}', 'restart': 'no',
                           'ulimits': {'nofile': {'soft': 1048576, 'hard': 1048576}}})
@@ -215,6 +217,8 @@ class DockerFabric:
         for n in self.order:
             folder = stack / 'nodes' / n
             (folder / 'certs').mkdir(parents=True, exist_ok=True)
+            for sub in self.adapter_for(n).shared_dirs(n):
+                (folder / sub).mkdir(exist_ok=True)
             for rel, text in self.adapter_for(n).render(n, ctx).items():
                 (folder / rel).write_text(text)
             addrs = [a for pair, link in self.addr['links'].items() if n in pair for a in [link[n]]]
@@ -241,7 +245,9 @@ class DockerFabric:
             self.host.sh(f'cd {shlex.quote(self.stack)} && docker build -q -t {self.spec.lab_image} '
                          f'--build-arg AIOMOQT={self.spec.aiomoqt} --build-arg AIOPQUIC={self.spec.aiopquic} '
                          f'-f build/{LAB_DOCKERFILE.name} build', timeout=1800)
-        if (any(not self.nodes[n].get('image') for n in self.peers)
+        wanted = (any(not self.nodes[n].get('image') for n in self.peers)
+                  or any(self.spec.node_image(n) == self.spec.peer_image for n in self.order))
+        if (wanted
                 and self.host.sh(f'docker image inspect {self.spec.peer_image} >/dev/null 2>&1',
                                  check=False).returncode):
             self.host.sh(f'cd {shlex.quote(self.stack)} && docker build -q -t {self.spec.peer_image} '
@@ -314,11 +320,12 @@ class DockerFabric:
         script = f'docker exec {" ".join(flags)} {container} sh -c {shlex.quote(command)}'
         return self.host.sh(script, check=check, timeout=timeout)
 
-    def admin(self, node, method, path, body=None):
-        """One call to a relay's loopback control API, timed on the host clock inside its namespace."""
-        url = f'http://127.0.0.1:8000{path}'
+    def admin(self, node, method, path, body=None, base='http://127.0.0.1:8000'):
+        """One call to a relay's control API from its holder (base: an http:// or http+unix:// URL),
+        timed on the host clock inside its namespace."""
+        url = f'{base}{path}'
         arg = f' {shlex.quote(json.dumps(body))}' if body is not None else ''
-        r = self.exec(self.holder(node), f'python3 /fabric/bin/fabric-admin.py {method} {url}{arg}')
+        r = self.exec(self.holder(node), f'python3 /fabric/bin/fabric-admin.py {method} {shlex.quote(url)}{arg}')
         return json.loads(r.stdout)
 
     def reset(self, label):

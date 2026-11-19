@@ -51,7 +51,7 @@ class MoqxPeering(Adapter):
             'peering': {'method': 'moq-fabric', 'moq_fabric': {
                 'node_id': node,
                 'node_type': ctx['roles'].get(node, 'edge'),
-                'node_metric': 100,
+                'node_metric': fab.node_metric(node),
                 'listen_port': PEERING_PORT,
                 'tls': {'cert_file': f'{CERT_DIR}/relay.pem', 'key_file': f'{CERT_DIR}/relay.key'},
                 'peers': peers,
@@ -90,6 +90,9 @@ class MoqxPeering(Adapter):
     def namespaces(self, fab, node):
         doc = self.state(fab, node)
         return namespaces_in(doc) if doc else None
+
+    def sample(self, doc, namespace, track):
+        return {'streams': sum(p.get('active_streams') or 0 for p in (doc or {}).get('peers', []))}
 
     def metrics(self, fab, node):
         r = fab.admin(node, 'GET', '/metrics')
