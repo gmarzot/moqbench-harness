@@ -1,0 +1,44 @@
+description = "relay-restart with each relay killed (SIGKILL) instead of stopped."
+mode        = "stream"
+publisher   = "ingest"
+subscribers = ["all"]
+sub_start_s = 2
+peering_poll_s = 5
+
+# Egress, transit, then ingest: restarting the publisher's relay ends the publisher.
+
+[[event]]
+at_s   = 15
+verb   = "node.kill"
+on     = "egress"
+expect = "recovers"
+
+[[event]]
+at_s   = 25
+verb   = "node.start"
+on     = "egress"
+expect = "recovers"
+
+[[event]]
+at_s   = 40
+verb   = "node.kill"
+on     = "transit"
+expect = "recovers"
+
+[[event]]
+at_s   = 50
+verb   = "node.start"
+on     = "transit"
+expect = "recovers"
+
+[[event]]
+at_s   = 65
+verb   = "node.kill"
+on     = "ingest"
+expect = "recovers"
+
+[[event]]
+at_s   = 75
+verb   = "node.start"
+on     = "ingest"
+expect = "recovers"

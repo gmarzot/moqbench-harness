@@ -389,6 +389,7 @@ def analyze(run_dir):
     if fpath.is_file():
         events = [json.loads(x) for x in fpath.read_text().splitlines() if x.strip()]
     named = meta.get('named_subscribers') or {}
+    pub_end = max(sent.values(), default=0)
     life = lifetimes(events)
     subs = {}
     for log in sorted(run_dir.glob('*.log')):
@@ -430,8 +431,8 @@ def analyze(run_dir):
                 else:
                     recovery = 0.0
                 last = s['arrivals'][-1][0]
-                if (own and running(row.get('life'), win_end)
-                        and any(last + 1 < ts <= win_end for ts in sent.values())):
+                alive = running(row.get('life'), win_end) if own else win_end < pub_end - 5
+                if alive and any(last + 1 < ts <= win_end for ts in sent.values()):
                     recovery = None
                 lost = lost_between(s, sent, t0 - 0.5, max(win_end, first_after or win_end))
                 inwin = delivery(s, sent, t0 - 0.5, max(win_end, first_after or win_end))
@@ -444,6 +445,7 @@ def analyze(run_dir):
                     phase=phase(sent, t0, (meta.get('options') or {}).get('group_size') or 30),
                     max_gap_ms=None if recovery is None else r3(max(gap_ms, out_ms)), recovery_ms=recovery,
                     lost=len(lost), lost_ids=[f'{g}.{o}' for g, o in lost[:20]], dups=inwin['dups'],
+                    delivering=any(t0 - 2 <= a[0] <= t0 for a in s['arrivals']),
                     lat_p50_before=before['lat_p50'], lat_p50_after=after['lat_p50']))
         subs[name] = row
     out['subscribers'] = subs
@@ -615,6 +617,17 @@ def path_checks(run_dir, meta, rates, floor):
     return rows
 
 
+def recovers_skip(ev, sub, ingest):
+    """Why a recovers verdict does not apply to this subscriber at this node event, or None."""
+    if not ev['verb'].startswith('node.'):
+        return None
+    if ev.get('on') == ingest:
+        return "the publisher's relay restarted: the publisher reconnects"
+    if ev.get('on') == sub['node']:
+        return 'its own relay restarted: the subscriber reconnects'
+    return None
+
+
 def expect(ok, expected):
     """PASS or FAIL against an expected pass; XFAIL or XPASS against an expected failure."""
     if expected == 'fail':
@@ -658,9 +671,19 @@ def verdicts(out, meta):
                 ok = (ev['lost'] or 0) == 0 and ev['dups'] == 0 and gap is not None and gap <= ev['gap_bound_ms']
             elif exp == 'bounded-gap':
                 ok = gap is not None and gap <= ev['gap_bound_ms']
+            elif exp == 'recovers':
+                ok = ev['recovery_ms'] is not None
             else:
                 continue
             at = where(ev) + (f' ({ev["label"]})' if ev.get('label') else '')
+            if exp == 'recovers':
+                skip = recovers_skip(ev, s, ingest)
+                if skip is None and not ev.get('delivering'):
+                    continue
+                res.append(dict(check=f'{name} {ev["verb"]} {at}: recovers without a reconnect',
+                                status='SKIP' if skip else ('PASS' if ok else 'FAIL'), reason=skip, lost=ev['lost'],
+                                max_gap_ms=gap, recovery_ms=ev['recovery_ms']))
+                continue
             row = dict(check=f'{name} {ev["verb"]} {at}: {exp}', status='PASS' if ok else 'FAIL',
                        lost=ev['lost'], dups=ev['dups'], max_gap_ms=gap)
             if exp in ('no-gap', 'bounded-gap'):

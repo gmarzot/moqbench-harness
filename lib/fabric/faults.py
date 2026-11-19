@@ -21,7 +21,7 @@ SUB_VERBS = {'sub.start', 'sub.stop', 'sub.kill'}
 VERBS = {'link.impair', 'link.down', 'link.clear', 'node.kill', 'node.stop', 'node.start', 'node.freeze',
          'node.thaw', 'peer.add', 'peer.remove', 'peer.restart', 'peer.metric', *SUB_VERBS}
 # Per-event verdicts; bounded-gap needs max_gap_ms.
-EXPECTS = {'hitless', 'group-loss', 'no-gap', 'bounded-gap'}
+EXPECTS = {'hitless', 'group-loss', 'no-gap', 'bounded-gap', 'recovers'}
 
 
 class FaultError(ValueError):

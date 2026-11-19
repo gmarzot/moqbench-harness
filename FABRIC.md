@@ -98,6 +98,7 @@ group), `draft`, `peering_poll_s`, `slo_ms`, `links` (custom), `suffix`, `note`.
 | `via-local-sub` | a subscriber on the via joining and leaving while one past it runs throughout | hitless for the far subscriber at both transitions; the via's subscriber complete; afterwards the via holds no subscribe of its own and still carries the track |
 | `via-edge-sub-kill` | SIGKILL of the subscriber past the via, then of the relay past it | at both, `no-gap` for the via's subscriber |
 | `via-pair-failover`, `via-pair-failover-reverse`, `via-pair-failover-kill` | the cheaper of two vias on a ring stopped (or killed), then started | only the cheaper via carries the track before and after; the other carries it meanwhile; `group-loss` on the stop, `bounded-gap` on the kill |
+| `relay-restart`, `relay-restart-kill` | the egress, transit and ingest relay stopped (or killed) and started again in turn, a reference subscriber on every relay | per event and subscriber: outage, loss and `recovers` (delivery resumes without the client reconnecting); a subscriber on the restarted relay, and every subscriber when the publisher's relay restarts, is SKIP |
 | `fetch-peer` | a joining FETCH (aiomoqt's join example) on the publisher's relay and on every other relay | FETCH_OK on the publisher's relay; across peering, `expect_across = "fail"` reports a refusal as XFAIL and a success as XPASS |
 
 The gate for an audience: over its steady samples (from the first at the full
@@ -158,8 +159,12 @@ Each applied event records host-clock times bracketing it in `faults.jsonl`. An
 event `expect` sets that event's verdict: `hitless` (no loss, no duplicates),
 `group-loss` (at most one group lost, no duplicates), `no-gap` (hitless, and no
 inter-arrival gap over `max_gap_ms`, by default twice the object interval) or
-`bounded-gap` (delivery resumed within `max_gap_ms`, which it needs). `subs`
-limits the verdict to the named subscribers it lists.
+`bounded-gap` (delivery resumed within `max_gap_ms`, which it needs) or
+`recovers` (delivery resumed without a reconnect, for each subscriber that was
+receiving; on a node event, a subscriber of the restarted relay or of the
+publisher's relay is SKIP). `subs` limits the verdict to the named subscribers
+it lists. Delivery that stops for good while the publisher still sends has no
+recovery.
 `moqbench fabric check` lists impairments left on any relay namespace and
 `--clear` removes them; every run checks before it ends and clears what it finds.
 
