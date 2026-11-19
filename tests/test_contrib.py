@@ -270,6 +270,43 @@ class Lanes(unittest.TestCase):
         dual = lanes.LANES['moqt-aiomoqt-dual']
         self.assertEqual((dual.relay_ns(c), dual.relay_impl(ctx({}))), ('dst', 'aiomoqt'))
 
+    def test_direct_lane(self):
+        t = make_test(lanes=['srt', 'moqt-aiomoqt-msfts'], relay='none', placement='first-mile', pub_cc=['bbr', 'bbr1'])
+        self.assertEqual(t.relay_cc, [None])
+        msfts = lanes.LANES['moqt-aiomoqt-msfts']
+        vs = msfts.variants(t, profiles.load('transcontinental'))
+        self.assertEqual(vs, [dict(relay='none', pub_cc='bbr', timing='none'), dict(relay='none', pub_cc='bbr1', timing='none')])
+        self.assertEqual(msfts.label(vs[0]), 'relaynone-pub_ccbbr-timingnone')
+        c = ctx(vs[0], placement='first-mile', features=dict(ts_udp=True, msfts=True, ts_out=True))
+        c.relay = 'none'
+        procs = {p.name: p for p in msfts.procs(c)}
+        self.assertNotIn('relay', procs)
+        pub = procs['aiomoqt-pub']
+        self.assertEqual((pub.ns, pub.image), ('src', 'aiomoqt'))
+        for part in ('pub_media moqt://10.79.2.10:4433/ -k --pub-ns --draft 18', '--msfts --msfts-packets 7',
+                     '--cc-algo bbr '):
+            self.assertIn(part, pub.cmd)
+        sub = procs['aiomoqt-sub']
+        self.assertEqual(sub.ns, 'dst')
+        self.assertTrue(sub.cmd.startswith('openssl req -x509'))
+        self.assertIn('sub_media -Q -p 4433 --cert /tmp/cert.pem --key /tmp/priv.key --draft 18', sub.cmd)
+        self.assertNotIn(' -k ', sub.cmd)
+        self.assertEqual(msfts.cc_on_wan('first-mile'), {'pub_cc'})
+        relayed = {p.name: p for p in msfts.procs(ctx(dict(pub_cc='bbr', relay_cc='bbr2', timing='none'),
+                                                      placement='first-mile', features=c.features))}
+        self.assertIn('pub_media moqt://10.79.2.10:4433/moq-relay -k --draft 18', relayed['aiomoqt-pub'].cmd)
+        self.assertIn('sub_media moqt://127.0.0.1:4433/moq-relay -k --draft 18', relayed['aiomoqt-sub'].cmd)
+        self.assertNotIn('openssl', relayed['aiomoqt-sub'].cmd)
+
+    def test_direct_lane_needs_first_mile_and_a_direct_lane(self):
+        for over in (dict(placement='last-mile'), dict(placement='first-mile', relay_cc=['bbr']),
+                     dict(placement='first-mile', lanes=['moqt-aiomoqt-msfts', 'moqt-moq2ts']),
+                     dict(placement='first-mile', lanes=['moqt-aiomoqt-dual'])):
+            data = dict(lanes=['moqt-aiomoqt-msfts'], relay='none')
+            data.update(over)
+            with self.subTest(over=over), self.assertRaises(config.ConfigError):
+                make_test(**data)
+
     def test_controller_sweeps_must_reach_the_impaired_hop(self):
         for over in (dict(pub_cc=['bbr', 'bbr1']),
                      dict(placement='first-mile', relay_cc=['bbr2', 'cubic']),

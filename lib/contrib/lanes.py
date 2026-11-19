@@ -2,8 +2,9 @@
 
 Every lane reads the paced source from the src multicast group and delivers TS (or, for the LOC
 fallback, H.264) to the dst output groups, where the common taps and the analyser read it. SRT and
-RIST are one hop; MoQT lanes cross the emulated WAN between publisher and relay (first-mile) or
-between relay and subscriber (last-mile), and play their TS out on its PCR at fixed buffers.
+RIST are one hop; MoQT lanes cross the emulated WAN between publisher and relay (first-mile),
+between relay and subscriber (last-mile), or, with relay = "none", from the publisher straight to a
+listening subscriber, and play their TS out on its PCR at fixed buffers.
 """
 from dataclasses import dataclass, field
 import itertools
@@ -174,9 +175,7 @@ def moqx_env(cc):
 
 def aiomoqt_relay_proc(ns, cc=None):
     """aiomoqt-relay on a self-signed certificate; the clients dial it insecure."""
-    cert = ('openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=relay -keyout /tmp/priv.key '
-            '-out /tmp/cert.pem 2>/dev/null && ')
-    cmd = (f'{cert}python -m aiomoqt.tools.moq_interop_relay --quic --port {MOQT_PORT} '
+    cmd = (f'{self_signed_tls()}python -m aiomoqt.tools.moq_interop_relay --quic --port {MOQT_PORT} '
            '--cert /tmp/cert.pem --key /tmp/priv.key')
     return Proc('relay', ns, 'aiomoqt', f'{cmd} --cc-algo {cc}' if cc else cmd, 'relay',
                 env=dict(AIOPQUIC_GSO='0'), settle_s=3)
@@ -187,8 +186,21 @@ def relay_variant(test):
     return {} if test.relay == 'moqx' else {'relay': test.relay}
 
 
+def relay_cc_variant(cc):
+    """The relay controller as a variant key; none without a relay."""
+    return {} if cc is None else {'relay_cc': cc}
+
+
+def self_signed_tls():
+    """Shell that writes a self-signed certificate to /tmp/cert.pem and /tmp/priv.key, ahead of a
+    listener's command."""
+    return ('openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=relay -keyout /tmp/priv.key '
+            '-out /tmp/cert.pem 2>/dev/null && ')
+
+
 class Moqt(Lane):
     relay = True
+    direct = False
 
     def taps(self, ctx):
         return outputs(ctx.playout_ms)
@@ -204,12 +216,18 @@ class Moqt(Lane):
 
     def relay_proc(self, ctx):
         ns = self.relay_ns(ctx)
+        if ctx.relay == 'none':
+            return None
         if ctx.relay == 'aiomoqt':
             return aiomoqt_relay_proc(ns, ctx.variant.get('relay_cc', 'bbr'))
         return Proc('relay', ns, 'moqx', '', 'relay', env=moqx_env(ctx.variant.get('relay_cc', 'bbr2')),
                     entrypoint=False, settle_s=3)
 
     def urls(self, ctx):
+        """(the URL the publisher dials, the subscriber's URL or listener flags); with no relay the
+        subscriber listens in dst and the publisher dials it across the WAN, as SRT's caller does."""
+        if ctx.relay == 'none':
+            return f'moqt://{ctx.paths.dst_ip()}:{MOQT_PORT}/', f'-Q -p {MOQT_PORT} --cert /tmp/cert.pem --key /tmp/priv.key'
         _, pub, sub = ctx.paths.relay_addresses(ctx.placement)
         return f'moqt://{pub}:{MOQT_PORT}/moq-relay', f'moqt://{sub}:{MOQT_PORT}/moq-relay'
 
@@ -263,9 +281,11 @@ class AiomoqtLoc(Moqt):
              'frame_log': ('aiomoqt', f'{SUB_MEDIA} -h', '--frame-log')}
     namespace = 'test/loc'
     pub_extra = ''
+    direct = True
 
     def variants(self, test, profile):
-        return [dict(relay_variant(test), pub_cc=p, relay_cc=r) for p, r in itertools.product(test.pub_cc, test.relay_cc)]
+        return [dict(relay_variant(test), pub_cc=p, **relay_cc_variant(r))
+                for p, r in itertools.product(test.pub_cc, test.relay_cc)]
 
     def in_tap_hash(self, ctx):
         return 'vcl' if self.fallback(ctx) else 'loc'
@@ -281,12 +301,19 @@ class AiomoqtLoc(Moqt):
 
     def pub_cmd(self, ctx, url):
         src = f'--ts udp://@{GROUP_IN}' if ctx.features.get('ts_udp') else '--ts -'
-        cmd = (f'{PUB_MEDIA} {url} -k --draft 18 -N {self.namespace} {src}{self.pub_extra} '
+        mode = ' --pub-ns' if ctx.relay == 'none' else ''
+        cmd = (f'{PUB_MEDIA} {url} -k{mode} --draft 18 -N {self.namespace} {src}{self.pub_extra} '
                f'--cc-algo {ctx.variant["pub_cc"]} --keepalive 10 -t 0 --stats-json')
         return cmd if ctx.features.get('ts_udp') else f'{PY}/udp2pipe.py {GROUP_IN} | {cmd}'
 
-    def sub_cmd(self, url):
-        return f'{SUB_MEDIA} {url} -k --draft 18 -N {self.namespace} -t 0'
+    def sub_cmd(self, url, ctx=None):
+        """sub_media dialing `url`, or listening when `url` holds listener flags (relay = "none")."""
+        insecure = '' if ctx is not None and ctx.relay == 'none' else ' -k'
+        return f'{SUB_MEDIA} {url}{insecure} --draft 18 -N {self.namespace} -t 0'
+
+    def tls(self, ctx):
+        """The listener's certificate step ahead of a direct subscriber; nothing otherwise."""
+        return self_signed_tls() if ctx.relay == 'none' else ''
 
     def procs(self, ctx):
         pub_url, sub_url = self.urls(ctx)
@@ -294,16 +321,18 @@ class AiomoqtLoc(Moqt):
         procs = [self.relay_proc(ctx), Proc('aiomoqt-pub', 'src', 'aiomoqt', self.pub_cmd(ctx, pub_url), 'sender',
                                             env=env, settle_s=2)]
         procs += self.receiver_procs(ctx, sub_url, env)
-        return procs
+        return [p for p in procs if p is not None]
 
     def receiver_procs(self, ctx, url, env):
         if self.fallback(ctx):
-            rx = again(f'{self.sub_cmd(url)} --out /tmp/media --pipe video', 'sub_media')
-            return [Proc('aiomoqt-sub', 'dst', 'aiomoqt', f'{{ {rx}; }} | {PY}/tstap.py --stdin raw --annexb --out /out',
+            rx = again(f'{self.sub_cmd(url, ctx)} --out /tmp/media --pipe video', 'sub_media')
+            return [Proc('aiomoqt-sub', 'dst', 'aiomoqt',
+                         f'{self.tls(ctx)}{{ {rx}; }} | {PY}/tstap.py --stdin raw --annexb --out /out',
                          'subscriber', env=env, settle_s=1)]
-        rx = (f'{self.sub_cmd(url)} --analyze -i 5 --report /out/sub-analyze-{STAMP}.jsonl '
+        rx = (f'{self.sub_cmd(url, ctx)} --analyze -i 5 --report /out/sub-analyze-{STAMP}.jsonl '
               f'--frame-log /out/frames-{STAMP}.jsonl')
-        return [Proc('aiomoqt-sub', 'dst', 'aiomoqt', again(rx, 'sub_media'), 'subscriber', env=env, settle_s=1)]
+        return [Proc('aiomoqt-sub', 'dst', 'aiomoqt', self.tls(ctx) + again(rx, 'sub_media'), 'subscriber', env=env,
+                     settle_s=1)]
 
 
 class AiomoqtMsfts(AiomoqtLoc):
@@ -317,7 +346,7 @@ class AiomoqtMsfts(AiomoqtLoc):
     pub_extra = ' --msfts --msfts-packets 7'
 
     def variants(self, test, profile):
-        return [dict(relay_variant(test), pub_cc=p, relay_cc=r, timing=t)
+        return [dict(relay_variant(test), pub_cc=p, **relay_cc_variant(r), timing=t)
                 for p, r, t in itertools.product(test.pub_cc, test.relay_cc, test.pub_timing)]
 
     def pub_cmd(self, ctx, url):
@@ -340,9 +369,10 @@ class AiomoqtMsfts(AiomoqtLoc):
         return f'aiomoqt lacks {", ".join(missing)} (pub_media --ts udp:// and --msfts, sub_media --ts-out)' if missing else None
 
     def receiver_procs(self, ctx, url, env):
-        rx = (f'{self.sub_cmd(url)} --ts-out udp://127.0.0.1:{LOCAL_TS} --analyze -i 5 '
+        rx = (f'{self.sub_cmd(url, ctx)} --ts-out udp://127.0.0.1:{LOCAL_TS} --analyze -i 5 '
               f'--report /out/sub-analyze-{STAMP}.jsonl --arrival-log /out/arrival-{STAMP}.jsonl')
-        return [Proc('aiomoqt-sub', 'dst', 'aiomoqt', again(rx, 'sub_media'), 'subscriber', env=env, settle_s=1),
+        return [Proc('aiomoqt-sub', 'dst', 'aiomoqt', self.tls(ctx) + again(rx, 'sub_media'), 'subscriber', env=env,
+                     settle_s=1),
                 Proc('playout', 'dst', 'tools', playout_cmd(f'--udp 127.0.0.1:{LOCAL_TS}', ctx.playout_ms), 'receiver')]
 
 
@@ -351,6 +381,7 @@ class AiomoqtDual(AiomoqtMsfts):
     publisher sessions by Location."""
     name = 'moqt-aiomoqt-dual'
     needs = dict(AiomoqtMsfts.needs, relay=('aiomoqt', 'python -m aiomoqt.tools.moq_interop_relay -h', '--port'))
+    direct = False
 
     def cc_on_wan(self, placement):
         return {'pub_cc'}

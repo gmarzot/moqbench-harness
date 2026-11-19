@@ -17,7 +17,7 @@ IMAGES = {'tools': 'moqbench-contrib-tools:dev', 'ffmpeg': 'moqbench-contrib-ffm
           'moq2ts': 'moqbench-contrib-moq2ts:dev', 'aiomoqt': 'moqbench-contrib-aiomoqt:dev',
           'moqx': 'ghcr.io/openmoq/moqx:v0.3.7-amd64'}
 PLACEMENTS = ('last-mile', 'first-mile')
-RELAYS = {'moqx': 'bbr2', 'aiomoqt': 'bbr'}
+RELAYS = {'moqx': 'bbr2', 'aiomoqt': 'bbr', 'none': None}
 TEST_KEYS = {'type', 'lanes', 'profiles', 'source', 'scenario', 'repeats', 'placement', 'rtt_multiples',
              'rtt_floor_ms', 'budgets_ms', 'playout_ms', 'relay_cc', 'pub_cc', 'seconds', 'note', 'suffix',
              'dual_path', 'ingest', 'pub_timing', 'relay', 'capture'}
@@ -100,7 +100,14 @@ class Test:
             raise config.ConfigError(f'{where}: placement is last-mile or first-mile')
         if self.relay not in RELAYS:
             raise config.ConfigError(f'{where}: relay is {" or ".join(RELAYS)}')
-        if self.relay_cc is None:
+        if self.relay == 'none':
+            if self.placement != 'first-mile' or self.relay_cc is not None:
+                raise config.ConfigError(f'{where}: relay = "none" runs first-mile, with no relay_cc')
+            need_relay = [n for n in self.lanes if lanes.LANES[n].relay and not lanes.LANES[n].direct]
+            if need_relay:
+                raise config.ConfigError(f'{where}: {", ".join(need_relay)} cannot run without a relay')
+            self.relay_cc = [None]
+        elif self.relay_cc is None:
             self.relay_cc = [RELAYS[self.relay]]
         for key in ('pub_cc', 'relay_cc'):
             if len(getattr(self, key)) > 1 and not any(key in lanes.LANES[n].cc_on_wan(self.placement)

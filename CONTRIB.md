@@ -54,6 +54,11 @@ late or lost at each D from raw arrivals when the lane has them.
   to the receiver is impaired.
 - `first-mile`: the relay in `dst`. The publisher's delivery to the relay is impaired.
 
+With `relay = "none"` (first-mile only, aiomoqt LOC and MSFTS lanes) there is no relay: `sub_media`
+listens on raw QUIC in `dst` and `pub_media --pub-ns` in `src` dials it across the WAN, one hop with
+the sender calling the receiver, as SRT's caller and listener do. The publisher's controller is on
+that hop.
+
 SRT and RIST are one hop either way.
 
 ## Impairment
@@ -161,7 +166,7 @@ least 25 ms (more than the profile's slot), and `bandwidth` = 1.5 × the multipl
 
 **aiomoqt-relay** replaces moqx with `relay = "aiomoqt"` in a test: `moq_interop_relay --quic` from
 the aiomoqt image, with `--cc-algo` from `relay_cc` (default `bbr`). The relay-admin sampler runs
-only for moqx.
+only for moqx. `relay = "none"` takes no `relay_cc`; its runs carry the variant key `relay=none`.
 
 **moq2ts** is built from pinned commits against moqxr v0.4.18, and the receiver against moq5.
 
