@@ -9,6 +9,8 @@ sys.path.insert(0, str(ROOT / 'lib'))
 import config  # noqa: E402
 import argparse  # noqa: E402
 from contrib import calibrate, cli, emu, lanes, profiles, run, sources, spec, topology  # noqa: E402
+from contrib import docker as contrib_docker  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
 
 # Mean forward loss in percent each profile is built for.
 TARGET_LOSS = {'lan': 0.0, 'regional-clean': 0.02, 'national-managed': 0.1, 'transcontinental': 0.5, 'intercontinental-good': 0.3, 'longhaul-lossy': 1.0, 'intercontinental-bad': 3.0, 'cellular-handover': 2.0, 'leo-satellite': 0.4,
@@ -409,6 +411,35 @@ class Emulator(unittest.TestCase):
         self.assertEqual(seen, [dict(name='c#1', port=5201)])
         self.assertEqual([r['action'] for r in done], ['cross_on', 'rate'])
         self.assertIn('tbf rate 25797872bit', wan.cmds[-1])
+
+
+class RemoteWork(unittest.TestCase):
+    def provider(self, stack_dir, home='/home/u'):
+        dep = SimpleNamespace(host='remote', subnet='10.79.0.0/16', name='dep', stack_dir=stack_dir)
+        prov = contrib_docker.DockerContrib(dep)
+        calls = []
+
+        def sh(script, check=True, timeout=300):
+            calls.append(script)
+            return SimpleNamespace(stdout=home, stderr='', returncode=0)
+        prov.host = SimpleNamespace(local=False, sh=sh)
+        return prov, calls
+
+    def test_a_relative_stack_dir_sits_under_the_remote_home(self):
+        prov, calls = self.provider('moqbench-contrib')
+        self.assertEqual(prov.work, '/home/u/moqbench-contrib/dep')
+        self.assertEqual(prov.work, '/home/u/moqbench-contrib/dep')
+        self.assertEqual(len(calls), 1)
+
+    def test_an_absolute_stack_dir_is_used_as_given(self):
+        prov, calls = self.provider('/srv/mb')
+        self.assertEqual(prov.work, '/srv/mb/dep')
+        self.assertEqual(calls, [])
+
+    def test_no_home_is_an_error(self):
+        prov, _ = self.provider('moqbench-contrib', home='')
+        with self.assertRaises(contrib_docker.FabricError):
+            prov.work
 
 
 class FakeProv:

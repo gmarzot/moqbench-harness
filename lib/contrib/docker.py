@@ -38,8 +38,22 @@ class DockerContrib:
         self.paths = topology.Paths(str(dep.subnet), dual=dual)
         self.prefix = f'mbc-{dep.name}'.lower()
         self.local_dir = ROOT / '.testbed' / 'contrib' / dep.name
-        self.work = str(self.local_dir) if self.host.local else f'{dep.stack_dir}/{dep.name}'
+        self._work = str(self.local_dir) if self.host.local else None
         self.user = None
+
+    @property
+    def work(self):
+        """The deployment's folder on the Docker host, absolute (bind mounts need one): a relative
+        stack_dir sits under the remote user's home."""
+        if self._work is None:
+            base = self.dep.stack_dir
+            if not base.startswith('/'):
+                home = self.sh('printf %s "$HOME"').stdout.strip()
+                if not home.startswith('/'):
+                    raise FabricError(f'{self.dep.host}: no absolute $HOME for stack_dir {base!r}')
+                base = f'{home}/{base}'
+            self._work = f'{base}/{self.dep.name}'
+        return self._work
 
     def holder(self, ns):
         return f'{self.prefix}-{ns}'
