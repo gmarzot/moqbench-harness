@@ -5,30 +5,31 @@ subscribers = ["all"]
 sub_start_s = 2
 peering_poll_s = 5
 
-# Egress, transit, then ingest: restarting the publisher's relay ends the publisher.
+# Transit first, while the egress subscriber can show the reroute; then egress; then ingest,
+# whose restart ends the publisher.
 
 [[event]]
 at_s   = 15
 verb   = "node.kill"
-on     = "egress"
+on     = "transit"
 expect = "recovers"
 
 [[event]]
 at_s   = 25
 verb   = "node.start"
-on     = "egress"
+on     = "transit"
 expect = "recovers"
 
 [[event]]
 at_s   = 40
 verb   = "node.kill"
-on     = "transit"
+on     = "egress"
 expect = "recovers"
 
 [[event]]
 at_s   = 50
 verb   = "node.start"
-on     = "transit"
+on     = "egress"
 expect = "recovers"
 
 [[event]]

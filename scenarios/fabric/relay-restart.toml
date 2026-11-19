@@ -1,36 +1,37 @@
-description = "Relay restarts during steady delivery: the egress, transit and ingest relay in turn are stopped (SIGTERM) and started 10 s later, with a reference subscriber on every relay. Per event and subscriber: the outage, the objects lost, and whether delivery recovers without the client reconnecting. Subscribers on the restarted relay, and every subscriber once the publisher's relay restarts, need a reconnect and are reported as SKIP."
+description = "Relay restarts during steady delivery: the transit, egress and ingest relay in turn are stopped (SIGTERM) and started 10 s later, with a reference subscriber on every relay. Per event and subscriber: the outage, the objects lost, and whether delivery recovers without the client reconnecting. Subscribers on the restarted relay, and every subscriber once the publisher's relay restarts, need a reconnect and are reported as SKIP."
 mode        = "stream"
 publisher   = "ingest"
 subscribers = ["all"]
 sub_start_s = 2
 peering_poll_s = 5
 
-# Egress, transit, then ingest: restarting the publisher's relay ends the publisher.
+# Transit first, while the egress subscriber can show the reroute; then egress; then ingest,
+# whose restart ends the publisher.
 
 [[event]]
 at_s   = 15
 verb   = "node.stop"
-on     = "egress"
+on     = "transit"
 expect = "recovers"
 grace_s = 5
 
 [[event]]
 at_s   = 25
 verb   = "node.start"
-on     = "egress"
+on     = "transit"
 expect = "recovers"
 
 [[event]]
 at_s   = 40
 verb   = "node.stop"
-on     = "transit"
+on     = "egress"
 expect = "recovers"
 grace_s = 5
 
 [[event]]
 at_s   = 50
 verb   = "node.start"
-on     = "transit"
+on     = "egress"
 expect = "recovers"
 
 [[event]]

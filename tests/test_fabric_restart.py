@@ -60,7 +60,7 @@ class Recovers(unittest.TestCase):
             scen = load_scenario(name)
             faults.validate(scen['event'], ['a', 'b', 'c'])
             self.assertEqual([(e['verb'], e['on']) for e in scen['event']],
-                             [(verb, 'egress'), ('node.start', 'egress'), (verb, 'transit'), ('node.start', 'transit'),
+                             [(verb, 'transit'), ('node.start', 'transit'), (verb, 'egress'), ('node.start', 'egress'),
                               (verb, 'ingest'), ('node.start', 'ingest')])
             self.assertTrue(all(e['expect'] == 'recovers' for e in scen['event']))
 
