@@ -1,4 +1,4 @@
-id = "P6"
+id = "intercontinental-bad"
 name = "Bad intercontinental"
 basis = "G.1050 profile C; G.1050 (2007) severity G"
 rtt_ms = 400

@@ -209,7 +209,7 @@ def write_run(d, delays, lost=(), gap_at=None, lane='srt', taps=('out',), step=N
         rewrite.write_text('\n'.join(fixed) + '\n')
     if step is not None:
         (run / 'clock-dst.csv').write_text(f't_ns,kind,ms\n{step[0]},step,{step[1] / 1e6}\n')
-    meta = dict(label='001-x', lane=lane, variant={}, repeat=0, placement='last-mile', profile_id='P3', rtt_ms=80,
+    meta = dict(label='001-x', lane=lane, variant={}, repeat=0, placement='last-mile', profile_id='transcontinental', rtt_ms=80,
                 source=dict(tier='mpeg2-20m'), seconds=len(delays) * 0.04 - 0.5, join_s=0.2, break_ms=200,
                 budgets_ms=[100, 300], playout_ms=[300, 200], taps=list(taps), topology=dict(links=[]),
                 emulator_final={}, wall_clock=wall_clock)
@@ -237,11 +237,11 @@ class Analysis(unittest.TestCase):
         self.assertEqual(o['frames']['missing'], 2)
         self.assertEqual(s['verdict'], 'OK')
 
-    def test_zero_errors_on_p0(self):
+    def test_zero_errors_on_lan(self):
         with tempfile.TemporaryDirectory() as d:
             run = write_run(d, [5.0] * 100)
             m = json.loads((run / 'meta.json').read_text())
-            m['profile_id'] = 'P0'
+            m['profile_id'] = 'lan'
             (run / 'meta.json').write_text(json.dumps(m))
             s = report.analyze(run)
         self.assertEqual(s['verdict'], 'PASS')

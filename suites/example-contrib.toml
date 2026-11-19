@@ -3,7 +3,7 @@ description = "Contribution transports on the profile grid: SRT and RIST at equa
 [[test]]
 type       = "contribution"
 lanes      = ["srt", "rist", "moqt-moq2ts", "moqt-aiomoqt-loc", "moqt-aiomoqt-msfts"]
-profiles   = ["P0", "REF", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"]
+profiles   = ["lan", "random-loss", "regional-clean", "national-managed", "transcontinental", "intercontinental-good", "longhaul-lossy", "intercontinental-bad", "cellular-handover", "leo-satellite", "outage-ladder"]
 source     = "mpeg2-20m"
 scenario   = "standard"
 repeats    = 3
@@ -19,7 +19,7 @@ note = "SRT latency and RIST buffer equal each budget D; MoQT lanes run once per
 [[test]]
 type      = "contribution"
 lanes     = ["srt", "rist", "moqt-moq2ts", "moqt-aiomoqt-loc", "moqt-aiomoqt-msfts"]
-profiles  = ["REF", "P3", "P5", "P6"]
+profiles  = ["random-loss", "transcontinental", "longhaul-lossy", "intercontinental-bad"]
 source    = "mpeg2-20m"
 placement = "first-mile"
 relay_cc  = ["bbr2"]
@@ -29,7 +29,7 @@ note      = "the impairment between publisher and relay instead, so the aiomoqt 
 [[test]]
 type     = "contribution"
 lanes    = ["srt", "rist", "moqt-moq2ts"]
-profiles = ["REF", "P3"]
+profiles = ["random-loss", "transcontinental"]
 source   = "mpeg2-8m"
 relay_cc = ["bbr2"]
 suffix   = "8m"
@@ -37,7 +37,7 @@ suffix   = "8m"
 [[test]]
 type     = "contribution"
 lanes    = ["srt", "rist", "moqt-moq2ts"]
-profiles = ["REF", "P3"]
+profiles = ["random-loss", "transcontinental"]
 source   = "mpeg2-40m"
 relay_cc = ["bbr2"]
 suffix   = "40m"
@@ -45,7 +45,7 @@ suffix   = "40m"
 [[test]]
 type      = "contribution"
 lanes     = ["moqt-moq2ts", "moqt-aiomoqt-msfts"]
-profiles  = ["REF", "P3", "P5", "P6"]
+profiles  = ["random-loss", "transcontinental", "longhaul-lossy", "intercontinental-bad"]
 source    = "mpeg2-20m"
 relay     = "aiomoqt"
 relay_cc  = ["bbr", "bbr1"]

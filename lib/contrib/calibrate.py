@@ -139,7 +139,7 @@ def run(prov, profile_ids, seconds, root, tier):
 
 
 def line(r):
-    return (f"{r['profile']:<4} fwd loss {r['fwd_loss_pct']}% (cmd {r['fwd_expected_pct']} ± {r['fwd_sigma_pct']}), "
+    return (f"{r['profile']:<21} fwd loss {r['fwd_loss_pct']}% (cmd {r['fwd_expected_pct']} ± {r['fwd_sigma_pct']}), "
             f"rev {r['rev_loss_pct']}% (cmd {r['rev_expected_pct']} ± {r['rev_sigma_pct']}), "
             f"OWD p1/p50/p99 {r['owd_ms']['p1']}/{r['owd_ms']['p50']}/{r['owd_ms']['p99']} ms (cmd {r['owd_commanded_ms']}"
             f"{' + slot ' + str(r['slot_ms']) if r['slot_ms'] else ''}), RTT p50 {r['rtt_ms']['p50']} ms "

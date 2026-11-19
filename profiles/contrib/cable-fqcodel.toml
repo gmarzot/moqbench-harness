@@ -1,8 +1,8 @@
-id = "B3"
+id = "cable-fqcodel"
 name = "Cable uplink with FQ-CoDel"
-description = "B1 with FQ-CoDel at the bottleneck (default 5 ms target, 100 ms interval) in place of drop-tail."
+description = "bloat-cable with FQ-CoDel at the bottleneck (default 5 ms target, 100 ms interval) in place of drop-tail."
 basis = "RFC 8290 (FQ-CoDel); RFC 7567 (IETF recommendations on active queue management)"
-base = "B1"
+base = "bloat-cable"
 
 [forward]
 cap = 2.5

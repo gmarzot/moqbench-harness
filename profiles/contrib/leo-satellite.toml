@@ -1,4 +1,4 @@
-id = "P8"
+id = "leo-satellite"
 name = "LEO satellite"
 description = "Reconfiguration every 15 s: a loss burst and an RTT step; magnitudes are assumed."
 basis = "LEO measurement campaigns: mean RTT 63 ms, median loss 0.4 %"

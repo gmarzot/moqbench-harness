@@ -1,4 +1,4 @@
-id = "P2"
+id = "national-managed"
 name = "Managed national"
 basis = "G.1050 profile B; G.1050 (2007) severity B; RIST ARQ best practices, medium haul"
 rtt_ms = 60

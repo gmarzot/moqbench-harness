@@ -1,4 +1,4 @@
-id = "B1"
+id = "bloat-cable"
 name = "Bloated cable uplink"
 description = "A 2.5x uplink behind a 500 ms drop-tail buffer, shared with a TCP upload that runs 20 s on, 20 s off."
 basis = "Gettys and Nichols, Bufferbloat: Dark Buffers in the Internet (ACM Queue, 2011); Kreibich et al., Netalyzr (IMC 2010)"

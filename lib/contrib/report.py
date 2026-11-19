@@ -459,12 +459,12 @@ def analyze(run_dir):
 
 
 def verdict(out, main, meta):
-    """P0 must read zero errors; other profiles only fail on no delivery."""
+    """lan must read zero errors; other profiles only fail on no delivery."""
     frames = main.get('frames')
     delivered = (main.get('delay_ms') or {}).get('n') or (isinstance(frames, int) and frames > (main.get('missing') or 0))
     if not delivered:
         return 'FAIL'
-    if meta['profile_id'] == 'P0':
+    if meta['profile_id'] == 'lan':
         clean = (main.get('pcr_missing', main.get('missing', 0)) == 0 and not (main.get('ts') or {}).get('cc_errors')
                  and not (main.get('breaks') or {}).get('count'))
         return 'PASS' if clean else 'FAIL'
@@ -474,7 +474,7 @@ def verdict(out, main, meta):
 def line(s):
     """One text line per run."""
     v = s.get('variant') or {}
-    head = f"{s['label']:<34} {s['lane']:<18} {s['profile']:<4} {json.dumps(v, separators=(',', ':')):<28}"
+    head = f"{s['label']:<34} {s['lane']:<18} {s['profile']:<21} {json.dumps(v, separators=(',', ':')):<28}"
     if 'error' in s:
         return f"{head} {s['error']}"
     main = None
@@ -514,7 +514,7 @@ def table(summaries):
     out = []
     for s in sorted(summaries, key=lambda x: (x.get('profile', ''), x.get('lane', ''), x.get('label', ''))):
         if s.get('verdict') == 'PENDING':
-            out.append(f"{s['profile']:<4} {s['lane']:<20} {'':<26} PENDING: {s.get('reason')}")
+            out.append(f"{s['profile']:<21} {s['lane']:<20} {'':<26} PENDING: {s.get('reason')}")
             continue
         out.append(line(s))
     return '\n'.join(out)

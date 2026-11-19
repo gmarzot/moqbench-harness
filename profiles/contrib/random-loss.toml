@@ -1,4 +1,4 @@
-id = "REF"
+id = "random-loss"
 name = "Reference WAN"
 description = "netem delay 50ms loss 0.5% rate 1gbit on the forward path; the reverse path is clean."
 rtt_ms = 50

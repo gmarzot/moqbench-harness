@@ -11,12 +11,12 @@ import argparse  # noqa: E402
 from contrib import calibrate, cli, emu, lanes, profiles, run, sources, spec, topology  # noqa: E402
 
 # Mean forward loss in percent each profile is built for.
-TARGET_LOSS = {'P0': 0.0, 'P1': 0.02, 'P2': 0.1, 'P3': 0.5, 'P4': 0.3, 'P5': 1.0, 'P6': 3.0, 'P7': 2.0, 'P8': 0.4,
-               'P9': 0.5, 'REF': 0.5, 'B1': 0.0, 'B2': 0.0, 'B3': 0.0}
+TARGET_LOSS = {'lan': 0.0, 'regional-clean': 0.02, 'national-managed': 0.1, 'transcontinental': 0.5, 'intercontinental-good': 0.3, 'longhaul-lossy': 1.0, 'intercontinental-bad': 3.0, 'cellular-handover': 2.0, 'leo-satellite': 0.4,
+               'outage-ladder': 0.5, 'random-loss': 0.5, 'bloat-cable': 0.0, 'bloat-cellular': 0.0, 'cable-fqcodel': 0.0}
 
 
 def make_test(**over):
-    data = dict(type='contribution', lanes=['srt', 'rist', 'moqt-moq2ts', 'moqt-aiomoqt-loc'], profiles=['P3'])
+    data = dict(type='contribution', lanes=['srt', 'rist', 'moqt-moq2ts', 'moqt-aiomoqt-loc'], profiles=['transcontinental'])
     data.update(over)
     return spec.Test(data, 'test', {})
 
@@ -44,7 +44,7 @@ class Profiles(unittest.TestCase):
         self.assertAlmostEqual(100 / r, 3, places=3)
 
     def test_tree_keeps_order_and_restates_everything(self):
-        p = profiles.load('P3')
+        p = profiles.load('transcontinental')
         cmds = p.forward.build('vb0', 20e6, seed=7)
         self.assertTrue(cmds[0].startswith('tc qdisc del dev vb0 root'))
         root = cmds[1]
@@ -62,32 +62,32 @@ class Profiles(unittest.TestCase):
         self.assertIn('tbf rate', p.forward.change_rate('vb0', 20e6, 0.5))
 
     def test_cap_is_a_multiple_of_the_wire_rate(self):
-        p = profiles.load('P3')
+        p = profiles.load('transcontinental')
         self.assertAlmostEqual(p.forward.cap_bps(20e6), 1.5 * 20e6 * 1358 / 1316)
-        self.assertIsNone(profiles.load('REF').forward.cap_bps(20e6))
+        self.assertIsNone(profiles.load('random-loss').forward.cap_bps(20e6))
 
     def test_reference_profile(self):
-        p = profiles.load('REF')
+        p = profiles.load('random-loss')
         self.assertEqual(p.forward.netem_args(), 'limit 100000 delay 50ms rate 1gbit loss random 0.5% seed 2001')
         self.assertEqual(p.reverse.mean_loss_pct(), 0.0)
 
     def test_timeline_expands_repeats_and_ladders(self):
-        p6 = profiles.load('P6')
+        p6 = profiles.load('intercontinental-bad')
         acts = p6.timeline(300, start_s=10)
         outages = [a for a in acts if a[1] == 'outage_on']
         self.assertEqual(sum(1 for a in outages if a[2]['name'].startswith('outage-1600ms')), 2)
         self.assertTrue(all(10 <= t < 310 + 2 for t, _, _ in acts))
         self.assertEqual(acts, sorted(acts, key=lambda a: a[0]))
-        p9 = profiles.load('P9')
+        p9 = profiles.load('outage-ladder')
         self.assertEqual(p9.rtt_ms, 80)
-        self.assertEqual(p9.forward.loss, profiles.load('P3').forward.loss)
+        self.assertEqual(p9.forward.loss, profiles.load('transcontinental').forward.loss)
         ladder = [a for a in p9.timeline(p9.run_s) if a[1] == 'outage_on']
         self.assertEqual([a[2]['direction'] for a in ladder], ['fwd'] * 4 + ['both'] * 4)
         off = {args['name']: t for t, kind, args in p9.timeline(p9.run_s) if kind == 'outage_off'}
         self.assertAlmostEqual(off['fwd-30s'] - 160, 30)
 
     def test_bufferbloat_profiles(self):
-        b1, b2, b3 = (profiles.load(n) for n in ('B1', 'B2', 'B3'))
+        b1, b2, b3 = (profiles.load(n) for n in ('bloat-cable', 'bloat-cellular', 'cable-fqcodel'))
         tree = b1.forward.build('vb0', 20e6, seed=7)
         self.assertIn('handle 20: tbf rate 51595744bit burst 64kb latency 500ms', tree[2])
         self.assertEqual(len(tree), 3)
@@ -141,7 +141,7 @@ class Spec(unittest.TestCase):
         self.assertEqual(t.budgets(1), [40, 60, 80, 120, 200, 300])
 
     def test_variant_filters_apply_only_to_their_own_keys(self):
-        a = argparse.Namespace(only=[1], lane=['srt', 'moqt-moq2ts', 'moqt-aiomoqt-msfts'], profile=['P3'], repeats=1,
+        a = argparse.Namespace(only=[1], lane=['srt', 'moqt-moq2ts', 'moqt-aiomoqt-msfts'], profile=['transcontinental'], repeats=1,
                                variant=['D=4xRTT', 'relay_cc=bbr2', 'pub_cc=bbr'])
         got = [(lane.name, v) for _, lane, _, _, v in cli.cells(spec.load_suite('example-contrib'), a)]
         self.assertEqual(got, [('srt', {'D': 320}), ('moqt-moq2ts', {'relay_cc': 'bbr2'}),
@@ -218,7 +218,7 @@ class Lanes(unittest.TestCase):
     def test_variants(self):
         t = make_test(lanes=['srt', 'moqt-moq2ts', 'moqt-aiomoqt-loc', 'moqt-aiomoqt-dual'],
                       relay_cc=['bbr2', 'bbr', 'cubic'], pub_cc=['bbr', 'bbr1'])
-        p = profiles.load('P3')
+        p = profiles.load('transcontinental')
         self.assertEqual([v['D'] for v in lanes.LANES['srt'].variants(t, p)], t.budgets(80))
         self.assertEqual(len(lanes.LANES['moqt-moq2ts'].variants(t, p)), 3)
         self.assertEqual(len(lanes.LANES['moqt-aiomoqt-loc'].variants(t, p)), 6)
@@ -253,10 +253,10 @@ class Lanes(unittest.TestCase):
     def test_relay_choice(self):
         moqx = make_test()
         self.assertEqual(moqx.relay_cc, ['bbr2'])
-        self.assertNotIn('relay', lanes.LANES['moqt-moq2ts'].variants(moqx, profiles.load('P3'))[0])
+        self.assertNotIn('relay', lanes.LANES['moqt-moq2ts'].variants(moqx, profiles.load('transcontinental'))[0])
         t = make_test(lanes=['moqt-moq2ts', 'moqt-aiomoqt-msfts'], relay='aiomoqt', relay_cc=['bbr', 'bbr1'])
         msfts = lanes.LANES['moqt-aiomoqt-msfts']
-        self.assertEqual([v['relay'] for v in msfts.variants(t, profiles.load('P3'))], ['aiomoqt', 'aiomoqt'])
+        self.assertEqual([v['relay'] for v in msfts.variants(t, profiles.load('transcontinental'))], ['aiomoqt', 'aiomoqt'])
         self.assertEqual(make_test(relay='aiomoqt').relay_cc, ['bbr'])
         c = ctx(dict(relay='aiomoqt', pub_cc='bbr', relay_cc='bbr1'))
         c.relay = 'aiomoqt'
@@ -308,7 +308,7 @@ class Lanes(unittest.TestCase):
         self.assertIn('--msfts --msfts-packets 7 --timestamp-mapping',
                       {p.name: p for p in msfts.procs(mapped)}['aiomoqt-pub'].cmd)
         t = make_test(pub_timing=['none', 'mapping'])
-        self.assertEqual([v['timing'] for v in msfts.variants(t, profiles.load('P3'))], ['none', 'mapping'])
+        self.assertEqual([v['timing'] for v in msfts.variants(t, profiles.load('transcontinental'))], ['none', 'mapping'])
         self.assertIn('--ts-out udp://127.0.0.1:6010', procs['aiomoqt-sub'].cmd)
         self.assertIn('--udp 127.0.0.1:6010', procs['playout'].cmd)
         self.assertIn('po300', msfts.taps(new_ctx))
@@ -332,7 +332,7 @@ class Emulator(unittest.TestCase):
     def test_build_events_and_clear(self):
         wan = FakeWan()
         e = emu.Emulator(topology.Paths('10.79.0.0/16'), wan, 20e6)
-        p = profiles.load('P7')
+        p = profiles.load('cellular-handover')
         e.build(p, repeat=1)
         text = '\n'.join(wan.cmds)
         self.assertIn('tc qdisc add dev vb0 root handle 1: netem', text)
@@ -362,7 +362,7 @@ class Emulator(unittest.TestCase):
     def test_timeline_hands_cross_traffic_to_its_handlers(self):
         wan = FakeWan()
         e = emu.Emulator(topology.Paths('10.79.0.0/16'), wan, 20e6)
-        e.build(profiles.load('B1'))
+        e.build(profiles.load('bloat-cable'))
         seen = []
         handlers = {'cross_on': lambda a: seen.append(a) or dict(action='cross_on', t0=1.0)}
         acts = [(0, 'cross_on', dict(name='c#1', port=5201)), (0, 'rate', dict(name='r', factor=0.5))]
@@ -396,15 +396,15 @@ class Cell(unittest.TestCase):
                         variant or {}, 0, f'r001-{lane}', out)
 
     def test_capture(self):
-        self.assertFalse(any(p.name.startswith(('pcap', 'qdisc')) for p in self.cell('B1').helpers()))
-        procs = {p.name: p for p in self.cell('B1', capture='headers').helpers()}
+        self.assertFalse(any(p.name.startswith(('pcap', 'qdisc')) for p in self.cell('bloat-cable').helpers()))
+        procs = {p.name: p for p in self.cell('bloat-cable', capture='headers').helpers()}
         self.assertEqual(procs['pcap-src0'].cmd, 'tcpdump -i wa0 -p -n -s 96 -U -w /out/src0.pcap not portrange 5201-5208')
         self.assertEqual((procs['pcap-dst0'].ns, procs['pcap-dst0'].root), ('dst', True))
         self.assertIn('--cmd fwd="tc -s -j qdisc show dev vb0" --cmd rev="tc -s -j qdisc show dev va0" --interval 0.1',
                       procs['qdisc-wan'].cmd)
-        full = {p.name: p for p in self.cell('B1', capture='full').helpers()}
+        full = {p.name: p for p in self.cell('bloat-cable', capture='full').helpers()}
         self.assertIn('-s 0 ', full['pcap-src0'].cmd)
-        c = self.cell('P3', lane='moqt-aiomoqt-msfts', capture='full', placement='first-mile',
+        c = self.cell('transcontinental', lane='moqt-aiomoqt-msfts', capture='full', placement='first-mile',
                       variant=dict(pub_cc='bbr', relay_cc='bbr2', pub_timing='none'))
         lane_procs = c.lane.procs(c.ctx)
         self.assertEqual(c.capture_env(lane_procs, '/run'), ['qlog-aiomoqt-pub', 'qlog-aiomoqt-sub'])
@@ -419,7 +419,7 @@ class Cell(unittest.TestCase):
     def test_captures_are_gzipped(self):
         import gzip
         with tempfile.TemporaryDirectory() as d:
-            c = self.cell('B1', out=d, capture='headers')
+            c = self.cell('bloat-cable', out=d, capture='headers')
             (c.out / 'qlog-aiomoqt-pub').mkdir(parents=True)
             (c.out / 'src0.pcap').write_bytes(b'pcap')
             (c.out / 'qlog-aiomoqt-pub' / 'x.qlog').write_text('{}')
@@ -430,7 +430,7 @@ class Cell(unittest.TestCase):
             self.assertEqual(gzip.open(c.out / 'src0.pcap.gz').read(), b'pcap')
 
     def test_cross_servers_and_clients(self):
-        c = self.cell('B1')
+        c = self.cell('bloat-cable')
         servers = [p for p in c.helpers() if p.name.startswith('cross-srv')]
         self.assertEqual([(p.name, p.ns, p.cmd) for p in servers],
                          [('cross-srv1', 'dst', 'iperf3 -s -p 5201 -J --logfile /out/cross-srv1.json')])
@@ -445,15 +445,15 @@ class Cell(unittest.TestCase):
         self.assertEqual(c.prov.stopped, [(['mbc-r001-cross-tcp-upload-2'], 'INT')])
         on(dict(name='u', port=5202, proto='udp', load=0.5, streams=1, cc=None, for_s=5))
         self.assertTrue(c.prov.started[-1].cmd.endswith('-u -l 1200 -b 10319148'))
-        self.assertFalse(any(p.name.startswith('cross') for p in self.cell('P3').helpers()))
+        self.assertFalse(any(p.name.startswith('cross') for p in self.cell('transcontinental').helpers()))
 
 
 class Calibration(unittest.TestCase):
     def test_spread_grows_with_burstiness(self):
-        bursty = profiles.load('P6').forward
+        bursty = profiles.load('intercontinental-bad').forward
         random = profiles.parse(dict(id='R', forward=dict(loss={'random': 2.952})), 't').forward
         self.assertGreater(calibrate.ge_sigma_pct(bursty, 40000), 3 * calibrate.ge_sigma_pct(random, 40000))
-        self.assertEqual(calibrate.ge_sigma_pct(profiles.load('P0').forward, 1000), 0.0)
+        self.assertEqual(calibrate.ge_sigma_pct(profiles.load('lan').forward, 1000), 0.0)
 
     def test_analyse(self):
         with tempfile.TemporaryDirectory() as d:
@@ -472,7 +472,7 @@ class Calibration(unittest.TestCase):
                     if s not in lost:
                         f.write(f'{s},{s * 1000000},{s * 1000000 + 81_000_000}\n')
                 f.write(f'# sent {sent}\n')
-            r = calibrate.analyse(run, profiles.load('P3'), 1900, 1)
+            r = calibrate.analyse(run, profiles.load('transcontinental'), 1900, 1)
         self.assertAlmostEqual(r['fwd_loss_pct'], 0.3)
         self.assertEqual(r['rev_loss_pct'], 0.0)
         self.assertEqual(r['reorder_events'], 1)

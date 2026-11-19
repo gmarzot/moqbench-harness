@@ -1,7 +1,7 @@
-id = "P9"
+id = "outage-ladder"
 name = "Outage ladder"
-description = "P3 with 100 % loss for 0.5, 2, 5 and 30 s, forward only and then both directions."
-base = "P3"
+description = "transcontinental with 100 % loss for 0.5, 2, 5 and 30 s, forward only and then both directions."
+base = "transcontinental"
 run_s = 460
 
 [[event]]

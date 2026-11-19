@@ -19,7 +19,7 @@ docker pull ghcr.io/openmoq/moqx:v0.3.7-amd64
 ./bin/moqbench contrib up docker-contrib-example          # namespaces, veths, routes; prints the checks
 ./bin/moqbench contrib calibrate docker-contrib-example   # what the emulator applies, per profile
 ./bin/moqbench contrib run docker-contrib-example example-contrib --scenario dev \
-    --lane srt --lane moqt-moq2ts --profile REF --variant D=4xRTT --variant relay_cc=bbr2 --repeats 1
+    --lane srt --lane moqt-moq2ts --profile random-loss --variant D=4xRTT --variant relay_cc=bbr2 --repeats 1
 ./bin/moqbench contrib report results/contrib/<run>       # re-analyze run folders
 ./bin/moqbench contrib explain results/contrib/<run>      # why each late stretch was late
 ```
@@ -71,7 +71,7 @@ root 1:  netem limit 100000 delay D [slot MIN MAX] rate 1gbit [loss gemodel p r 
 - **Events** change the tree in place (`tc qdisc change`, restating every netem parameter). Outages
   add the direction's ingress interface to an nft set that one counted drop rule matches.
 - **Bottleneck buffer.** `cap_latency_ms` sizes the tbf FIFO as queueing delay at the cap rate (60 ms
-  by default). The B profiles deepen it to bloated sizes; with `cap_aqm = "fq_codel"` FQ-CoDel at its
+  by default). The bloat profiles deepen it to bloated sizes; with `cap_aqm = "fq_codel"` FQ-CoDel at its
   defaults manages that queue instead.
 - **Cross traffic.** A `cross` event runs iperf3 from `src` to a server in `dst` through the same
   tree, so the queue it builds depends on load: a TCP flow (the kernel's controller, or `cc`) fills
@@ -83,24 +83,24 @@ root 1:  netem limit 100000 delay D [slot MIN MAX] rate 1gbit [loss gemodel p r 
 - **Seeds.** The two directions have different seeds; every lane of a repeat sees the same loss
   pattern.
 
-Profiles are `profiles/contrib/<ID>.toml`:
+Profiles are `profiles/contrib/<id>.toml`:
 
-| ID | profile | RTT | jitter (slot) | forward loss | cap | events |
+| id | name | RTT | jitter (slot) | forward loss | cap | events |
 |---|---|---|---|---|---|---|
-| P0 | control LAN | 1 ms | — | — | 2.0× | — |
-| REF | reference WAN | 50 ms | — | 0.5 % random | — | — |
-| P1 | clean regional | 20 ms | 0–2 ms | GE 0.02 % | 2.0× | — |
-| P2 | managed national | 60 ms | 0–6 ms | GE 0.1 % | 1.5× | 200 ms loss run, 64 ms link fail |
-| P3 | unmanaged transcontinental | 80 ms | 0–16 ms | GE 0.5 % | 1.5× | 256 ms outage, 8 ms route step |
-| P4 | intercontinental, good | 100 ms | 0–10 ms | GE 0.3 % | 1.5× | 128 ms outage, 4 ms step |
-| P5 | long-haul unmanaged | 250 ms | 0–20 ms | GE 1 % | 1.3× | 400 ms outage, 16 ms step |
-| P6 | bad intercontinental | 400 ms | 0–50 ms | GE 3 % | 1.2× | 1.6 s outage and 64 ms step every 2 min; 0.5 s loss runs |
-| P7 | cellular uplink | 60 ms | 0–20 ms | GE 2 % | 1.5× | handover gap and RTT rise; rate dip to 0.8× |
-| P8 | LEO satellite | 60 ms | 0–14 ms | GE 0.4 % | 1.5× | 45 ms burst and RTT step every 15 s |
-| P9 | outage ladder | P3 | P3 | P3 | 1.5× | 0.5, 2, 5, 30 s: forward only, then both |
-| B1 | bloated cable uplink | 30 ms | — | — | 2.5×, 500 ms FIFO | TCP upload 20 s on, 20 s off |
-| B2 | cellular uplink, deep buffer | 60 ms | 0–10 ms | — | 1.2×, 1 s FIFO | rate dips to 0.8× (8 s) and 0.5× (5 s) every 30 s |
-| B3 | B1 with FQ-CoDel | 30 ms | — | — | 2.5×, FQ-CoDel | as B1 |
+| `lan` | control LAN | 1 ms | — | — | 2.0× | — |
+| `random-loss` | reference WAN | 50 ms | — | 0.5 % random | — | — |
+| `regional-clean` | clean regional | 20 ms | 0–2 ms | GE 0.02 % | 2.0× | — |
+| `national-managed` | managed national | 60 ms | 0–6 ms | GE 0.1 % | 1.5× | 200 ms loss run, 64 ms link fail |
+| `transcontinental` | unmanaged transcontinental | 80 ms | 0–16 ms | GE 0.5 % | 1.5× | 256 ms outage, 8 ms route step |
+| `intercontinental-good` | intercontinental, good | 100 ms | 0–10 ms | GE 0.3 % | 1.5× | 128 ms outage, 4 ms step |
+| `longhaul-lossy` | long-haul unmanaged | 250 ms | 0–20 ms | GE 1 % | 1.3× | 400 ms outage, 16 ms step |
+| `intercontinental-bad` | bad intercontinental | 400 ms | 0–50 ms | GE 3 % | 1.2× | 1.6 s outage and 64 ms step every 2 min; 0.5 s loss runs |
+| `cellular-handover` | cellular uplink | 60 ms | 0–20 ms | GE 2 % | 1.5× | handover gap and RTT rise; rate dip to 0.8× |
+| `leo-satellite` | LEO satellite | 60 ms | 0–14 ms | GE 0.4 % | 1.5× | 45 ms burst and RTT step every 15 s |
+| `outage-ladder` | outage ladder | as `transcontinental` | | | 1.5× | 0.5, 2, 5, 30 s: forward only, then both |
+| `bloat-cable` | bloated cable uplink | 30 ms | — | — | 2.5×, 500 ms FIFO | TCP upload 20 s on, 20 s off |
+| `bloat-cellular` | cellular uplink, deep buffer | 60 ms | 0–10 ms | — | 1.2×, 1 s FIFO | rate dips to 0.8× (8 s) and 0.5× (5 s) every 30 s |
+| `cable-fqcodel` | bloat-cable with FQ-CoDel | 30 ms | — | — | 2.5×, FQ-CoDel | as `bloat-cable` |
 
 - **Profile keys.** `forward`, `reverse`: `delay_ms` (default RTT/2), `slot_ms`, `rate`,
   `loss = { gemodel = [...] }` or `{ random = PCT }`, `reorder_pct`, `cap` or `cap_mbit`,
@@ -241,7 +241,7 @@ The input tap sits on the source group in `src`; output taps sit on the output g
   lane matches against `sub_media`'s wall-clock frame log, so its source tap stamps wall-clock time
   too; such a run is marked `clock_disturbed` when the clock probe sees a wall-clock step above
   20 ms, and its delay figures are then unreliable.
-- **Verdicts.** P0 must read zero errors: nothing missing, no continuity errors, no breaks. Any run
+- **Verdicts.** `lan` must read zero errors: nothing missing, no continuity errors, no breaks. Any run
   that delivers nothing fails.
 
 **Captures.** `capture` in a test records what a late frame needs explained:

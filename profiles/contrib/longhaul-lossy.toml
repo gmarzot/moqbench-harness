@@ -1,4 +1,4 @@
-id = "P5"
+id = "longhaul-lossy"
 name = "Long-haul unmanaged"
 basis = "Backbone trans-Pacific hub RTT; RIST ARQ best practices, long haul; Elliott fit of backbone traces"
 rtt_ms = 250
