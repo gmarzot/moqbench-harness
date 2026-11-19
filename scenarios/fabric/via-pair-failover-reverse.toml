@@ -1,0 +1,63 @@
+description = "via-pair-failover the other way: the publisher on moqx, the subscriber on laps."
+mode        = "stream"
+publisher   = "moqx"
+subscribers = []
+peering_poll_s = 1
+
+[[subscriber]]
+name   = "far"
+on     = "laps"
+expect = "none"
+
+[[event]]
+at_s = 3
+verb = "sub.start"
+sub  = "far"
+
+[[event]]
+at_s   = 25
+verb   = "node.stop"
+on     = "via-1"
+expect = "group-loss"
+subs   = ["far"]
+grace_s = 5
+
+[[event]]
+at_s = 45
+verb = "node.start"
+on   = "via-1"
+
+[[expect_path]]
+node    = "via-1"
+from_s  = 8
+to_s    = 24
+carries = true
+label   = "via-1 is the cheaper via"
+
+[[expect_path]]
+node    = "via-2"
+from_s  = 8
+to_s    = 24
+carries = false
+label   = "via-1 is the cheaper via"
+
+[[expect_path]]
+node    = "via-2"
+from_s  = 32
+to_s    = 44
+carries = true
+label   = "via-1 is down"
+
+[[expect_path]]
+node    = "via-1"
+from_s  = 58
+to_s    = 72
+carries = true
+label   = "via-1 is back"
+
+[[expect_path]]
+node    = "via-2"
+from_s  = 58
+to_s    = 72
+carries = false
+label   = "via-1 is back"

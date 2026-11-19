@@ -1,0 +1,63 @@
+description = "Via failover: a ring laps, via-1, moqx, via-2 where via-1 (node metric 100) is cheaper than via-2 (200), a publisher on laps and a subscriber on moqx. Stop via-1 gracefully, then start it again. Only via-1 carries the track before; on the stop the track moves to via-2 with at most the in-flight group lost, and back to via-1 when it returns."
+mode        = "stream"
+publisher   = "laps"
+subscribers = []
+peering_poll_s = 1
+
+[[subscriber]]
+name   = "far"
+on     = "moqx"
+expect = "none"
+
+[[event]]
+at_s = 3
+verb = "sub.start"
+sub  = "far"
+
+[[event]]
+at_s   = 25
+verb   = "node.stop"
+on     = "via-1"
+expect = "group-loss"
+subs   = ["far"]
+grace_s = 5
+
+[[event]]
+at_s = 45
+verb = "node.start"
+on   = "via-1"
+
+[[expect_path]]
+node    = "via-1"
+from_s  = 8
+to_s    = 24
+carries = true
+label   = "via-1 is the cheaper via"
+
+[[expect_path]]
+node    = "via-2"
+from_s  = 8
+to_s    = 24
+carries = false
+label   = "via-1 is the cheaper via"
+
+[[expect_path]]
+node    = "via-2"
+from_s  = 32
+to_s    = 44
+carries = true
+label   = "via-1 is down"
+
+[[expect_path]]
+node    = "via-1"
+from_s  = 58
+to_s    = 72
+carries = true
+label   = "via-1 is back"
+
+[[expect_path]]
+node    = "via-2"
+from_s  = 58
+to_s    = 72
+carries = false
+label   = "via-1 is back"

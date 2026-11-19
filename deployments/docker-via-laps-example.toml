@@ -1,0 +1,48 @@
+# Control for docker-via-example: LAPS as both vias. LAPS takes no node metric,
+# so this control runs the line tests of suites/example-via.toml only
+# (--only 1 --only 2 --only 3 --only 4).
+provider = "docker"
+host     = "local"
+tag      = "vialp"
+
+[fabric]
+adapter  = "moqx-peering"
+image    = "moqx-peering:latest"          # bin/moqx-peering-build.sh
+topology = "ring"
+order    = ["laps", "via-1", "moqx", "via-2"]
+draft    = 18
+check_interval_ms = 2000
+
+[[nodes]]
+name        = "laps"
+roles       = ["relay"]
+adapter     = "laps"
+image       = "laps:latest"               # bin/laps-build.sh
+admin_image = "laps:builder-latest"       # carries lapsAdmin
+cpus        = "2-3"
+
+[[nodes]]
+name        = "via-1"
+roles       = ["relay"]
+adapter     = "laps"
+image       = "laps:latest"
+admin_image = "laps:builder-latest"
+cpus        = "4-5"
+
+[[nodes]]
+name  = "moqx"
+roles = ["relay"]
+cpus  = "6-7"
+
+[[nodes]]
+name        = "via-2"
+roles       = ["relay"]
+adapter     = "laps"
+image       = "laps:latest"
+admin_image = "laps:builder-latest"
+cpus        = "8-9"
+
+[[nodes]]
+name  = "client"
+roles = ["publisher", "subscriber", "probe"]
+cpus  = "10-15"

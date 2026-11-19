@@ -1,0 +1,63 @@
+description = "via-pair-failover with via-1 killed (SIGKILL) instead of stopped: the outage is bounded by the moq-fabric 5 s idle timeout plus one group (max_gap_ms), and the report gives the measured gap."
+mode        = "stream"
+publisher   = "laps"
+subscribers = []
+peering_poll_s = 1
+
+[[subscriber]]
+name   = "far"
+on     = "moqx"
+expect = "none"
+
+[[event]]
+at_s = 3
+verb = "sub.start"
+sub  = "far"
+
+[[event]]
+at_s   = 25
+verb   = "node.kill"
+on     = "via-1"
+expect = "bounded-gap"
+subs   = ["far"]
+max_gap_ms = 6000
+
+[[event]]
+at_s = 45
+verb = "node.start"
+on   = "via-1"
+
+[[expect_path]]
+node    = "via-1"
+from_s  = 8
+to_s    = 24
+carries = true
+label   = "via-1 is the cheaper via"
+
+[[expect_path]]
+node    = "via-2"
+from_s  = 8
+to_s    = 24
+carries = false
+label   = "via-1 is the cheaper via"
+
+[[expect_path]]
+node    = "via-2"
+from_s  = 34
+to_s    = 44
+carries = true
+label   = "via-1 is down"
+
+[[expect_path]]
+node    = "via-1"
+from_s  = 58
+to_s    = 72
+carries = true
+label   = "via-1 is back"
+
+[[expect_path]]
+node    = "via-2"
+from_s  = 58
+to_s    = 72
+carries = false
+label   = "via-1 is back"

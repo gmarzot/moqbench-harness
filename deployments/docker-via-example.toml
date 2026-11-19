@@ -1,0 +1,49 @@
+# Example: aiomoqt-relay as the via of a moq-fabric mesh on the local Docker.
+# A ring laps, via-1, moqx, via-2: LAPS and moqx at the ends, two aiomoqt-relay
+# vias, via-1 (node metric 100) cheaper than via-2 (200). Line tests peer only
+# laps - via-1 - moqx (suites/example-via.toml). The via image is the lab image
+# plus aiomoqt from peer_pip. Clients use MoQT draft 18, the only draft LAPS
+# clients speak.
+provider = "docker"
+host     = "local"
+tag      = "via"
+
+[fabric]
+adapter  = "moqx-peering"
+image    = "moqx-peering:latest"          # bin/moqx-peering-build.sh
+topology = "ring"
+order    = ["laps", "via-1", "moqx", "via-2"]
+draft    = 18
+check_interval_ms = 2000
+
+[[nodes]]
+name        = "laps"
+roles       = ["relay"]
+adapter     = "laps"
+image       = "laps:latest"               # bin/laps-build.sh
+admin_image = "laps:builder-latest"       # carries lapsAdmin
+cpus        = "2-3"
+
+[[nodes]]
+name        = "via-1"
+roles       = ["relay"]
+adapter     = "aiomoqt-relay"
+node_metric = 100
+cpus        = "4-5"
+
+[[nodes]]
+name  = "moqx"
+roles = ["relay"]
+cpus  = "6-7"
+
+[[nodes]]
+name        = "via-2"
+roles       = ["relay"]
+adapter     = "aiomoqt-relay"
+node_metric = 200
+cpus        = "8-9"
+
+[[nodes]]
+name  = "client"
+roles = ["publisher", "subscriber", "probe"]
+cpus  = "10-15"
