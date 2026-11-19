@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import statistics
 
+from fabric import adapter as adapters
 from fabric import topology
 from fabric.moqx_peering import namespaces_in
 
@@ -387,14 +388,19 @@ def analyze(run_dir):
     fpath = run_dir / 'faults.jsonl'
     if fpath.is_file():
         events = [json.loads(x) for x in fpath.read_text().splitlines() if x.strip()]
+    named = meta.get('named_subscribers') or {}
+    life = lifetimes(events)
     subs = {}
     for log in sorted(run_dir.glob('*.log')):
         name = log.stem
         if not name.startswith(('sub-', 'cold-', 'warm-')):
             continue
-        node = name.split('-', 1)[1]
+        own = named.get(name[len('sub-'):]) if name.startswith('sub-') else None
+        node = own['on'] if own else name.split('-', 1)[1]
         s = subscriber(log)
         row = dict(node=node, hops_at_start=hop.get(node), tool=s['summary'], markers={}, **delivery(s, sent))
+        if own:
+            row.update(named=True, expect=own.get('expect', 'complete'), life=life.get(name[len('sub-'):]))
         mk = s['markers']
         if 'connecting' in mk:
             if 'subscribed' in mk:
@@ -407,7 +413,7 @@ def analyze(run_dir):
             row['events'] = []
             for i, ev in enumerate(events):
                 t0 = ev.get('t0')
-                if t0 is None:
+                if t0 is None or (own and not running(row.get('life'), t0)):
                     continue
                 t_next = events[i + 1]['t0'] if i + 1 < len(events) and events[i + 1].get('t0') else t0 + 30
                 win_end = min(t0 + 10, t_next)
@@ -428,8 +434,9 @@ def analyze(run_dir):
                 before = delivery(s, sent, t0 - 5, t0)
                 after = delivery(s, sent, min(t0 + 2, win_end), win_end)
                 row['events'].append(dict(
-                    verb=ev['verb'], on=ev.get('on'), peer=ev.get('peer'), metric=ev.get('metric'),
+                    verb=ev['verb'], on=ev.get('on'), peer=ev.get('peer'), metric=ev.get('metric'), sub=ev.get('sub'),
                     ok=ev.get('ok'), status=ev.get('status'), expect=ev.get('expect'), label=ev.get('label'),
+                    subs=ev.get('subs'), gap_bound_ms=ev.get('max_gap_ms', 2 * nominal),
                     phase=phase(sent, t0, (meta.get('options') or {}).get('group_size') or 30),
                     max_gap_ms=None if recovery is None else r3(max(gap_ms, out_ms)), recovery_ms=recovery,
                     lost=len(lost), lost_ids=[f'{g}.{o}' for g, o in lost[:20]], dups=inwin['dups'],
@@ -440,7 +447,8 @@ def analyze(run_dir):
         evrows = []
         for ev in events:
             t0 = ev.get('t0')
-            row = {k: ev.get(k) for k in ('verb', 'on', 'peer', 'metric', 'ok', 'status', 'expect', 'skipped', 'label')}
+            row = {k: ev.get(k) for k in ('verb', 'on', 'peer', 'sub', 'metric', 'ok', 'status', 'expect', 'skipped',
+                                          'label')}
             if t0:
                 row['phase'] = phase(sent, t0, (meta.get('options') or {}).get('group_size') or 30)
             if t0:
@@ -502,9 +510,104 @@ def analyze(run_dir):
     peers = {f.stem: peer_node(f, order) for f in sorted(run_dir.glob('peer-*.json'))}
     if peers:
         out['peer_nodes'] = peers
+    if meta.get('expect_path'):
+        out['path_checks'] = path_checks(run_dir, meta, rates, floor)
     out['clock'] = clock(run_dir)
     out['verdicts'] = verdicts(out, meta)
     return out
+
+
+def lifetimes(events):
+    """{named subscriber: [start, end or None]} on the host clock, from its sub.* events."""
+    out = {}
+    for ev in events:
+        if ev.get('verb') == 'sub.start' and ev.get('t0') is not None:
+            out[ev['sub']] = [ev['t0'], None]
+        elif ev.get('verb') in ('sub.stop', 'sub.kill') and ev.get('sub') in out:
+            out[ev['sub']][1] = ev.get('t0')
+    return out
+
+
+def running(life, t):
+    return bool(life) and life[0] <= t and (life[1] is None or t <= life[1])
+
+
+def where(ev):
+    """An event's target for a check or a report line: a subscriber, a node, or a node pair."""
+    if ev.get('sub'):
+        return f'{ev["sub"]} on {ev.get("on")}'
+    return ev.get('on') if ev.get('peer') is None else f'{ev["on"]}-{ev["peer"]}'
+
+
+def state_samples(run_dir, meta, node):
+    """[(t, sample)] from a relay's peering poll, read by its adapter for the run's track; sample is
+    None while its control API did not answer."""
+    adapter = adapters.get((meta.get('adapters') or {}).get(node, meta.get('adapter')))
+    out, last = [], None
+    for t, body, status in polls(Path(run_dir) / f'poll-{node}.jsonl').get('peering', []):
+        if status != 200:
+            last = None
+        elif body is not None:
+            try:
+                last = adapter.sample(json.loads(body), meta['namespace'], meta.get('track', 'probe'))
+            except ValueError:
+                last = None
+        out.append((t, last))
+    return out
+
+
+def carried(samples, rates, node, t0, t1, floor):
+    """(carries, source, measure) for [t0, t1]: bytes the relay sent to peers, else data streams open on its
+    peer sessions, else its links' send rates; (None, None, None) when nothing tells."""
+    win = [s for t, s in samples if t0 <= t <= t1 and s]
+    tx = [(t, s['tx_bytes']) for t, s in samples if t0 <= t <= t1 and s and s.get('tx_bytes') is not None]
+    if len(tx) >= 2 and tx[-1][0] > tx[0][0]:
+        rate = sum(max(0, b - a) for (_, a), (_, b) in zip(tx, tx[1:])) / (tx[-1][0] - tx[0][0])
+        return rate >= floor, 'tx_bytes', r3(rate)
+    streams = [s['streams'] for s in win if s.get('streams') is not None]
+    if streams:
+        busy = sum(1 for v in streams if v > 0)
+        return 2 * busy >= len(streams), 'streams', f'{busy}/{len(streams)} samples with open streams'
+    series = {edge: v for edge, v in rates.items() if edge[0] == node}
+    if any(t0 <= t <= t1 for v in series.values() for t, _ in v):
+        out = sorted(b for a, b in carrying(series, t0, t1, floor))
+        return bool(out), 'links', out
+    return None, None, None
+
+
+def path_checks(run_dir, meta, rates, floor):
+    """Each expect_path window against the relay's state samples (or link rates when its state cannot tell)."""
+    rows, cache = [], {}
+    base = meta.get('t_zero')
+    for exp in meta['expect_path']:
+        node = exp['node']
+        if node not in cache:
+            cache[node] = state_samples(run_dir, meta, node)
+        samples = cache[node]
+        span = f'{exp["from_s"]:g}-{exp["to_s"]:g} s' + (f' ({exp["label"]})' if exp.get('label') else '')
+        t0, t1 = (base + exp['from_s'], base + exp['to_s']) if base else (None, None)
+        for key in ('carries', 'subscribed', 'own_subscribe'):
+            if key not in exp:
+                continue
+            want = exp[key]
+            what = {'carries': ('carries the track', 'carries no track'),
+                    'subscribed': ('holds a fabric subscribe for the track', 'holds no fabric subscribe for the track'),
+                    'own_subscribe': ('holds its own fabric subscribe', 'holds no fabric subscribe of its own')}[key]
+            row = dict(check=f'path: {node} {what[0 if want else 1]}, {span}', node=node, state=key, want=want)
+            if base is None:
+                rows.append(dict(row, status='SKIP', reason='no run start time'))
+                continue
+            if key == 'carries':
+                got, source, measure = carried(samples, rates, node, t0, t1, floor)
+            else:
+                vals = [s[key] for t, s in samples if t0 <= t <= t1 and s and s.get(key) is not None]
+                got = None if not vals else (all(vals) if want else any(vals))
+                source, measure = ('state', f'{sum(map(bool, vals))}/{len(vals)} samples true') if vals else (None, None)
+            if got is None:
+                rows.append(dict(row, status='SKIP', reason=f'no {key} samples from {node} in the window'))
+                continue
+            rows.append(dict(row, status='PASS' if got == want else 'FAIL', source=source, measured=measure))
+    return rows
 
 
 def expect(ok, expected):
@@ -525,7 +628,12 @@ def verdicts(out, meta):
     if remote and (meta.get('adapters') or {}).get(ingest, meta.get('adapter')) != remote.get('publisher_adapter'):
         remote = None
     for name, s in out['subscribers'].items():
-        if not s.get('events'):
+        if s.get('named'):
+            if s.get('expect') == 'complete':
+                ok = s['unique'] > 0 and s['dups'] == 0 and (s['missing'] or 0) == 0
+                res.append(dict(check=f'{name} complete from its first object', status='PASS' if ok else 'FAIL',
+                                objects=s['unique'], missing=s['missing'], dups=s['dups']))
+        elif not s.get('events'):
             ok = s['unique'] > 0 and s['dups'] == 0 and (s['missing'] or 0) == 0
             row = dict(check=f'{name} delivered every object once', status='PASS' if ok else 'FAIL',
                        objects=s['unique'], missing=s['missing'], dups=s['dups'])
@@ -534,15 +642,25 @@ def verdicts(out, meta):
             res.append(row)
         for ev in s.get('events', []):
             exp = ev.get('expect')
+            if ev.get('subs') is not None and name[len('sub-'):] not in ev['subs']:
+                continue
+            gap = ev['max_gap_ms']
             if exp == 'hitless':
                 ok = (ev['lost'] or 0) == 0 and ev['dups'] == 0
             elif exp == 'group-loss':
                 ok = (ev['lost'] or 0) <= group and ev['dups'] == 0
+            elif exp == 'no-gap':
+                ok = (ev['lost'] or 0) == 0 and ev['dups'] == 0 and gap is not None and gap <= ev['gap_bound_ms']
+            elif exp == 'bounded-gap':
+                ok = gap is not None and gap <= ev['gap_bound_ms']
             else:
                 continue
-            where = f'{ev["on"]}-{ev["peer"]}' + (f' ({ev["label"]})' if ev.get('label') else '')
-            res.append(dict(check=f'{name} {ev["verb"]} {where}: {exp}', status='PASS' if ok else 'FAIL',
-                            lost=ev['lost'], dups=ev['dups'], max_gap_ms=ev['max_gap_ms']))
+            at = where(ev) + (f' ({ev["label"]})' if ev.get('label') else '')
+            row = dict(check=f'{name} {ev["verb"]} {at}: {exp}', status='PASS' if ok else 'FAIL',
+                       lost=ev['lost'], dups=ev['dups'], max_gap_ms=gap)
+            if exp in ('no-gap', 'bounded-gap'):
+                row['gap_bound_ms'] = ev['gap_bound_ms']
+            res.append(row)
     for name, pop in (out.get('populations') or {}).items():
         res.append(dict(check=f'{name}: {pop["target"]} subscribers held the gate', status=expect(pop['ok'], None),
                         good=pop['good'], steady=pop['steady'], p90_max_ms=pop['p90_max_ms'], rc=pop['rc']))
@@ -582,6 +700,7 @@ def verdicts(out, meta):
     if 'namespace_missing' in out:
         res.append(dict(check='namespace reached every relay',
                         status='FAIL' if out['namespace_missing'] else 'PASS', missing=out['namespace_missing']))
+    res += out.get('path_checks', [])
     return res
 
 
@@ -602,17 +721,16 @@ def text(summary):
                       f'{tl:<24}{tool:<22}{t.get("jitter_ms", "-")!s:>7}  {setup}')
         for ev in r.get('events', []):
             lost = f' {ev["lost_ids"]}' if ev.get('lost_ids') else ''
-            where = ev['on'] if ev.get('peer') is None else f'{ev["on"]}-{ev["peer"]}'
             if ev.get('label'):
                 lines_.append(f'      [{ev["label"]}; at {ev.get("phase")}]')
-            lines_.append(f'      {ev["verb"]:<12}{where}: gap {ev["max_gap_ms"]} ms, lost {ev["lost"]}{lost}, '
+            lines_.append(f'      {ev["verb"]:<12}{where(ev)}: gap {ev["max_gap_ms"]} ms, lost {ev["lost"]}{lost}, '
                           f'dups {ev["dups"]}, recovery {ev["recovery_ms"]} ms, p50 {ev["lat_p50_before"]} -> '
                           f'{ev["lat_p50_after"]} ms')
     for ev in s.get('events', []):
-        where = ev['on'] if ev.get('peer') is None else f'{ev["on"]}-{ev["peer"]}'
+        at = where(ev)
         if ev.get('label'):
-            where += f' [{ev["label"]}; at {ev.get("phase")}]'
-        lines_.append(f'  event {ev["verb"]} {where} metric={ev.get("metric")} ok={ev["ok"]} '
+            at += f' [{ev["label"]}; at {ev.get("phase")}]'
+        lines_.append(f'  event {ev["verb"]} {at} metric={ev.get("metric")} ok={ev["ok"]} '
                       f'status={ev["status"]} took {ev.get("action_ms")} ms; paths {ev.get("path_before")} -> '
                       f'{ev.get("path_after")}')
     if s.get('link_kBps'):

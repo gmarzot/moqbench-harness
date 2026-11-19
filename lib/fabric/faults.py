@@ -2,9 +2,10 @@
 
 Verbs are relay-neutral: link.impair / link.down / link.clear act on the
 interfaces of one link network (both ends unless `direction` names one sender),
-node.* act on a relay's container, and peer.* go through the adapter. Every
-applied event records the host-clock times bracketing it, so it can be laid
-over the clients' timelines.
+node.* act on a relay's container, peer.* go through the adapter, and sub.*
+start, stop (SIGINT, so it prints its summary) or kill (SIGKILL) a subscriber
+the scenario names. Every applied event records the host-clock times
+bracketing it, so it can be laid over the clients' timelines.
 """
 import json
 import re
@@ -16,8 +17,11 @@ from fabric.adapter import Unsupported
 
 NETEM_LIMIT = 200000
 SAFE_SPEC = re.compile(r'^[A-Za-z0-9.% ]+$')
+SUB_VERBS = {'sub.start', 'sub.stop', 'sub.kill'}
 VERBS = {'link.impair', 'link.down', 'link.clear', 'node.kill', 'node.stop', 'node.start', 'node.freeze',
-         'node.thaw', 'peer.add', 'peer.remove', 'peer.restart', 'peer.metric'}
+         'node.thaw', 'peer.add', 'peer.remove', 'peer.restart', 'peer.metric', *SUB_VERBS}
+# Per-event verdicts; bounded-gap needs max_gap_ms.
+EXPECTS = {'hitless', 'group-loss', 'no-gap', 'bounded-gap'}
 
 
 class FaultError(ValueError):
@@ -113,14 +117,20 @@ def ends(fab, ev):
     return a, b, senders
 
 
-def apply(fab, ev):
-    """Apply one event; returns the event with its resolved nodes, host times and outcome."""
+def apply(fab, ev, subs=None):
+    """Apply one event; returns the event with its resolved nodes, host times and outcome. subs(verb, name)
+    performs a sub.* verb and returns {on, t0, t1, rc}."""
     verb = ev['verb']
     if verb not in VERBS:
         raise FaultError(f'unknown verb {verb!r} (verbs: {", ".join(sorted(VERBS))})')
     out = dict(ev)
     try:
-        if verb.startswith('link.'):
+        if verb in SUB_VERBS:
+            if subs is None:
+                raise FaultError(f'{verb} needs a run with named subscribers')
+            out.update(subs(verb, ev['sub']))
+            out['ok'] = out['rc'] == 0
+        elif verb.startswith('link.'):
             a, b, senders = ends(fab, ev)
             out.update(on=a, peer=b, ends=[])
             for s in senders:
@@ -157,13 +167,34 @@ def clear_all(fab):
     return fab.clear_impairments()
 
 
-def validate(events, order):
-    for i, ev in enumerate(events):
-        at = f'event {i + 1}'
+def validate(events, order, subscribers=()):
+    """Check events against the relays in order and the scenario's named subscribers: each named
+    subscriber starts once, and stops or is killed at most once, after its start."""
+    life = {}
+    for ev in sorted(events, key=lambda e: e['at_s'] if isinstance(e.get('at_s'), (int, float)) else 0):
+        at = f'event {ev.get("verb")} at {ev.get("at_s")} s'
         if ev.get('verb') not in VERBS:
             raise FaultError(f'{at}: verb must be one of {", ".join(sorted(VERBS))}')
         if not isinstance(ev.get('at_s'), (int, float)) or ev['at_s'] < 0:
             raise FaultError(f'{at}: at_s must be seconds from the run start')
+        if ev.get('expect') is not None and ev['expect'] not in EXPECTS:
+            raise FaultError(f'{at}: expect must be one of {", ".join(sorted(EXPECTS))}')
+        if ev.get('expect') == 'bounded-gap' and not isinstance(ev.get('max_gap_ms'), (int, float)):
+            raise FaultError(f'{at}: bounded-gap needs max_gap_ms')
+        for name in ev.get('subs', []):
+            if name not in subscribers:
+                raise FaultError(f'{at}: subs names {name!r}, which is no named subscriber')
+        if ev['verb'] in SUB_VERBS:
+            name = ev.get('sub')
+            if name not in subscribers:
+                raise FaultError(f'{at}: sub must name a subscriber the scenario declares, not {name!r}')
+            state = life.get(name)
+            if ev['verb'] == 'sub.start' and state is not None:
+                raise FaultError(f'{at}: subscriber {name} starts more than once')
+            if ev['verb'] != 'sub.start' and state != 'running':
+                raise FaultError(f'{at}: subscriber {name} is not running')
+            life[name] = 'running' if ev['verb'] == 'sub.start' else 'ended'
+            continue
         topology.resolve(ev.get('on', ''), order)
         if ev['verb'].startswith(('link.', 'peer.')):
             topology.resolve(ev.get('peer', ''), order)
@@ -171,6 +202,9 @@ def validate(events, order):
             raise FaultError(f'{at}: link.impair needs a netem spec such as "delay 20ms loss 1%"')
         if ev['verb'] == 'peer.metric' and not isinstance(ev.get('metric'), int):
             raise FaultError(f'{at}: peer.metric needs an integer metric')
+    idle = [n for n in subscribers if n not in life]
+    if idle:
+        raise FaultError(f'no sub.start event for {", ".join(idle)}')
 
 
 class Timeline:
@@ -180,7 +214,7 @@ class Timeline:
         self.events = sorted(events, key=lambda e: e['at_s'])
         self.log_path = log_path
 
-    def run(self, fab, start, stop=lambda: False):
+    def run(self, fab, start, stop=lambda: False, subs=None):
         done = []
         with open(self.log_path, 'a') as log:
             for ev in self.events:
@@ -188,7 +222,7 @@ class Timeline:
                     if stop():
                         return done
                     time.sleep(min(0.05, start + ev['at_s'] - time.monotonic()))
-                rec = apply(fab, ev)
+                rec = apply(fab, ev, subs)
                 done.append(rec)
                 log.write(json.dumps(rec) + '\n')
                 log.flush()
