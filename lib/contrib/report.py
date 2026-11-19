@@ -483,10 +483,12 @@ def line(s):
         main = s['outputs'].get(name) if name else None
     if main:
         d = main['delay_ms']
-        llol = main.get('late_or_lost_pct') or (s['outputs'].get('raw') or {}).get('late_or_lost_pct') or {}
-        return (f"{head} delay p50/p99/max {d['p50']}/{d['p99']}/{d['max']} ms, PCR lost {main['pcr_lost_pct']}%, "
+        # Late or lost comes from raw arrivals when there are any, so a playout buffer adds nothing to D.
+        raw = s['outputs'].get('raw')
+        llol = (raw or main).get('late_or_lost_pct') or {}
+        return (f"{head} {name}: delay p50/p99/max {d['p50']}/{d['p99']}/{d['max']} ms, PCR lost {main['pcr_lost_pct']}%, "
                 f"breaks {main['breaks']['count']} (longest {main['breaks']['longest_ms']} ms), "
-                f"cc {(main.get('ts') or {}).get('cc_errors')}, late|lost@D {llol}  {s['verdict']}"
+                f"cc {(main.get('ts') or {}).get('cc_errors')}, late|lost@D{' (raw)' if raw else ''} {llol}  {s['verdict']}"
                 f"{'  CLOCK' if s.get('clock_disturbed') else ''}")
     f = s.get('frames') or {}
     return (f"{head} frames {f.get('frames')} missing {f.get('missing_pct')}%, key p50/p99 "

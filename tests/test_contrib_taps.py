@@ -247,6 +247,18 @@ class Analysis(unittest.TestCase):
         self.assertEqual(s['verdict'], 'PASS')
         self.assertEqual(s['outputs']['out']['ts']['residual_loss_pct'], 0.0)
 
+    def test_run_line_scores_late_or_lost_on_raw_arrivals(self):
+        out = dict(delay_ms=dict(p50=400, p99=450, max=500), pcr_lost_pct=0.0, breaks=dict(count=0, longest_ms=0.0),
+                   ts=dict(cc_errors=0))
+        s = dict(label='001-x', lane='moqt-aiomoqt-msfts', profile='transcontinental', variant={}, verdict='OK',
+                 outputs=dict(raw=dict(out, late_or_lost_pct={'320': 2.9}), po300=dict(out, late_or_lost_pct={'320': 0.0})))
+        text = report.line(s)
+        self.assertIn('po300: delay p50/p99/max 400/450/500 ms', text)
+        self.assertIn("late|lost@D (raw) {'320': 2.9}", text)
+        s['outputs'] = dict(out=dict(out, late_or_lost_pct={'320': 0.1}))
+        self.assertIn("out: delay", report.line(s))
+        self.assertIn("late|lost@D {'320': 0.1}", report.line(s))
+
     def test_nothing_delivered_fails(self):
         with tempfile.TemporaryDirectory() as d:
             s = report.analyze(write_run(d, [5.0] * 50, lost=set(range(50))))

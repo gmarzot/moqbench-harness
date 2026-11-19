@@ -25,7 +25,9 @@ docker pull ghcr.io/openmoq/moqx:v0.3.7-amd64
 ```
 
 Results land in `results/contrib/<deployment>-<stamp>/<NNN>-<lane>-<profile>-<variant>-r<repeat>/`,
-with `suite.json` and `host.json` beside them. `results/` is ignored by git.
+with `suite.json` and `host.json` beside them. `results/` is ignored by git. Each run prints one
+line: delay, PCR loss and breaks at its first output (for a MoQT lane, the first playout buffer), and
+late or lost at each D from raw arrivals when the lane has them.
 
 ## Topology
 
