@@ -342,8 +342,16 @@ harness and the pollers reach it from the holder across relay restarts:
 `POST /moq-fabric/peer?op=add|remove|restart|metric&host=H&port=P[&metric=M]`
 changes a peer, addressed by the session's host and port as `GET /moq-fabric`
 reports them. `op=restart` closes the session and dials again; a relay that
-answers 400 to it has no restart, and `peer.restart` is SKIP. aiomoqt-relay
-nodes run on Docker fabrics only.
+answers 400 to it has no restart, and `peer.restart` is SKIP.
+
+On a VM fabric the relay runs with host networking from `peer_image`, its run
+folder under the stack on the VM (`~/<stack_dir>/<deployment>/nodes/<node>/run`),
+where the harness and load-monitor reach the control socket.
+`./bin/aiomoqt-relay-build.sh <deployment> [ref]` builds the image on the first
+relay host (the lab image, then aiomoqt from `peer_pip` resolved to a commit),
+records it in `.testbed/builds/`, and `moqbench fabric deploy` copies it to the
+other relays. On Docker, `fabric up` builds `peer_image` when the host lacks it;
+the script rebuilds it from a ref.
 
 ## Adapters
 

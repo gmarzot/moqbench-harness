@@ -172,6 +172,8 @@ class VMFabric:
         for n in self.order:
             folder = stack / 'nodes' / n
             (folder / 'certs').mkdir(parents=True, exist_ok=True)
+            for sub in self.adapter_for(n).shared_dirs(n):
+                (folder / sub).mkdir(exist_ok=True)
             for rel, text in self.adapter_for(n).render(n, ctx).items():
                 (folder / rel).write_text(text)
             pem, key = certs.ensure_leaf(self.local_dir / 'certs', n,
@@ -192,6 +194,8 @@ class VMFabric:
         ctx = self.ctx()
         adapter = self.adapter_for(node)
         svc = adapter.service(node, ctx)
+        svc['volumes'] = svc.get('volumes', []) + [f'./nodes/{node}/{sub}:{path}'
+                                                   for sub, path in adapter.shared_dirs(node).items()]
         cpus = self.nodes[node].get('cpus')
         args = ['-d', '--name', self.relay(node), '--network', 'host', '--user', self.user, '--restart', 'no',
                 '--ulimit', 'nofile=1048576:1048576', *(['--cpuset-cpus', str(cpus)] if cpus else []),
@@ -336,10 +340,14 @@ class VMFabric:
         except (FabricError, ValueError, KeyError):
             return False
 
-    def admin(self, node, method, path, body=None):
-        url = f'http://127.0.0.1:8000{path}'
+    def shared_dir(self, node, sub, path):
+        """Where the relay's VM sees its shared folder: under the stack, relative to the login's home."""
+        return f'{self.root}/nodes/{node}/{sub}'
+
+    def admin(self, node, method, path, body=None, base='http://127.0.0.1:8000'):
+        url = f'{base}{path}'
         arg = f' {shlex.quote(json.dumps(body))}' if body is not None else ''
-        r = self.exec(node, f'python3 {self.bin_dir}/fabric-admin.py {method} {url}{arg}')
+        r = self.exec(node, f'python3 {self.bin_dir}/fabric-admin.py {method} {shlex.quote(url)}{arg}')
         return json.loads(r.stdout)
 
     def sidecar_exec(self, node, command, timeout=60):
@@ -385,14 +393,14 @@ class VMFabric:
         def start(t):
             extra = ''
             if t in self.order:
-                urls = self.adapter_for(t).poll_urls(t)
+                urls = self.adapter_for(t).poll_urls(t, self)
                 extra = (f'--comm moqx --nft {NFT_TABLE} --json-interval {peering_s} '
                          + ' '.join(f'--json-url {k}={u}' for k, u in urls.items() if k == 'peering'))
             self.exec(t, f'mkdir -p {out} && rm -f {out}/monitor.stop && python3 -u {self.bin_dir}/load-monitor.py '
                       f'--duration {int(seconds)} --interval {interval} --stop-file {out}/monitor.stop {extra} '
                       f'> {out}/monitor-{t}.jsonl 2> {out}/monitor-{t}.err', detach=True)
-            if state_ms and t in self.order and 'state' in self.adapter_for(t).poll_urls(t):
-                self.exec(t, f'python3 {self.bin_dir}/fabric-poll.py --url state={self.adapter_for(t).poll_urls(t)["state"]} '
+            if state_ms and t in self.order and 'state' in self.adapter_for(t).poll_urls(t, self):
+                self.exec(t, f'python3 {self.bin_dir}/fabric-poll.py --url state={self.adapter_for(t).poll_urls(t, self)["state"]} '
                           f'--interval {state_ms / 1000} --duration {state_s or seconds} '
                           f'--out {out}/poll-state-{t}.jsonl', detach=True)
         self.each(self.targets(), start)

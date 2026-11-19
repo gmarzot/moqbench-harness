@@ -320,9 +320,6 @@ class Deployment:
                        if 'fabric' in data else None)
         if self.fabric is None and any('peer' in n['roles'] for n in self.nodes):
             raise ConfigError(f'{where}: peer nodes need a [fabric] table')
-        if (self.fabric is not None and self.provider != 'docker'
-                and any(self.fabric.node_adapter(n) == 'aiomoqt-relay' for n in self.fabric.order)):
-            raise ConfigError(f'{where}: aiomoqt-relay fabric nodes run on docker deployments only')
         if self.fabric is None and len(relays) != 1:
             raise ConfigError(f'{where}: exactly one node has the relay role (several need a [fabric] table)')
         if not self.with_role('subscriber'):

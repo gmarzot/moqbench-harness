@@ -69,8 +69,8 @@ class Adapter:
         """{folder under nodes/<node>/: path} mounted in both the relay and its holder."""
         return {}
 
-    def poll_urls(self, node):
-        """{name: (url, kind)} a poller beside the relay may fetch: kind is peering or state."""
+    def poll_urls(self, node, fab=None):
+        """{name: url} a poller beside the relay may fetch: name is peering or state."""
         return {}
 
     def sample(self, doc, namespace, track):

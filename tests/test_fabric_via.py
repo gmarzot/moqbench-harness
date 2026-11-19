@@ -153,10 +153,11 @@ class Adapter(unittest.TestCase):
         self.assertFalse(ad.ready(fab, 'via-1'))
         self.assertIsNone(ad.peer_state(fab, 'via-1'))
 
-    def test_control_is_docker_only(self):
-        fab = type('VM', (), {'kind': 'vm'})()
-        with self.assertRaisesRegex(Unsupported, 'docker'):
-            AiomoqtRelay().ready(fab, 'via-1')
+    def test_control_socket_url(self):
+        self.assertEqual(AiomoqtRelay.base(None, 'via-1'), 'http+unix://%2Ffabric%2Frun%2Fcontrol.sock')
+        fab = DockerFabric(deployment(), LINE)
+        self.assertEqual(fab.adapter_for('via-1').poll_urls('via-1', fab),
+                         {'peering': 'http+unix://%2Ffabric%2Frun%2Fcontrol.sock/moq-fabric'})
 
 
 class UnixHttp(unittest.TestCase):

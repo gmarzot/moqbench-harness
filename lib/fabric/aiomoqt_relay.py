@@ -18,7 +18,6 @@ CLIENT_PORT = 4433
 CERT_DIR = '/certs'
 RUN_DIR = '/fabric/run'
 CONTROL = f'{RUN_DIR}/control.sock'
-BASE = 'http+unix://' + urllib.parse.quote(CONTROL, safe='')
 PAUSE_AFTER_S = 5
 
 
@@ -54,13 +53,17 @@ class AiomoqtRelay(Adapter):
     def shared_dirs(self, node):
         return {'run': RUN_DIR}
 
-    def poll_urls(self, node):
-        return {'peering': f'{BASE}/moq-fabric'}
+    @staticmethod
+    def base(fab, node):
+        """The control socket's URL where the harness and the pollers run: the holder, or the relay's VM."""
+        folder = fab.shared_dir(node, 'run', RUN_DIR) if fab is not None else RUN_DIR
+        return 'http+unix://' + urllib.parse.quote(f'{folder}/control.sock', safe='')
+
+    def poll_urls(self, node, fab=None):
+        return {'peering': f'{self.base(fab, node)}/moq-fabric'}
 
     def call(self, fab, node, method, path):
-        if getattr(fab, 'kind', None) != 'docker':
-            raise Unsupported(f'{self.name}: control on docker fabrics only')
-        return fab.admin(node, method, path, base=BASE)
+        return fab.admin(node, method, path, base=self.base(fab, node))
 
     def fabric(self, fab, node):
         r = self.call(fab, node, 'GET', '/moq-fabric')

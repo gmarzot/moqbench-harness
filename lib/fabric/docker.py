@@ -330,6 +330,10 @@ class DockerFabric:
         script = f'docker exec {" ".join(flags)} {container} sh -c {shlex.quote(command)}'
         return self.host.sh(script, check=check, timeout=timeout)
 
+    def shared_dir(self, node, sub, path):
+        """Where the holder sees a relay's shared folder: the same path."""
+        return path
+
     def admin(self, node, method, path, body=None, base='http://127.0.0.1:8000'):
         """One call to a relay's control API from its holder (base: an http:// or http+unix:// URL),
         timed on the host clock inside its namespace."""
@@ -353,7 +357,7 @@ class DockerFabric:
         and /state every state_ms for state_s seconds when given."""
         out = self.results_dir(label)
         for n in self.order:
-            urls = self.adapter_for(n).poll_urls(n)
+            urls = self.adapter_for(n).poll_urls(n, self)
             jobs = [(f'--url peering={urls["peering"]}', peering_s, seconds, '')] if 'peering' in urls else []
             jobs.append(('--netdev', netdev_s, seconds, '-net'))
             if state_ms and 'state' in urls:

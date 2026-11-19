@@ -70,7 +70,7 @@ class MoqxPeering(Adapter):
             'environment': {'MOQX_JEMALLOC': 'auto'},
         }
 
-    def poll_urls(self, node):
+    def poll_urls(self, node, fab=None):
         return {'peering': f'{ADMIN}/peering', 'state': f'{ADMIN}/state'}
 
     def ready(self, fab, node):

@@ -193,5 +193,98 @@ class Telemetry(unittest.TestCase):
             self.assertEqual(report.expect(True, 'fail'), 'XPASS')
 
 
+class AiomoqtRelayOnVM(unittest.TestCase):
+    def setUp(self):
+        nodes = [dict(name=n, instance='VM.Standard.E6.Flex', ocpus=4, roles=['relay']) for n in ('r1', 'r2', 'r3')]
+        nodes[1].update(adapter='aiomoqt-relay', node_metric=150)
+        nodes += [dict(name='load-1', instance='VM.Standard.E6.Flex', ocpus=8, roles=['subscriber']),
+                  dict(name='ref', instance='VM.Standard.E6.Flex', ocpus=4, roles=['probe'])]
+        self.dep = config.Deployment('fab', dict(provider='oci', region='r', nodes=nodes,
+                                                 fabric={'order': ['r1', 'r2', 'r3']}))
+        self.fab = VMFabric(self.dep, inventory=INV)
+        self.log = []
+        log = self.log
+
+        class Host:
+            local = False
+
+            def __init__(self, target):
+                self.target = target
+
+            def sh(self, script, check=True, timeout=None):
+                log.append((self.target, script))
+                return type('R', (), {'stdout': '{"t0": 1.0, "t1": 1.1, "status": 200, "body": "{}"}',
+                                      'returncode': 0})()
+        self.fab.hostfor = Host
+        self.fab.user = '1000:1000'
+
+    def test_image_and_command(self):
+        self.assertEqual(self.fab.images('r2'), [self.dep.fabric.peer_image])
+        cmd = self.fab.start_cmd('r2')
+        self.assertIn('-v "$HOME/moqbench-fabric/fab/"nodes/r2/run:/fabric/run', cmd)
+        self.assertIn('-v "$HOME/moqbench-fabric/fab/"nodes/r2/certs:/certs', cmd)
+        self.assertIn('--network host', cmd)
+        self.assertIn(f'{self.dep.fabric.peer_image} aiomoqt-relay --quic --bind 0.0.0.0 --port 4433', cmd)
+        for flag in ('--node-id r2', '--node-metric 150', '--peer-port 33434', '--peer 10.42.1.13:33434',
+                     '--control /fabric/run/control.sock'):
+            self.assertIn(flag, cmd)
+        self.assertNotIn('/fabric/run', self.fab.start_cmd('r1'))
+        self.assertEqual(self.fab.client_url('r2'), 'moqt://10.42.1.12:4433')
+
+    def test_render_makes_the_run_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.fab.local_dir = Path(tmp)
+            stack = self.fab.render()
+            self.assertTrue((stack / 'nodes/r2/run').is_dir())
+            self.assertTrue((stack / 'bin/unixhttp.py').is_file())
+
+    def test_control_through_the_vm(self):
+        self.assertTrue(self.fab.adapter_for('r2').ready(self.fab, 'r2'))
+        target, script = self.log[-1]
+        self.assertEqual(target, 'r2')
+        self.assertIn("fabric-admin.py GET http+unix://moqbench-fabric%2Ffab%2Fnodes%2Fr2%2Frun%2Fcontrol.sock/moq-fabric",
+                      script)
+        self.fab.telemetry('t', 30)
+        mon = next(s for t, s in self.log if t == 'r2' and 'load-monitor.py' in s)
+        self.assertIn('--json-url peering=http+unix://moqbench-fabric%2Ffab%2Fnodes%2Fr2%2Frun%2Fcontrol.sock/moq-fabric',
+                      mon)
+
+    def test_build_script_parses(self):
+        import subprocess
+        subprocess.run(['bash', '-n', str(ROOT / 'bin' / 'aiomoqt-relay-build.sh')], check=True)
+
+    def test_monitor_reads_a_control_socket(self):
+        import http.server
+        import socketserver
+        import threading
+        import urllib.parse
+        spec = importlib.util.spec_from_file_location('load_monitor', ROOT / 'remote' / 'load-monitor.py')
+        mon = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mon)
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def address_string(self):
+                return 'unix'
+
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                body = b'{"peers": []}'
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        with tempfile.TemporaryDirectory() as tmp:
+            server = socketserver.UnixStreamServer(f'{tmp}/c.sock', Handler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                url = 'http+unix://' + urllib.parse.quote(f'{tmp}/c.sock', safe='') + '/moq-fabric'
+                self.assertEqual(mon.fetch(url), (200, '{"peers": []}'))
+            finally:
+                server.shutdown()
+                server.server_close()
+
+
 if __name__ == '__main__':
     unittest.main()
