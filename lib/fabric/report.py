@@ -321,7 +321,7 @@ def fetched(run_dir, name):
 
 
 def peer_node(path, relays):
-    """What a peer node learned: nodes, hash checks, and whether it stayed a leaf. A moq-peer-bench
+    """What a peer node learned: nodes, hash checks, and whether it stayed a leaf. A moq-fabric-bench
     report ({"role", "pub", "sub"}) gives that per end, plus what it published and received."""
     try:
         doc = json.loads(Path(path).read_text())
@@ -341,7 +341,7 @@ def peer_node(path, relays):
 
 
 def received(t):
-    """One track a moq-peer-bench subscriber received."""
+    """One track a moq-fabric-bench subscriber received."""
     lat = t.get('latency_ms') or {}
     head = t.get('header_to_first_object_ms') or {}
     return dict(track='/'.join([*t.get('ns', []), t.get('name', '')]), objects=t.get('objects'), lost=t.get('lost'),

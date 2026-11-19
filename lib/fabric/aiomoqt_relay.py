@@ -55,7 +55,7 @@ class AiomoqtRelay(Adapter):
         return {'run': RUN_DIR}
 
     def poll_urls(self, node):
-        return {'peering': f'{BASE}/fabric'}
+        return {'peering': f'{BASE}/moq-fabric'}
 
     def call(self, fab, node, method, path):
         if getattr(fab, 'kind', None) != 'docker':
@@ -63,11 +63,11 @@ class AiomoqtRelay(Adapter):
         return fab.admin(node, method, path, base=BASE)
 
     def fabric(self, fab, node):
-        r = self.call(fab, node, 'GET', '/fabric')
+        r = self.call(fab, node, 'GET', '/moq-fabric')
         return json.loads(r['body']) if r['status'] == 200 else None
 
     def ready(self, fab, node):
-        return self.call(fab, node, 'GET', '/fabric')['status'] == 200
+        return self.call(fab, node, 'GET', '/moq-fabric')['status'] == 200
 
     def peer_state(self, fab, node):
         doc = self.fabric(fab, node)
@@ -94,7 +94,7 @@ class AiomoqtRelay(Adapter):
         query = {'op': op, 'host': host, 'port': port}
         if metric is not None:
             query['metric'] = metric
-        return self.call(fab, node, 'POST', '/fabric/peer?' + urllib.parse.urlencode(query))
+        return self.call(fab, node, 'POST', '/moq-fabric/peer?' + urllib.parse.urlencode(query))
 
     def peer_add(self, fab, node, peer, metric=None):
         return self._peer(fab, node, 'add', fab.link_address(node, peer), PEERING_PORT, metric)
@@ -107,7 +107,7 @@ class AiomoqtRelay(Adapter):
 
 
 def peer_rows(doc, names=None):
-    """Sessions from GET /fabric, in the shape of moqx's /peering rows plus the data counters."""
+    """Sessions from GET /moq-fabric, in the shape of moqx's /peering rows plus the data counters."""
     names = names or {}
     rows = []
     for p in (doc or {}).get('peers', []):

@@ -291,14 +291,14 @@ remove it to rebuild from a branch that moved. The command is a template:
 | `{output}` | the JSON report path in the run's results |
 | `{namespace}`, `{track}` | the run's track |
 
-The default is `moq-peer-probe {peers} -p 0 --node-id {node} -t {seconds} -i 5 -o {output}`;
+The default is `moq-fabric-probe {peers} -p 0 --node-id {node} -t {seconds} -i 5 -o {output}`;
 a node's own `command` replaces it, and its own `image` replaces `peer_image`.
-`moq-peer-bench` fits the same template, for example
-`moq-peer-bench {peers} --node-id {node} --role sub -N {namespace} -T {track} -t {seconds} -o {output}`
+`moq-fabric-bench` fits the same template, for example
+`moq-fabric-bench {peers} --node-id {node} --role sub -N {namespace} -T {track} -t {seconds} -o {output}`
 receives the run's track over peering. The summary reports what each peer node
 learned: the relays it saw, how many announces and subscribes passed the hash
 check, and whether it stayed a leaf (it sent no NODE_INFO and no learned path
-runs through it). For moq-peer-bench it does so per end (`pub`, `sub`), and adds
+runs through it). For moq-fabric-bench it does so per end (`pub`, `sub`), and adds
 each received track's objects, loss, duplicates, payload check, latency
 (p50/p90/p99) and header-to-first-object time, and each published track's
 object count; a received track is checked for every object once. Peer nodes run
@@ -332,9 +332,9 @@ with one `--peer` per link it dials. `--pause-after 5` withdraws a track's
 fabric subscribe 5 s after its last local viewer leaves. The control socket's
 folder (`nodes/<node>/run`) is mounted in the relay and in its holder, so the
 harness and the pollers reach it from the holder across relay restarts:
-`GET /fabric` gives peer state, namespaces and the samples path checks read;
-`POST /fabric/peer?op=add|remove|metric&host=H&port=P[&metric=M]` changes a
-peer, addressed by the session's host and port as `GET /fabric` reports them.
+`GET /moq-fabric` gives peer state, namespaces and the samples path checks read;
+`POST /moq-fabric/peer?op=add|remove|metric&host=H&port=P[&metric=M]` changes a
+peer, addressed by the session's host and port as `GET /moq-fabric` reports them.
 It has no peer restart, so `peer.restart` is SKIP. aiomoqt-relay nodes run on
 Docker fabrics only.
 

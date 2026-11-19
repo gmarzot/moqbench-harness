@@ -45,7 +45,7 @@ dials = ["moqx-a", "laps"]
 name    = "bench"
 roles   = ["peer"]
 dials   = ["moqx-b"]
-command = "moq-peer-bench {peers} --node-id {node} --role sub -N {namespace} -T {track} -t {seconds} -o {output}"
+command = "moq-fabric-bench {peers} --node-id {node} --role sub -N {namespace} -T {track} -t {seconds} -o {output}"
 
 [[nodes]]
 name  = "client"

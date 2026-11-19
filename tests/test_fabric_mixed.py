@@ -48,7 +48,7 @@ class Config(unittest.TestCase):
             (dict(fabric={'metrics': [['laps', 'moqx-b', 200]]}), 'takes no session metric'),
             (dict(fabric={'metrics': [['moqx-b', 'moqx-a', 200]]}), 'does not dial that link'),
             (dict(fabric={'topology': 'line', 'metrics': [['moqx-a', 'moqx-b', 200]]}), 'not a link of this topology'),
-            (dict(peer={'command': 'moq-peer-probe {peers} --as {who}'}), 'command fields'),
+            (dict(peer={'command': 'moq-fabric-probe {peers} --as {who}'}), 'command fields'),
             (dict(peer={'dials': ['nowhere']}), 'peer node probe'),
         ]
         for kw, msg in cases:
@@ -98,11 +98,11 @@ class Rendering(unittest.TestCase):
         dep = deployment(peer={'dials': ['ingest', 'laps']})
         run = Run(dep, dict(type='fabric', scenario='steady', topology='full', seconds=60), 't', tempfile.mkdtemp())
         self.assertEqual(run.peer_argv('probe', 60), [
-            'moq-peer-probe', '--peer', '10.77.0.101:33434', '--peer', '10.77.0.102:33434', '-p', '0',
+            'moq-fabric-probe', '--peer', '10.77.0.101:33434', '--peer', '10.77.0.102:33434', '-p', '0',
             '--node-id', 'probe', '-t', '60', '-i', '5', '-o', '/fabric/results/t/peer-probe.json'])
-        dep = deployment(peer={'command': 'moq-peer-bench {peers} -t {seconds} --out {output}'})
+        dep = deployment(peer={'command': 'moq-fabric-bench {peers} -t {seconds} --out {output}'})
         run = Run(dep, dict(type='fabric', scenario='steady', topology='full', seconds=30), 't', tempfile.mkdtemp())
-        self.assertEqual(run.peer_argv('probe', 30)[:3], ['moq-peer-bench', '--peer', '10.77.0.101:33434'])
+        self.assertEqual(run.peer_argv('probe', 30)[:3], ['moq-fabric-bench', '--peer', '10.77.0.101:33434'])
 
     def test_draft_must_suit_every_relay(self):
         with self.assertRaisesRegex(config.ConfigError, 'draft 18 only'):
@@ -185,10 +185,10 @@ class Examples(unittest.TestCase):
 class FollowUps(unittest.TestCase):
     def test_bench_template_and_own_image(self):
         dep = deployment(peer={'dials': ['egress'], 'image': 'peer:x',
-                               'command': 'moq-peer-bench {peers} --role sub -N {namespace} -T {track} -o {output}'})
+                               'command': 'moq-fabric-bench {peers} --role sub -N {namespace} -T {track} -o {output}'})
         run = Run(dep, dict(type='fabric', scenario='steady', topology='full', seconds=30), 't', tempfile.mkdtemp())
         argv = run.peer_argv('probe', 30)
-        self.assertEqual(argv[:3], ['moq-peer-bench', '--peer', '10.77.0.103:33434'])
+        self.assertEqual(argv[:3], ['moq-fabric-bench', '--peer', '10.77.0.103:33434'])
         self.assertEqual(argv[argv.index('-N') + 1], run.ns)
         self.assertEqual(argv[argv.index('-T') + 1], 'probe')
         self.assertEqual(DockerFabric(dep).compose(1000, 1000)['services']['probe']['image'], 'peer:x')

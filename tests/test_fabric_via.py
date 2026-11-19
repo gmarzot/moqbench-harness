@@ -47,7 +47,7 @@ def deployment(name='docker-via-example'):
 
 
 class FakeAdmin:
-    """Answers control-socket calls with GET /fabric documents, recording each call."""
+    """Answers control-socket calls with GET /moq-fabric documents, recording each call."""
 
     def __init__(self, body=None, status=200):
         self.body, self.status, self.calls = body or doc(), status, []
@@ -134,9 +134,9 @@ class Adapter(unittest.TestCase):
         ad.peer_remove(fab, 'via-1', 'laps')
         ad.peer_metric(fab, 'via-1', 'moqx', 400)
         posts = [c[2] for c in fab.admin.calls if c[1] == 'POST']
-        self.assertEqual(posts, ['/fabric/peer?op=add&host=10.77.5.12&port=33434&metric=300',
-                                 '/fabric/peer?op=remove&host=10.77.1.11&port=41000',
-                                 '/fabric/peer?op=metric&host=10.77.4.12&port=33434&metric=400'])
+        self.assertEqual(posts, ['/moq-fabric/peer?op=add&host=10.77.5.12&port=33434&metric=300',
+                                 '/moq-fabric/peer?op=remove&host=10.77.1.11&port=41000',
+                                 '/moq-fabric/peer?op=metric&host=10.77.4.12&port=33434&metric=400'])
         self.assertTrue(all(c[3] == 'http+unix://%2Ffabric%2Frun%2Fcontrol.sock' for c in fab.admin.calls))
         with self.assertRaises(Unsupported):
             ad.peer_restart(fab, 'via-1', 'laps')
@@ -183,14 +183,14 @@ class UnixHttp(unittest.TestCase):
             threading.Thread(target=server.serve_forever, daemon=True).start()
             try:
                 base = 'http+unix://' + urllib.parse.quote(path, safe='')
-                status, body = unixhttp.request(f'{base}/fabric/peer?op=add&host=h&port=1', 'POST')
+                status, body = unixhttp.request(f'{base}/moq-fabric/peer?op=add&host=h&port=1', 'POST')
                 self.assertEqual((status, json.loads(body)), (200, {'method': 'POST',
-                                                                    'path': '/fabric/peer?op=add&host=h&port=1'}))
+                                                                    'path': '/moq-fabric/peer?op=add&host=h&port=1'}))
                 self.assertEqual(unixhttp.request(f'{base}/nope')[0], 404)
             finally:
                 server.shutdown()
                 server.server_close()
-            self.assertEqual(unixhttp.request(f'{base}/fabric', timeout=1)[0], 0)
+            self.assertEqual(unixhttp.request(f'{base}/moq-fabric', timeout=1)[0], 0)
 
 
 class Config(unittest.TestCase):

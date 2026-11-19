@@ -122,7 +122,7 @@ class Fabric:
     # Adapters whose relays take a node metric (node_metric) at startup.
     NODE_METRICS = {'moqx-peering', 'aiomoqt-relay'}
     DEFAULT_NODE_METRIC = 100
-    PEER_COMMAND = 'moq-peer-probe {peers} -p 0 --node-id {node} -t {seconds} -i 5 -o {output}'
+    PEER_COMMAND = 'moq-fabric-probe {peers} -p 0 --node-id {node} -t {seconds} -i 5 -o {output}'
     PEER_FIELDS = {'peers', 'node', 'seconds', 'output', 'namespace', 'track'}
 
     def __init__(self, data, relays, where, nodes=None):
