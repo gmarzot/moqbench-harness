@@ -389,7 +389,9 @@ def write_via_run(folder):
         last = body
     (folder / 'poll-via-1.jsonl').write_text('\n'.join(json.dumps(r) for r in rows) + '\n')
     moqx = [{'t': 100.0 + k, 'name': 'peering', 'status': 200,
-             'body': json.dumps({'peers': [{'host': '10.77.4.11', 'active_streams': 1 if k <= 5 else 0}]})}
+             'body': json.dumps({'peers': [{'host': '10.77.4.11', 'active_streams': 2 if k <= 5 else 1,
+                                            'subscribe_tracks': 1},
+                                           {'host': '10.77.1.11', 'active_streams': 2, 'subscribe_tracks': 0}]})}
             for k in range(10)]
     (folder / 'poll-moqx.jsonl').write_text('\n'.join(json.dumps(r) for r in moqx) + '\n')
 
@@ -442,6 +444,16 @@ class Accounting(unittest.TestCase):
         self.assertEqual(rows[('moqx', 'own_subscribe', True, '0.5-5.5 s')]['status'], 'SKIP')
         self.assertEqual(rows[('laps', 'carries', True, '0.5-5.5 s')]['status'], 'SKIP')
         self.assertIn('path: via-1 carries the track, 0.5-5.5 s', report.text(self.s))
+
+    def test_delivery_that_never_resumes_has_no_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp) / 'run'
+            write_via_run(run)
+            log = run / 'sub-local.log'
+            log.write_text('\n'.join(x for x in log.read_text().splitlines() if float(x.split()[0]) < 106.6) + '\n')
+            v = {r['check']: r for r in report.analyze(run)['verdicts']}
+            node = v['sub-local node.kill moqx: no-gap']
+            self.assertEqual((node['status'], node['max_gap_ms']), ('FAIL', None))
 
     def test_down_samples_carry_nothing_forward(self):
         samples = report.state_samples(Path(self.tmp.name) / 'run', json.loads(

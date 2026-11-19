@@ -92,7 +92,9 @@ class MoqxPeering(Adapter):
         return namespaces_in(doc) if doc else None
 
     def sample(self, doc, namespace, track):
-        return {'streams': sum(p.get('active_streams') or 0 for p in (doc or {}).get('peers', []))}
+        # Data streams on sessions whose peer subscribes; every session also holds one control stream.
+        return {'streams': sum(max(0, (p.get('active_streams') or 0) - 1) for p in (doc or {}).get('peers', [])
+                               if p.get('subscribe_tracks'))}
 
     def metrics(self, fab, node):
         r = fab.admin(node, 'GET', '/metrics')

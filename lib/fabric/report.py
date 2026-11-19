@@ -429,6 +429,10 @@ def analyze(run_dir):
                     recovery = r3((gap_end - t0) * 1000)
                 else:
                     recovery = 0.0
+                last = s['arrivals'][-1][0]
+                if (own and running(row.get('life'), win_end)
+                        and any(last + 1 < ts <= win_end for ts in sent.values())):
+                    recovery = None
                 lost = lost_between(s, sent, t0 - 0.5, max(win_end, first_after or win_end))
                 inwin = delivery(s, sent, t0 - 0.5, max(win_end, first_after or win_end))
                 before = delivery(s, sent, t0 - 5, t0)
