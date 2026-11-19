@@ -49,13 +49,15 @@ def deployment(name='docker-via-example'):
 class FakeAdmin:
     """Answers control-socket calls with GET /moq-fabric documents, recording each call."""
 
-    def __init__(self, body=None, status=200):
-        self.body, self.status, self.calls = body or doc(), status, []
+    def __init__(self, body=None, status=200, post_status=200):
+        self.body, self.status, self.post_status, self.calls = body or doc(), status, post_status, []
 
     def __call__(self, node, method, path, body=None, base=None):
         self.calls.append((node, method, path, base))
-        out = self.body if method == 'GET' else {'ok': True}
-        return {'t0': 1.0, 't1': 1.1, 'status': self.status, 'body': json.dumps(out)}
+        if method == 'GET':
+            return {'t0': 1.0, 't1': 1.1, 'status': self.status, 'body': json.dumps(self.body)}
+        out = {'ok': True} if self.post_status == 200 else {'error': 'op=add|remove|metric&host=H&port=P[&metric=M]'}
+        return {'t0': 1.0, 't1': 1.1, 'status': self.post_status, 'body': json.dumps(out)}
 
 
 class Adapter(unittest.TestCase):
@@ -138,11 +140,15 @@ class Adapter(unittest.TestCase):
                                  '/moq-fabric/peer?op=remove&host=10.77.1.11&port=41000',
                                  '/moq-fabric/peer?op=metric&host=10.77.4.12&port=33434&metric=400'])
         self.assertTrue(all(c[3] == 'http+unix://%2Ffabric%2Frun%2Fcontrol.sock' for c in fab.admin.calls))
+        ad.peer_restart(fab, 'via-1', 'laps')
+        self.assertEqual(fab.admin.calls[-1][2], '/moq-fabric/peer?op=restart&host=10.77.1.11&port=41000')
+        fab.admin = FakeAdmin(post_status=400)
         with self.assertRaises(Unsupported):
             ad.peer_restart(fab, 'via-1', 'laps')
         out = faults.apply(fab, dict(verb='peer.restart', on='via-1', peer='laps'))
         self.assertIsNone(out['ok'])
         self.assertIn('peer.restart', out['skipped'])
+        fab.admin = FakeAdmin()
         fab.admin = FakeAdmin(status=0)
         self.assertFalse(ad.ready(fab, 'via-1'))
         self.assertIsNone(ad.peer_state(fab, 'via-1'))

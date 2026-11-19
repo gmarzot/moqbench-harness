@@ -24,7 +24,7 @@ PAUSE_AFTER_S = 5
 
 class AiomoqtRelay(Adapter):
     name = 'aiomoqt-relay'
-    caps = frozenset({'peer.add', 'peer.remove', 'peer.metric'})
+    caps = frozenset({'peer.add', 'peer.remove', 'peer.restart', 'peer.metric'})
     client_port = CLIENT_PORT
     client_path = ''
     cheap_state = True
@@ -101,6 +101,12 @@ class AiomoqtRelay(Adapter):
 
     def peer_remove(self, fab, node, peer):
         return self._peer(fab, node, 'remove', *self.session(fab, node, peer))
+
+    def peer_restart(self, fab, node, peer):
+        r = self._peer(fab, node, 'restart', *self.session(fab, node, peer))
+        if r['status'] == 400:
+            raise Unsupported(f'{self.name}: peer.restart (the relay refused op=restart: {r["body"][:120]})')
+        return r
 
     def peer_metric(self, fab, node, peer, metric):
         return self._peer(fab, node, 'metric', *self.session(fab, node, peer), metric)

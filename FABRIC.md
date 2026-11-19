@@ -333,10 +333,11 @@ fabric subscribe 5 s after its last local viewer leaves. The control socket's
 folder (`nodes/<node>/run`) is mounted in the relay and in its holder, so the
 harness and the pollers reach it from the holder across relay restarts:
 `GET /moq-fabric` gives peer state, namespaces and the samples path checks read;
-`POST /moq-fabric/peer?op=add|remove|metric&host=H&port=P[&metric=M]` changes a
-peer, addressed by the session's host and port as `GET /moq-fabric` reports them.
-It has no peer restart, so `peer.restart` is SKIP. aiomoqt-relay nodes run on
-Docker fabrics only.
+`POST /moq-fabric/peer?op=add|remove|restart|metric&host=H&port=P[&metric=M]`
+changes a peer, addressed by the session's host and port as `GET /moq-fabric`
+reports them. `op=restart` closes the session and dials again; a relay that
+answers 400 to it has no restart, and `peer.restart` is SKIP. aiomoqt-relay
+nodes run on Docker fabrics only.
 
 ## Adapters
 
