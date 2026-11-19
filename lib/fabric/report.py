@@ -529,7 +529,8 @@ def lifetimes(events):
 
 
 def running(life, t):
-    return bool(life) and life[0] <= t and (life[1] is None or t <= life[1])
+    """Whether a named subscriber ran across t: its own start and end are not events it sees."""
+    return bool(life) and life[0] < t and (life[1] is None or t < life[1])
 
 
 def where(ev):

@@ -416,9 +416,8 @@ class Accounting(unittest.TestCase):
 
     def test_events_only_while_running(self):
         far1 = [(e['verb'], e.get('sub')) for e in self.s['subscribers']['sub-far-1']['events']]
-        self.assertEqual(far1, [('sub.start', 'far-1'), ('sub.start', 'far-2'), ('sub.kill', 'far-2'),
-                                ('sub.stop', 'far-1')])
-        self.assertEqual(len(self.s['subscribers']['sub-local']['events']), 8)
+        self.assertEqual(far1, [('sub.start', 'far-2'), ('sub.kill', 'far-2')])
+        self.assertEqual(len(self.s['subscribers']['sub-local']['events']), 7)
 
     def test_gap_expectations_for_named_subscribers(self):
         kill = self.v['sub-local sub.kill far-2 on moqx: no-gap']
