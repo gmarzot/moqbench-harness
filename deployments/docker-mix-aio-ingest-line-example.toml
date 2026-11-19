@@ -1,0 +1,41 @@
+# Example: aiomoqt-relay as the ingest relay of a mixed moq-fabric line on the
+# local Docker, with moqx and LAPS. The same order as
+# docker-mix-aio-ingest-example.toml on a line, with no session metrics, for the
+# line tests (suites/example-mix-aio-line.toml): peer-churn adds the direct link.
+# Clients use MoQT draft 18, the only draft LAPS clients speak. The aiomoqt-relay
+# image is the lab image plus aiomoqt from peer_pip.
+provider = "docker"
+host     = "local"
+tag      = "mixlin"
+
+[fabric]
+adapter  = "moqx-peering"
+image    = "moqx-peering:latest"          # bin/moqx-peering-build.sh
+topology = "line"
+order    = ["aio", "laps", "moqx"]
+draft    = 18
+check_interval_ms = 2000
+
+[[nodes]]
+name        = "aio"
+roles       = ["relay"]
+adapter     = "aiomoqt-relay"
+cpus        = "2-3"
+
+[[nodes]]
+name        = "laps"
+roles       = ["relay"]
+adapter     = "laps"
+image       = "laps:latest"               # bin/laps-build.sh
+admin_image = "laps:builder-latest"       # carries lapsAdmin
+cpus        = "4-5"
+
+[[nodes]]
+name        = "moqx"
+roles       = ["relay"]
+cpus        = "6-7"
+
+[[nodes]]
+name  = "client"
+roles = ["publisher", "subscriber", "probe"]
+cpus  = "8-11"

@@ -39,7 +39,7 @@ how the relays peer:
 | `subnet` | `10.77.0.0/16` | the access network is its first /24, then one /24 per link |
 | `threads`, `check_interval_ms`, `draft` | `2`, `5000`, `18` | relay IO threads, peer reconnect interval, client MoQT draft |
 | `dial` | none | `[dialer, listener]` pairs that override which end dials a link |
-| `metrics` | none | `[node, peer, metric]`: the session metric a dialing moqx relay starts with on that link |
+| `metrics` | none | `[node, peer, metric]`: the session metric a dialing moqx relay starts with on that link; a dialing aiomoqt-relay gets it through peer.metric once the links are up |
 | `peer_pip`, `peer_command`, `peer_image` | see [Mixed fabrics](#mixed-fabrics) | peer nodes |
 | `aiomoqt`, `aiopquic` | releases | client versions in the lab image (`build/lab-node.Dockerfile`) |
 

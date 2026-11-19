@@ -119,6 +119,8 @@ class Fabric:
     DEFAULT_IMAGES = {'moqx-peering': 'moqx-peering:latest'}
     # Adapters whose relays take a session metric at startup.
     START_METRICS = {'moqx-peering'}
+    # Adapters whose relays take a session metric once their links are up (peer.metric).
+    RUNTIME_METRICS = {'aiomoqt-relay'}
     # Adapters whose relays take a node metric (node_metric) at startup.
     NODE_METRICS = {'moqx-peering', 'aiomoqt-relay'}
     DEFAULT_NODE_METRIC = 100
@@ -191,7 +193,7 @@ class Fabric:
             if (not isinstance(entry, list) or len(entry) != 3 or any(n not in self.order for n in entry[:2])
                     or not isinstance(entry[2], int) or isinstance(entry[2], bool) or entry[2] < 0):
                 raise ConfigError(f'{where}: fabric metrics entries are [node, peer, metric], not {entry!r}')
-            if self.node_adapter(entry[0]) not in self.START_METRICS:
+            if self.node_adapter(entry[0]) not in self.START_METRICS | self.RUNTIME_METRICS:
                 raise ConfigError(f'{where}: {entry[0]} is a {self.node_adapter(entry[0])} relay, which takes no '
                                   'session metric at startup; set it with a peer.metric event')
             self.metrics[(entry[0], entry[1])] = entry[2]
@@ -217,6 +219,10 @@ class Fabric:
         adapter = self.node_adapter(name)
         image = self.image if adapter == self.adapter else self.DEFAULT_IMAGES.get(adapter)
         return image or (self.peer_image if adapter == 'aiomoqt-relay' else None)
+
+    def runtime_metrics(self):
+        """Metrics entries applied through peer.metric once the links are up."""
+        return {k: m for k, m in self.metrics.items() if self.node_adapter(k[0]) not in self.START_METRICS}
 
     def node_metric(self, name):
         return self.nodes.get(name, {}).get('node_metric', self.DEFAULT_NODE_METRIC)

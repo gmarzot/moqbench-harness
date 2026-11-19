@@ -21,7 +21,7 @@ import time
 
 from fabric import adapter as adapters
 from fabric import certs, faults, topology
-from fabric.docker import ROOT, REMOTE_BIN, FabricError, Host, parse_timed, timed_out
+from fabric.docker import ROOT, REMOTE_BIN, FabricError, Host, parse_timed, runtime_metrics, timed_out
 
 NFT_TABLE = 'moqbench_fabric'
 DOCKER = 'sudo docker'
@@ -252,7 +252,9 @@ class VMFabric:
         self.each(self.order, relay_up)
         self.each(['ref', *self.loads], client_up)
         self.wait_ready(wait_s)
-        return self.wait_links(wait_s)
+        took = self.wait_links(wait_s)
+        runtime_metrics(self)
+        return took
 
     def down(self):
         def relay_down(n):

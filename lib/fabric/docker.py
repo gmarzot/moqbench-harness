@@ -39,6 +39,14 @@ class FabricError(RuntimeError):
     """A fabric command that failed, with what it printed."""
 
 
+def runtime_metrics(fab):
+    """Give each dialer that takes its session metric only at runtime the deployment's metric."""
+    for (a, b), metric in fab.spec.runtime_metrics().items():
+        r = fab.adapter_for(a).peer_metric(fab, a, b, metric)
+        if not 200 <= r['status'] < 300:
+            raise FabricError(f'{a}: session metric {metric} toward {b}: status {r["status"]} {r["body"][:200]}')
+
+
 class Host:
     def __init__(self, target, key=None):
         self.target = target
@@ -265,7 +273,9 @@ class DockerFabric:
         self.ensure_lab_image()
         self.host.sh(self.compose_cmd('up -d --force-recreate --remove-orphans'), timeout=300)
         self.wait_ready(wait_s)
-        return self.wait_links(wait_s)
+        took = self.wait_links(wait_s)
+        runtime_metrics(self)
+        return took
 
     def down(self):
         self.host.sh(self.compose_cmd('down -t 5 --remove-orphans'), check=False)
