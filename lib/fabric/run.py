@@ -20,7 +20,9 @@ from fabric.adapter import Unsupported
 from fabric.docker import DockerFabric, FabricError
 from fabric.moqx_peering import PEERING_PORT
 
-MODES = {'stream', 'setup', 'media', 'fetch'}
+MODES = {'stream', 'setup', 'media', 'fetch', 'tuples'}
+# Namespaces that concatenate alike under the run's namespace, and each publisher's extra object size.
+TUPLES = (('a', ('a', 'bc'), 0), ('b', ('ab', 'c'), 300))
 SCENARIO_KEYS = {'description', 'mode', 'publisher', 'subscribers', 'pub_ns', 'sub_start_s', 'peering_poll_s',
                  'state_poll_ms', 'settle_s', 'gap_s', 'warm_s', 'cold_order', 'namespace_check', 'netdev_s',
                  'event', 'population', 'audio_frames_per_group', 'fetch_history', 'expect_across', 'datagram',
@@ -156,15 +158,15 @@ class Run:
     def node(self, role):
         return topology.resolve(self.scen.get(role, 'ingest'), self.fab.order)
 
-    def pub_argv(self, seconds, pub_ns=False, extra=()):
+    def pub_argv(self, seconds, pub_ns=False, extra=(), ns=None, size=None):
         argv = [*self.tool('aiomoqt.tools.pub_bench'), self.fab.client_url(self.node('publisher')), '-k',
-                '--draft', self.draft, '-N', self.ns, '-T', self.track, '-s', self.opts['object_size'],
+                '--draft', self.draft, '-N', ns or self.ns, '-T', self.track, '-s', size or self.opts['object_size'],
                 '-r', self.opts['rate'], '-g', self.opts['group_size'], '-t', int(seconds), '--log', 'data=trace']
         return argv + (['--pub-ns'] if pub_ns else []) + (['-D'] if self.scen.get('datagram') else []) + list(extra)
 
-    def sub_argv(self, node, seconds):
+    def sub_argv(self, node, seconds, ns=None):
         return [*self.tool('aiomoqt.tools.sub_bench'), self.fab.client_url(node), '-k', '--draft', self.draft,
-                '-N', self.ns, '-T', self.track, '-t', int(seconds), '-i', 1, '--log', 'data=trace']
+                '-N', ns or self.ns, '-T', self.track, '-t', int(seconds), '-i', 1, '--log', 'data=trace']
 
     def peer_argv(self, name, seconds):
         """A peer node's command from its template: {peers} dials each relay it names."""
@@ -320,6 +322,28 @@ class Run:
             time.sleep(warm + gap)
         return self.wait(list(self.where), 60)
 
+    def tuple_spec(self):
+        """{key: {namespace, object_size}} of the tuples mode's two publishers."""
+        return {key: dict(namespace='/'.join((self.ns, *parts)), object_size=self.opts['object_size'] + extra)
+                for key, parts, extra in TUPLES}
+
+    def tuples(self):
+        """Two publishers on the publisher's relay whose namespaces concatenate alike, then a subscriber to
+        each on every relay; each must receive only its own track."""
+        settle, warm = self.scen.get('settle_s', 5), self.scen.get('warm_s', 10)
+        total = settle + warm + 6
+        self.fab.telemetry(self.label, total + 5, peering_s=self.scen.get('peering_poll_s', 5),
+                           netdev_s=self.scen.get('netdev_s', 0.25))
+        spec = self.tuple_spec()
+        for key, t in spec.items():
+            self.launch(f'pub-{key}', self.pub_argv(total + 5, ns=t['namespace'], size=t['object_size']))
+        self.start_peers(total)
+        time.sleep(settle)
+        for n in subscriber_nodes(self.scen, self.fab.order):
+            for key, t in spec.items():
+                self.launch(f'tuple-{key}-{n}', self.sub_argv(n, warm, ns=t['namespace']))
+        return self.wait(list(self.where), total + 60)
+
     def execute(self, keep=False):
         self.out.mkdir(parents=True, exist_ok=True)
         fab = self.fab
@@ -330,6 +354,7 @@ class Run:
                     dialers={'-'.join(p): topology.dialer(*p, fab.order, fab.spec.dialers) for p in self.links},
                     metrics={f'{a}>{b}': m for (a, b), m in fab.spec.metrics.items()},
                     peers=list(getattr(fab, 'peers', [])),
+                    tuples=self.tuple_spec() if self.scen['mode'] == 'tuples' else None,
                     named_subscribers=self.subs,
                     expect_path=self.paths,
                     peer_dials={n: fab.spec.peer_dials(n) for n in getattr(fab, 'peers', [])},
@@ -352,7 +377,8 @@ class Run:
         fab.clock(self.label, 'start')
         missing = []
         try:
-            missing = {'setup': self.setup, 'media': self.media, 'fetch': self.fetch}.get(self.scen['mode'], self.stream)()
+            missing = {'setup': self.setup, 'media': self.media, 'fetch': self.fetch,
+                       'tuples': self.tuples}.get(self.scen['mode'], self.stream)()
         finally:
             try:
                 meta['unfinished'] = missing

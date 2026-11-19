@@ -1,0 +1,30 @@
+description = "Example: the line tests of a mixed moqx / LAPS / aiomoqt-relay fabric at MoQT draft 18, run once per rotation (deployments/docker-mix-aio-{ingest,transit,egress}-line-example.toml): per-hop delivery, peer churn (the line becomes a triangle and back) and relay restarts with no second path."
+requires    = { relay = 3, subscriber = 1 }
+
+[[test]]
+type     = "fabric"
+scenario = "steady"
+topology = "line"
+seconds  = 60
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "peer-churn"
+topology = "line"
+seconds  = 165
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "relay-restart"
+topology = "line"
+seconds  = 95
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "relay-restart-kill"
+topology = "line"
+seconds  = 95
+draft    = 18

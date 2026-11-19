@@ -18,6 +18,7 @@ SEND = re.compile(r'TRACE: MOQT send: object (\d+)\.(\d+) alias=\d+ (\d+) bytes'
 RECV = re.compile(r'TRACE: MOQT stream\(\d+\): object (\d+)\.(\d+) alias=\d+ \d+ bytes status=(\S+)')
 DGRAM = re.compile(r'TRACE: MOQT event: (?:d\d+ )?ObjectDatagram: (\d+)\.(\d+) size: \d+ bytes(?: status: (\S+))?')
 NORMAL = {None, '0', 'None', 'NORMAL', 'ObjectStatus.NORMAL'}
+SIZED = re.compile(r'TRACE: MOQT stream\(\d+\): object \d+\.\d+ alias=\d+ (\d+) bytes status=(\S+)')
 SUMMARY = {
     'objects': re.compile(r'^\s+Objects:\s+([\d,]+)'),
     'lat_p50': re.compile(r'p50=([\d.]+)'), 'lat_p95': re.compile(r'p95=([\d.]+)'),
@@ -320,6 +321,24 @@ def fetched(run_dir, name):
     return out
 
 
+def tuples(run_dir, spec):
+    """Each tuples-mode subscriber: objects received, and how many sized like the other publisher's."""
+    out = {}
+    for log in sorted(Path(run_dir).glob('tuple-*.log')):
+        _, key, node = log.stem.split('-', 2)
+        own = foreign = 0
+        for _, text in lines(log):
+            m = SIZED.search(text)
+            if not m or m[2] not in NORMAL:
+                continue
+            size = int(m[1])
+            nearest = min(spec, key=lambda k: abs(size - spec[k]['object_size']))
+            own, foreign = (own + 1, foreign) if nearest == key else (own, foreign + 1)
+        out[log.stem] = dict(node=node, namespace=spec[key]['namespace'], objects=own + foreign, own=own,
+                             foreign=foreign)
+    return out
+
+
 def peer_node(path, relays):
     """What a peer node learned: nodes, hash checks, and whether it stayed a leaf. A moq-fabric-bench
     report ({"role", "pub", "sub"}) gives that per end, plus what it published and received."""
@@ -513,6 +532,8 @@ def analyze(run_dir):
     fetches = {f.stem: fetched(run_dir, f.stem) for f in sorted(run_dir.glob('fetch-*.log'))}
     if fetches:
         out['fetch'] = fetches
+    if meta.get('tuples'):
+        out['tuples'] = tuples(run_dir, meta['tuples'])
     peers = {f.stem: peer_node(f, order) for f in sorted(run_dir.glob('peer-*.json'))}
     if peers:
         out['peer_nodes'] = peers
@@ -709,6 +730,10 @@ def verdicts(out, meta):
         exp = scen.get('expect_across', 'pass') if across else None
         res.append(dict(check=f'{name}: joining FETCH {"across peering" if across else "on the publisher relay"}',
                         status=expect(f['outcome'] == 'ok', exp), outcome=f['outcome'], response=f['response']))
+    for name, t in (out.get('tuples') or {}).items():
+        res.append(dict(check=f'{name}: {t["namespace"]} received only its own track',
+                        status=expect(t['own'] > 0 and t['foreign'] == 0, None), objects=t['objects'],
+                        foreign=t['foreign']))
     for name, pn in (out.get('peer_nodes') or {}).items():
         ends = pn.get('ends', {name: pn}) if 'error' not in pn else {}
         ok = 'error' not in pn and bool(ends) and all(
@@ -770,6 +795,9 @@ def text(summary):
                       f'p90 max {p["p90_max_ms"]} ms, rx min {p["rx_mbps_min"]} Mbps, exit {p["rc"]}')
     for name, m in (s.get('media') or {}).items():
         lines_.append(f'  {name}: catalog {m["catalog_ms"]} ms, first frames {m["first_frame_ms"]}, tracks {m["tracks"]}')
+    for name, t in (s.get('tuples') or {}).items():
+        lines_.append(f'  {name}: {t["namespace"]} on {t["node"]}: {t["objects"]} objects, {t["foreign"]} of the '
+                      'other track')
     for name, f in (s.get('fetch') or {}).items():
         lines_.append(f'  {name}: {f["outcome"]}{" (fetch stream seen)" if f["stream"] else ""} {f["response"] or ""}')
     for name, pn in (s.get('peer_nodes') or {}).items():

@@ -99,6 +99,7 @@ group), `draft`, `peering_poll_s`, `slo_ms`, `links` (custom), `suffix`, `note`.
 | `via-edge-sub-kill` | SIGKILL of the subscriber past the via, then of the relay past it | at both, `no-gap` for the via's subscriber |
 | `via-pair-failover`, `via-pair-failover-reverse`, `via-pair-failover-kill` | the cheaper of two vias on a ring stopped (or killed), then started | only the cheaper via carries the track before and after; the other carries it meanwhile; `group-loss` on the stop, `bounded-gap` on the kill |
 | `relay-restart`, `relay-restart-kill` | the egress, transit and ingest relay stopped (or killed) and started again in turn, a reference subscriber on every relay | per event and subscriber: outage, loss and `recovers` (delivery resumes without the client reconnecting); a subscriber on the restarted relay, and every subscriber when the publisher's relay restarts, is SKIP |
+| `namespace-tuples` | two publishers on the ingest relay whose namespaces concatenate alike (`<ns>/a/bc`, `<ns>/ab/c`, object sizes 300 B apart), then a subscriber to each on every relay | each subscriber receives only its own track (by object size) |
 | `fetch-peer` | a joining FETCH (aiomoqt's join example) on the publisher's relay and on every other relay | FETCH_OK on the publisher's relay; across peering, `expect_across = "fail"` reports a refusal as XFAIL and a success as XPASS |
 
 The gate for an audience: over its steady samples (from the first at the full
@@ -106,7 +107,7 @@ population to three before the end), at least 95% have the full population,
 at least 90% of the expected receive rate and a p90 at or under the test's
 `slo_ms` (default 500), and load_sim exits 0.
 
-Scenario keys: `mode` (`stream` or `setup`), `publisher`, `subscribers`
+Scenario keys: `mode` (`stream`, `setup`, `media`, `fetch` or `tuples`), `publisher`, `subscribers`
 (`["all"]` or node names and roles), `pub_ns`, `sub_start_s`, `peering_poll_s`,
 `state_poll_ms`, `netdev_s`, `settle_s`, `gap_s`, `warm_s`, `cold_order`,
 `namespace_check`, `datagram` (the publisher sends ObjectDatagrams),

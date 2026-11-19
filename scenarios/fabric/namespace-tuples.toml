@@ -1,0 +1,6 @@
+description = "Multi-tuple namespaces that concatenate alike: publishers on the ingest relay for <ns>/a/bc and for <ns>/ab/c, with object sizes 300 B apart, then a subscriber to each on every relay. Each subscriber must receive only its own track's objects."
+mode        = "tuples"
+publisher   = "ingest"
+subscribers = ["all"]
+settle_s    = 5
+warm_s      = 10
