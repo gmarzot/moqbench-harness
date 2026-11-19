@@ -6,7 +6,8 @@ while peers change or links degrade. A fabric runs on one Docker host, or with
 one relay per VM in a cloud testbed ([VM fabrics](#vm-fabrics)). Adapters
 exist for moqx with moq-fabric, for LAPS and for aiomoqt-relay; each relay node
 picks its own, so one fabric can mix them ([Mixed fabrics](#mixed-fabrics),
-[aiomoqt-relay as a via](#aiomoqt-relay-as-a-via)).
+[aiomoqt-relay as a via](#aiomoqt-relay-as-a-via),
+[aiomoqt-relay in the mixed fabrics](#aiomoqt-relay-in-the-mixed-fabrics)).
 
 ## Quick start
 
@@ -352,6 +353,42 @@ relay host (the lab image, then aiomoqt from `peer_pip` resolved to a commit),
 records it in `.testbed/builds/`, and `moqbench fabric deploy` copies it to the
 other relays. On Docker, `fabric up` builds `peer_image` when the host lacks it;
 the script rebuilds it from a ref.
+
+## aiomoqt-relay in the mixed fabrics
+
+The mixed scenarios name relays by role, so each rotation is a relay order that
+puts aiomoqt-relay (`aio`) in one role, with moqx and LAPS in the others:
+
+| deployment | ingest (publisher's relay) | transit | egress | session metric 300 |
+|---|---|---|---|---|
+| `docker-mix-aio-ingest-example` | aio | laps | moqx | aio to moqx, through peer.metric once the links are up |
+| `docker-mix-aio-transit-example` | moqx | aio | laps | moqx to laps |
+| `docker-mix-aio-egress-example` | moqx | laps | aio | moqx to aio |
+
+Each is a triangle whose direct ingest-egress link costs 300, so traffic takes
+the transit relay until metric-flip makes the direct link cheaper. A
+`-line-example` beside each has the same order on a line with no metrics, for
+the line tests; a metric must be on a link of the test's topology.
+`suites/example-mix-aio.toml` runs the triangle tests (steady, propagation,
+subscribe-setup, metric-flip, late-join, fetch-peer, the datagram scenarios,
+relay-restart and its kill variant, edge-scale and namespace-tuples) and
+`suites/example-mix-aio-line.toml` the line tests (steady, peer-churn,
+relay-restart and its kill variant). The ingest rotation measures aio as the
+publisher's relay, the egress rotation as the subscriber's relay; every relay
+has subscribers in each.
+
+```bash
+./bin/moqx-peering-build.sh docker-mix-aio-ingest-example
+./bin/laps-build.sh docker-mix-aio-ingest-example
+for role in ingest transit egress; do
+  ./bin/moqbench fabric run docker-mix-aio-$role-example example-mix-aio
+  ./bin/moqbench fabric run docker-mix-aio-$role-line-example example-mix-aio-line
+done
+```
+
+aiomoqt-relay runs with `--node-id <node>`, so a restarted relay comes back
+under the label it had. A session metric it took through peer.metric is gone
+after a restart; in the ingest rotation the ingest relay restarts last.
 
 ## Adapters
 
