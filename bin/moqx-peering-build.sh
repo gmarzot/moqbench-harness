@@ -38,7 +38,7 @@ echo "== $HOST: fetching $REPO $REF"
 run "command -v docker >/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q docker.io docker-buildx git >/dev/null"
 read -r SHA DESCRIBE < <(run "set -e; mkdir -p moqbench-build
   [ -d $WORK/.git ] || git clone -q --filter=blob:none $REPO $WORK
-  cd $WORK && git fetch -q origin '$REF' && git checkout -q --detach FETCH_HEAD && git reset -q --hard && git clean -qfdx
+  cd $WORK; git fetch -q origin '$REF'; git checkout -q --detach FETCH_HEAD; git reset -q --hard; git clean -qfdx
   echo \$(git rev-parse HEAD) \$(git describe --tags --always)")
 [[ ${#SHA} == 40 ]] || { echo "could not resolve $REF on $HOST" >&2; exit 1; }
 SHA8=${SHA:0:8}

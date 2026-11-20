@@ -133,7 +133,7 @@ def main(argv):
             if fab.kind != 'vm':
                 raise config.ConfigError(f'{dep.name}: deploy copies images to relay VMs; a docker fabric builds on its host')
             copied = fab.deploy(a.source)
-            print(f'{dep.fabric.image}: copied to {", ".join(copied) or "none (every relay has it)"}')
+            print(f'copied: {", ".join(f"{image} to {node}" for node, image in copied) or "none (every relay has its images)"}')
         elif a.verb == 'state':
             show({n: fab.adapter_for(n).peer_state(fab, n) for n in (a.nodes or fab.order)})
         elif a.verb == 'peer':

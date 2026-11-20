@@ -98,6 +98,46 @@ IFB_CHECK_CMD = ("ip -o link show type ifb 2>/dev/null | awk -F': ' '$2 ~ /^mb[o
                  "done; sudo tc qdisc show | grep -E 'netem|tbf' || true")
 
 
+def delay_spec(ms):
+    """The netem spec of a static link delay."""
+    return f'delay {ms:g}ms'
+
+
+def with_delay(spec, ms):
+    """An event's netem spec on a link with a static delay: the delay first, unless the spec sets its own."""
+    if not ms or re.search(r'\bdelay\b', spec):
+        return spec
+    return f'{delay_spec(ms)} {spec}'
+
+
+NETEM_DELAY = re.compile(r'qdisc netem \S+ dev (\S+) .*\blimit \d+ delay ([\d.]+)(us|ms|s)(?: seed \d+)?\s*$')
+UNIT_MS = {'us': 0.001, 'ms': 1.0, 's': 1000.0}
+
+
+def is_delay(line, ms, dev=None):
+    """True when a tc qdisc line is a netem whose only parameter is a delay of ms (on dev, when given)."""
+    m = NETEM_DELAY.search(line)
+    return bool(m and (dev is None or m.group(1) == dev) and abs(float(m.group(2)) * UNIT_MS[m.group(3)] - ms) < 1e-3)
+
+
+def residual(lines, delays, ifbs=None):
+    """Check lines that are not a static link delay. delays: the delays (ms) expected on this namespace's
+    link interfaces; ifbs: {ifb device: ms} on a VM, whose devices and redirect filters then also pass."""
+    out = []
+    for line in lines:
+        if ifbs is not None:
+            parts = line.split()
+            if (parts[:1] == ['ifb'] and parts[-1] in ifbs) or (ifbs and line.startswith('egress filter on ')):
+                continue
+            m = NETEM_DELAY.search(line)
+            if m and m.group(1) in ifbs and is_delay(line, ifbs[m.group(1)], m.group(1)):
+                continue
+        elif any(is_delay(line, ms) for ms in delays):
+            continue
+        out.append(line)
+    return out
+
+
 def timed(script):
     """Wrap a host shell command so it prints its start, end and exit status as JSON."""
     return (f't0=$(date +%s.%N); {{ {script}; }} >/dev/null 2>&1; rc=$?; t1=$(date +%s.%N); '

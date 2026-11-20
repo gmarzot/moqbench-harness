@@ -100,6 +100,15 @@ class Provider(unittest.TestCase):
         with self.assertRaises(faults.FaultError):
             faults.apply(fab, dict(verb='link.impair', on='r1', peer='r2', netem='delay 5ms', side='sideways'))
 
+    def test_deploy_reports_each_copy(self):
+        from fabric import cli
+        fab, _ = fabric()
+        fab.deploy = lambda source=None: [('r2', 'moqx-peering:latest'), ('r3', 'moqx-peering:latest')]
+        with mock.patch.object(cli, 'fabric_for', return_value=(fab.dep, fab)), \
+                mock.patch('builtins.print') as out:
+            self.assertEqual(cli.main(['deploy', 'fab']), 0)
+        self.assertEqual(out.call_args.args[0], 'copied: moqx-peering:latest to r2, moqx-peering:latest to r3')
+
     def test_node_verbs_use_the_relay_host(self):
         fab, log = fabric()
         faults.apply(fab, dict(verb='node.freeze', on='egress'))
