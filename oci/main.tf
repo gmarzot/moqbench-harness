@@ -306,6 +306,17 @@ resource "oci_core_security_list" "sl" {
       code = 4
     }
   }
+
+  dynamic "ingress_security_rules" {
+    for_each = var.allowed_cidrs
+    content {
+      source   = ingress_security_rules.value
+      protocol = "1" // ICMP echo, for RTT checks
+      icmp_options {
+        type = 8
+      }
+    }
+  }
 }
 
 resource "oci_core_subnet" "lab" {
