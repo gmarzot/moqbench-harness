@@ -39,12 +39,13 @@ cd "$(dirname "$(readlink -f "$0")")/.."
 source ./lib/dotenv.sh
 # Explicit hosts as arguments, relay first; otherwise the selected testbed.
 if [[ $# -ge 2 ]]; then export RELAY_HOST=$1 CLIENT_HOSTS="${*:2}"; fi
+# Read before hosts.sh, which sets RELAYS to the relay hosts.
+RELAY_LIST=${RELAYS:-moqx}
 source ./lib/hosts.sh
 SSH="ssh -i $KEY -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
 
 TOOLS=" ${TOOLS:-aiomoqt moqbench} "
-RELAYS=${RELAYS:-moqx}
-if [[ $RELAYS == 0 ]]; then RELAYS=none; fi
+if [[ $RELAY_LIST == 0 ]]; then RELAY_LIST=none; fi
 has() { [[ $TOOLS == *" $1 "* ]]; }
 LOADHOSTS=("${CLIENTS[@]}" ${PROBES[@]+"${PROBES[@]}"})
 # Clients pull the tooling from the relay. Same-region that is the private
@@ -101,7 +102,7 @@ case $MOQBENCH_DRAFT in
 esac
 
 echo "relay=$RELAY (priv ${RELAY_PRIV:-?})  clients=${CLIENTS[*]}  probes=${PROBES[*]:-none}"
-echo "relays: $RELAYS  tools:${TOOLS} prebuilt tree: ${SRC:-none}"
+echo "relays: $RELAY_LIST  tools:${TOOLS} prebuilt tree: ${SRC:-none}"
 
 # 0. The base packages cloud-init installs at first boot (iperf3, perf,
 #    numactl, node_exporter). A first boot that loses the dpkg lock race to
@@ -250,7 +251,7 @@ fi
 
 # 6. The relays under test. One deployed from a binary built elsewhere takes
 #    the binary as an argument: ./bin/relay-deploy.sh <relay> <binary>.
-for R in $RELAYS; do
+for R in $RELAY_LIST; do
   [[ $R == none ]] || ./bin/relay-deploy.sh "$R"
 done
 
