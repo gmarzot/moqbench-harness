@@ -55,6 +55,13 @@ class Recovers(unittest.TestCase):
         self.assertEqual(got['sub-r1 node.stop r2: recovers without a reconnect'], 'PASS')
         self.assertEqual(got['sub-r1 node.start r2: recovers without a reconnect'], 'FAIL')
 
+    def test_outage_that_outlasts_the_window(self):
+        sub = {'arrivals': [(100 + i * 0.1, 0, i) for i in range(51)] + [(115 + i * 0.1, 1, i) for i in range(10)]}
+        gap, end = report.gaps(sub, 104.95, 110.0)
+        self.assertAlmostEqual(gap, 10000, places=0)
+        self.assertEqual(end, 115)
+        self.assertLess(report.gaps(sub, 100.05, 104.0)[0], 200)
+
     def test_scenarios(self):
         for name, verb in (('relay-restart', 'node.stop'), ('relay-restart-kill', 'node.kill')):
             scen = load_scenario(name)

@@ -123,9 +123,13 @@ def phase(sent, t, group_size):
     return f'object {o + 1} of {group_size} (group {g})'
 
 
-def gaps(sub, t0, t1):
-    """Largest inter-arrival gap (ms) and when it ended, over arrivals in [t0, t1]."""
+def gaps(sub, t0, t1, limit_s=60):
+    """Largest inter-arrival gap (ms) and when it ended, over arrivals in [t0, t1], including a gap that
+    starts in the window and ends at the first arrival after it."""
     ts = sorted(a[0] for a in sub['arrivals'] if t0 - 1 <= a[0] <= t1)
+    later = [a[0] for a in sub['arrivals'] if t1 < a[0] <= t1 + limit_s]
+    if ts and later:
+        ts.append(min(later))
     best = (0.0, None)
     for a, b in zip(ts, ts[1:]):
         if b >= t0 and (b - a) * 1000 > best[0]:
