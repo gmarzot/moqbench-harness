@@ -289,7 +289,8 @@ class Lanes(unittest.TestCase):
                      '--cc-algo bbr ', ' --reconnect '):
             self.assertIn(part, pub.cmd)
         sub = procs['aiomoqt-sub']
-        self.assertEqual(sub.ns, 'dst')
+        self.assertEqual((sub.ns, sub.stage), ('dst', 'receiver'))
+        self.assertLess(run.STAGES.index(sub.stage), run.STAGES.index(pub.stage))
         self.assertTrue(sub.cmd.startswith('openssl req -x509'))
         self.assertIn('sub_media -Q -p 4433 --cert /tmp/cert.pem --key /tmp/priv.key --draft 18', sub.cmd)
         self.assertNotIn(' -k ', sub.cmd)
@@ -300,6 +301,7 @@ class Lanes(unittest.TestCase):
         self.assertIn(' --reconnect ', relayed['aiomoqt-pub'].cmd)
         self.assertIn('sub_media moqt://127.0.0.1:4433/moq-relay -k --draft 18', relayed['aiomoqt-sub'].cmd)
         self.assertNotIn('openssl', relayed['aiomoqt-sub'].cmd)
+        self.assertEqual(relayed['aiomoqt-sub'].stage, 'subscriber')
 
     def test_publisher_deadline_arm(self):
         t = make_test(lanes=['srt', 'moqt-aiomoqt-msfts'], relay='none', placement='first-mile', pub_cc=['c4'],

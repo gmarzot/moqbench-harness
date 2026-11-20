@@ -331,6 +331,12 @@ class AiomoqtLoc(Moqt):
         """The listener's certificate step ahead of a direct subscriber; nothing otherwise."""
         return self_signed_tls() if ctx.relay == 'none' else ''
 
+    def sub_proc(self, ctx, cmd, env):
+        """sub_media's process; a direct subscriber listens, so it starts ahead of the publisher."""
+        if ctx.relay == 'none':
+            return Proc('aiomoqt-sub', 'dst', 'aiomoqt', cmd, 'receiver', env=env, settle_s=3)
+        return Proc('aiomoqt-sub', 'dst', 'aiomoqt', cmd, 'subscriber', env=env, settle_s=1)
+
     def procs(self, ctx):
         pub_url, sub_url = self.urls(ctx)
         env = dict(AIOPQUIC_GSO='0')
@@ -342,13 +348,10 @@ class AiomoqtLoc(Moqt):
     def receiver_procs(self, ctx, url, env):
         if self.fallback(ctx):
             rx = again(f'{self.sub_cmd(url, ctx)} --out /tmp/media --pipe video', 'sub_media')
-            return [Proc('aiomoqt-sub', 'dst', 'aiomoqt',
-                         f'{self.tls(ctx)}{{ {rx}; }} | {PY}/tstap.py --stdin raw --annexb --out /out',
-                         'subscriber', env=env, settle_s=1)]
+            return [self.sub_proc(ctx, f'{self.tls(ctx)}{{ {rx}; }} | {PY}/tstap.py --stdin raw --annexb --out /out', env)]
         rx = (f'{self.sub_cmd(url, ctx)} --analyze -i 5 --report /out/sub-analyze-{STAMP}.jsonl '
               f'--frame-log /out/frames-{STAMP}.jsonl')
-        return [Proc('aiomoqt-sub', 'dst', 'aiomoqt', self.tls(ctx) + again(rx, 'sub_media'), 'subscriber', env=env,
-                     settle_s=1)]
+        return [self.sub_proc(ctx, self.tls(ctx) + again(rx, 'sub_media'), env)]
 
 
 class AiomoqtMsfts(AiomoqtLoc):
@@ -391,8 +394,7 @@ class AiomoqtMsfts(AiomoqtLoc):
     def receiver_procs(self, ctx, url, env):
         rx = (f'{self.sub_cmd(url, ctx)} --ts-out udp://127.0.0.1:{LOCAL_TS} --analyze -i 5 '
               f'--report /out/sub-analyze-{STAMP}.jsonl --arrival-log /out/arrival-{STAMP}.jsonl')
-        return [Proc('aiomoqt-sub', 'dst', 'aiomoqt', self.tls(ctx) + again(rx, 'sub_media'), 'subscriber', env=env,
-                     settle_s=1),
+        return [self.sub_proc(ctx, self.tls(ctx) + again(rx, 'sub_media'), env),
                 Proc('playout', 'dst', 'tools', playout_cmd(f'--udp 127.0.0.1:{LOCAL_TS}', ctx.playout_ms), 'receiver')]
 
 
