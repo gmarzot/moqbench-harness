@@ -109,6 +109,9 @@ Profiles are `profiles/contrib/<id>.toml`:
 | `bloat-cellular` | cellular uplink, deep buffer | 60 ms | 0–10 ms | — | 1.2×, 1 s FIFO | rate dips to 0.8× (8 s) and 0.5× (5 s) every 30 s |
 | `cable-fqcodel` | bloat-cable with FQ-CoDel | 30 ms | — | — | 2.5×, FQ-CoDel | as `bloat-cable` |
 | `cloud-path` | real path only (VMs) | 0 ms added | — | — | — | — |
+| `cloud-lossy` | real path, unmanaged loss (VMs) | 0 ms added | 0–16 ms | GE 0.5 % | 1.5× | as `transcontinental` |
+| `cloud-bloat` | real path, bloated uplink (VMs) | 0 ms added | — | — | 2.5×, 500 ms FIFO | as `bloat-cable` |
+| `cloud-outage-ladder` | real path, outage ladder (VMs) | as `cloud-lossy` | | | 1.5× | as `outage-ladder` |
 
 - **Profile keys.** `forward`, `reverse`: `delay_ms` (default RTT/2), `slot_ms`, `rate`,
   `loss = { gemodel = [...] }` or `{ random = PCT }`, `reorder_pct`, `cap` or `cap_mbit`,
