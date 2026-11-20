@@ -236,7 +236,7 @@ The input tap sits on the source group in `src`; output taps sit on the output g
 | residual TS loss | 1 − output/input non-null packets between the first and last PCR both taps saw |
 | output breaks | gaps ≥ `break_ms` (200) at an output, on each playout buffer and offline from raw arrivals; and the longest stretch without one (the soak headline) |
 | late or lost at D | units missing, or with delay above the live-edge delay + D |
-| overhead | forward and reverse wire bytes (nft, before any qdisc) against the source |
+| wire bytes, goodput | bytes each way on the WAN over the scored seconds (nft, before any qdisc) against the source's; on-time source bytes per forward wire byte at each D (`wire` in `summary.json`; the run line prints both ratios) |
 | applied impairment | netem, cap, AQM and outage drops per direction, and cross-traffic packets; the events as applied, with host times |
 | cross traffic | iperf3 JSON per flow from the client (`cross-<event>.json`: per-second rate, retransmissions, cwnd, RTT) and the server |
 | relay | moqx admin counters, first to last sample (sent, losses, retransmissions, PTO, cwnd-blocked, pacer lag, RTT) |

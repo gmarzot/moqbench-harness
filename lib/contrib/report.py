@@ -279,6 +279,45 @@ def impairment(meta, run):
     return out
 
 
+def interp(points, t):
+    """The value at t of (t, value) points: linear between them, flat beyond them."""
+    if t <= points[0][0]:
+        return points[0][1]
+    for (ta, va), (tb, vb) in zip(points, points[1:]):
+        if t <= tb:
+            return va + (vb - va) * (t - ta) / (tb - ta) if tb > ta else vb
+    return points[-1][1]
+
+
+def wire(meta, run, w0, w1, first_ns, scored):
+    """Bytes the lane put on the WAN each way over the scored seconds, against the source's, and
+    on-time source bytes per forward wire byte at each D. nft counts packets entering the WAN, before
+    impairment drops; its samples, on the controller clock, are aligned to the source tap at the
+    source's start."""
+    samples = jsonl(run / 'emu-samples.jsonl')
+    started = meta.get('source_started')
+    if not samples or started is None or first_ns is None:
+        return None
+    a, b = -(-w0 // NS), -(-w1 // NS)
+    src = ts_counts(run, 'in', a * NS, b * NS)['bytes']
+    if not src:
+        return None
+    ks = [ln['k'] for ln in meta['topology']['links']] or [0]
+
+    def over(way):
+        pts = [(x['t'], sum((x['nft'].get(f'{way}{k}') or {}).get('bytes', 0)
+                            - (x['nft'].get(f'cross-{way}{k}') or {}).get('bytes', 0) for k in ks))
+               for x in samples if 'nft' in x]
+        if not pts:
+            return 0
+        return int(interp(pts, started + (b * NS - first_ns) / NS) - interp(pts, started + (a * NS - first_ns) / NS))
+
+    fwd, rev = over('fwd'), over('rev')
+    llol = (scored or {}).get('late_or_lost_pct') or {}
+    return dict(source_bytes=src, fwd_bytes=fwd, rev_bytes=rev, fwd_ratio=r3(fwd / src), rev_ratio=round(rev / src, 4),
+                goodput_per_wire={d: r3(src * (1 - v / 100) / fwd) for d, v in llol.items() if fwd and v is not None})
+
+
 def reconnections(run):
     """Receiver restarts the lane's reconnect loop logged."""
     n = 0
@@ -447,6 +486,9 @@ def analyze(run_dir):
                                                     for b in meta['playout_ms']}
         main = next((out['outputs'][n] for n in meta.get('taps', []) if n != 'raw'), None) or {}
     out['impairment'] = impairment(meta, run)
+    w = wire(meta, run, w0, w1, insum.get('first_ns'), (out.get('outputs') or {}).get('raw') or main)
+    if w:
+        out['wire'] = w
     out['protocol'] = protocol_stats(run, meta['lane'])
     out['socket_drops'] = socket_drops(run)
     out['reconnections'] = reconnections(run)
@@ -477,6 +519,8 @@ def line(s):
     head = f"{s['label']:<34} {s['lane']:<18} {s['profile']:<21} {json.dumps(v, separators=(',', ':')):<28}"
     if 'error' in s:
         return f"{head} {s['error']}"
+    w = s.get('wire')
+    wire_txt = f", wire fwd/rev {w['fwd_ratio']}/{w['rev_ratio']}x src" if w else ''
     main = None
     if 'outputs' in s:
         name = next((n for n in s['outputs'] if n != 'raw'), None)
@@ -488,13 +532,13 @@ def line(s):
         llol = (raw or main).get('late_or_lost_pct') or {}
         return (f"{head} {name}: delay p50/p99/max {d['p50']}/{d['p99']}/{d['max']} ms, PCR lost {main['pcr_lost_pct']}%, "
                 f"breaks {main['breaks']['count']} (longest {main['breaks']['longest_ms']} ms), "
-                f"cc {(main.get('ts') or {}).get('cc_errors')}, late|lost@D{' (raw)' if raw else ''} {llol}  {s['verdict']}"
+                f"cc {(main.get('ts') or {}).get('cc_errors')}, late|lost@D{' (raw)' if raw else ''} {llol}{wire_txt}  {s['verdict']}"
                 f"{'  CLOCK' if s.get('clock_disturbed') else ''}")
     f = s.get('frames') or {}
     return (f"{head} frames {f.get('frames')} missing {f.get('missing_pct')}%, key p50/p99 "
             f"{(f.get('key_delay_ms') or {}).get('p50')}/{(f.get('key_delay_ms') or {}).get('p99')} ms, other "
             f"{(f.get('other_delay_ms') or {}).get('p50')}/{(f.get('other_delay_ms') or {}).get('p99')} ms, "
-            f"late|lost@D {f.get('late_or_lost_pct')}  {s['verdict']}{'  CLOCK' if s.get('clock_disturbed') else ''}")
+            f"late|lost@D {f.get('late_or_lost_pct')}{wire_txt}  {s['verdict']}{'  CLOCK' if s.get('clock_disturbed') else ''}")
 
 
 def main(paths):

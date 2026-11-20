@@ -259,6 +259,31 @@ class Analysis(unittest.TestCase):
         self.assertIn("out: delay", report.line(s))
         self.assertIn("late|lost@D {'320': 0.1}", report.line(s))
 
+    def test_wire_bytes_against_the_source_over_the_scored_seconds(self):
+        with tempfile.TemporaryDirectory() as d:
+            run = write_run(d, [100.0] * 200, lost={80})
+            m = json.loads((run / 'meta.json').read_text())
+            m['source_started'] = 5000.0
+            (run / 'meta.json').write_text(json.dumps(m))
+            src = sum(int(r['bytes']) for r in report.rows(run / 'in-sec.csv') if 1001 <= int(r['t_s']) < 1008)
+            per_s = src / 7
+
+            def nft(t):
+                cross = 500 * t
+                return {'fwd0': dict(packets=0, bytes=int(1.1 * per_s * t) + cross),
+                        'cross-fwd0': dict(packets=0, bytes=cross), 'rev0': dict(packets=0, bytes=int(0.01 * per_s * t))}
+            (run / 'emu-samples.jsonl').write_text(
+                ''.join(json.dumps(dict(t=5000.0 + t, nft=nft(t))) + '\n' for t in range(10)))
+            s = report.analyze(run)
+            self.assertNotIn('wire', report.analyze(write_run(tempfile.mkdtemp(dir=d), [100.0] * 200)))
+        w = s['wire']
+        self.assertEqual(w['source_bytes'], src)
+        self.assertAlmostEqual(w['fwd_ratio'], 1.1, delta=0.002)
+        self.assertAlmostEqual(w['rev_ratio'], 0.01, delta=0.0002)
+        lol = s['outputs']['out']['late_or_lost_pct']['300']
+        self.assertAlmostEqual(w['goodput_per_wire']['300'], (1 - lol / 100) / 1.1, delta=0.002)
+        self.assertIn('wire fwd/rev 1.1/0.01x src', report.line(s))
+
     def test_nothing_delivered_fails(self):
         with tempfile.TemporaryDirectory() as d:
             s = report.analyze(write_run(d, [5.0] * 50, lost=set(range(50))))
