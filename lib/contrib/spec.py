@@ -1,6 +1,7 @@
 """Contribution deployments, suites and scenarios: load and validate.
 
-A contribution deployment names a provider and its three namespaces (src, wan, dst); a suite lists
+A contribution deployment names a provider and its nodes: three namespaces (src, wan, dst) on one
+Docker host, or two VMs (src, dst) reached over ssh, each with the address its peer dials; a suite lists
 lanes, profiles and the parameters to sweep; a scenario sets the run shape (length, join window,
 source mode). Each file is found over the MOQBENCH_CONFIG folders, like every other config.
 """
@@ -12,7 +13,8 @@ PROVIDERS = {'docker', 'aws', 'oci'}
 NAMESPACES = ('src', 'wan', 'dst')
 DEPLOYMENT_KEYS = {'provider', 'host', 'region', 'zone', 'arch', 'tag', 'contribution', 'nodes'}
 CONTRIB_KEYS = {'subnet', 'images', 'stack_dir', 'uid', 'gid'}
-NODE_KEYS = {'name', 'roles', 'cpus', 'instance', 'ocpus', 'memory_gb', 'vcpus'}
+NODE_KEYS = {'name', 'roles', 'cpus', 'instance', 'ocpus', 'memory_gb', 'vcpus', 'host', 'address'}
+VM_NODES = ('src', 'dst')
 IMAGES = {'tools': 'moqbench-contrib-tools:dev', 'ffmpeg': 'moqbench-contrib-ffmpeg:n9.0.2',
           'moq2ts': 'moqbench-contrib-moq2ts:dev', 'aiomoqt': 'moqbench-contrib-aiomoqt:dev',
           'moqx': 'ghcr.io/openmoq/moqx:v0.3.7-amd64'}
@@ -63,10 +65,25 @@ class Deployment:
             if node.get('name') not in NAMESPACES:
                 raise config.ConfigError(f'{where}: contribution nodes are {", ".join(NAMESPACES)}, not {node.get("name")!r}')
             self.nodes[node['name']] = node
-        if self.provider != 'docker' and not {'src', 'dst'} <= set(self.nodes):
-            raise config.ConfigError(f'{where}: a VM deployment lists src and dst nodes')
+        if self.provider != 'docker':
+            self.vm_nodes(where)
         self.tag = data.get('tag', '')
         self.region = data.get('region')
+
+    def vm_nodes(self, where):
+        """A VM deployment: exactly src and dst, each an ssh host with the IPv4 address its peer dials."""
+        if set(self.nodes) != set(VM_NODES):
+            raise config.ConfigError(f'{where}: a VM deployment lists src and dst nodes only; the path between them is the WAN')
+        for ns in VM_NODES:
+            node = self.nodes[ns]
+            if not node.get('host'):
+                raise config.ConfigError(f'{where}: node {ns} needs host, an ssh target or "local"')
+            try:
+                ipaddress.IPv4Address(node.get('address', ''))
+            except ValueError:
+                raise config.ConfigError(f'{where}: node {ns} needs address, the IPv4 address its peer dials') from None
+        if self.nodes['src']['address'] == self.nodes['dst']['address']:
+            raise config.ConfigError(f'{where}: src and dst need different addresses')
 
     def cpus(self, ns):
         return (self.nodes.get(ns) or {}).get('cpus')

@@ -14,7 +14,8 @@ from types import SimpleNamespace  # noqa: E402
 
 # Mean forward loss in percent each profile is built for.
 TARGET_LOSS = {'lan': 0.0, 'regional-clean': 0.02, 'national-managed': 0.1, 'transcontinental': 0.5, 'intercontinental-good': 0.3, 'longhaul-lossy': 1.0, 'intercontinental-bad': 3.0, 'cellular-handover': 2.0, 'leo-satellite': 0.4,
-               'outage-ladder': 0.5, 'random-loss': 0.5, 'bloat-cable': 0.0, 'bloat-cellular': 0.0, 'cable-fqcodel': 0.0}
+               'outage-ladder': 0.5, 'random-loss': 0.5, 'bloat-cable': 0.0, 'bloat-cellular': 0.0, 'cable-fqcodel': 0.0,
+               'cloud-path': 0.0}
 
 
 def make_test(**over):
@@ -190,11 +191,6 @@ class Topology(unittest.TestCase):
         self.assertEqual(p.dst_ip(1), '10.79.4.10')
         self.assertEqual(p.relay_addresses('last-mile'), ('src', '127.0.0.1', '10.79.1.10'))
         self.assertEqual(p.relay_addresses('first-mile'), ('dst', '10.79.2.10', '127.0.0.1'))
-
-    def test_vm_render(self):
-        out = topology.vm_render({'src': 'ens3', 'dst': 'ens4'})
-        self.assertTrue(any('mirred egress redirect dev ifb0' in c for c in out['dst']))
-        self.assertTrue(any('ens4' in c for c in out['dst']))
 
 
 class Lanes(unittest.TestCase):

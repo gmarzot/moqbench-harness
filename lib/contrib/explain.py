@@ -12,7 +12,8 @@ stretch takes the first cause of CAUSES that fits, with the numbers that decided
   unexplained              nothing fits, or what would decide it was not recorded
 
 Taps, qlog and the clock probe's offsets run on CLOCK_MONOTONIC; pcaps, faults, qdisc and SRT stats on
-CLOCK_REALTIME. Standard library only.
+CLOCK_REALTIME. When the taps stamp CLOCK_REALTIME too (meta wall_clock: two VMs, or a wall-clock lane),
+only qlog is moved, by its first Initial against the src pcap. Standard library only.
 """
 import bisect
 import datetime
@@ -153,6 +154,18 @@ class Conn:
                 self.cc_changes.append(t)
         self.sent.sort(key=lambda s: s[0])
         self.span = (self.sent[0][0], self.sent[-1][0]) if self.sent else None
+
+    def shift(self, d):
+        """Move every time by d ns."""
+        self.ref += d
+        self.sent = [(t + d, *rest) for t, *rest in self.sent]
+        self.lost = [(t + d, pn) for t, pn in self.lost]
+        self.metrics = [(t + d, *rest) for t, *rest in self.metrics]
+        self.cc_changes = [t + d for t in self.cc_changes]
+        if self.initial_t is not None:
+            self.initial_t += d
+        if self.span:
+            self.span = (self.span[0] + d, self.span[1] + d)
 
     def covers(self, t0, t1):
         return self.span is not None and self.span[0] <= t0 and t1 <= self.span[1]
@@ -361,6 +374,14 @@ class Evidence:
 
     def make_clock(self, src_pkts):
         # Offset from the sender's first Initial (qlog vs src pcap), else SRT PCRs in the src pcap, else the arrival log.
+        if self.meta.get('wall_clock'):
+            a = anchor_qlog(self.conns, src_pkts, self.meta) if self.conns and src_pkts else None
+            for c in self.conns if a else ():
+                c.shift(a[0])
+            if self.conns and not a:
+                self.conns = []
+                self.absent.append('qlog clock anchor')
+            return Clock(0, 0, 'wall-clock')
         steps = clock_steps(self.run)
         if self.conns and src_pkts:
             a = anchor_qlog(self.conns, src_pkts, self.meta)

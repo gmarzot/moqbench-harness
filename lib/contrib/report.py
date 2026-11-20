@@ -6,7 +6,9 @@ data. The measurement window opens join_s after the first source datagram. Outpu
 break_ms or more at an output; late-or-lost at budget D counts units missing, or later than the first
 live-edge delay plus D (what a playout locked at the live edge with buffer D would miss). Taps stamp
 CLOCK_MONOTONIC; a run matched against a wall-clock log (the LOC lane) whose clock probe saw a
-wall-clock step above CLOCK_STEP_MS is marked clock_disturbed.
+wall-clock step above CLOCK_STEP_MS is marked clock_disturbed. On two VMs every tap stamps
+CLOCK_REALTIME, and a run is also clock_disturbed when chrony put either node more than
+SYNC_OFFSET_MS from NTP time at its start or end.
 """
 import csv
 import json
@@ -92,6 +94,7 @@ SETTLE_NS = 3 * NS
 # A wall-clock step larger than this makes a run's delay figures unreliable: units in flight across it
 # carry the step.
 CLOCK_STEP_MS = 20.0
+SYNC_OFFSET_MS = 1.0
 
 
 def live_anchor(units):
@@ -442,6 +445,23 @@ def clock_pauses(run):
     return out
 
 
+def clock_sync(meta):
+    """Each node's worst |offset| from NTP time over the run's chrony readings (None when a reading is
+    missing), and whether one exceeds SYNC_OFFSET_MS; None for a one-host run."""
+    readings = [r for r in (meta.get('path') or {}).values() if isinstance(r, dict)]
+    if not readings:
+        return None
+    worst = {}
+    for r in readings:
+        for ns, c in (r.get('clock') or {}).items():
+            off = (c or {}).get('offset_ms')
+            prev = worst.get(ns, 0.0)
+            worst[ns] = None if off is None or prev is None else max(prev, abs(off))
+    disturbed = not worst or any(v is None or v > SYNC_OFFSET_MS for v in worst.values())
+    return dict(worst_offset_ms={ns: r3(v) if v is not None else None for ns, v in worst.items()},
+                disturbed=disturbed)
+
+
 def analyser(run):
     p = run / 'analyser.log'
     if not p.is_file():
@@ -495,6 +515,10 @@ def analyze(run_dir):
     out['clock'] = clock_pauses(run)
     worst = max((abs(c['largest_step_ms']) for c in out['clock'].values()), default=0.0)
     out['clock_disturbed'] = bool(meta.get('wall_clock')) and worst > CLOCK_STEP_MS
+    sync = clock_sync(meta)
+    if sync:
+        out['clock_sync'] = sync
+        out['clock_disturbed'] = out['clock_disturbed'] or sync['disturbed']
     out['analyser'] = analyser(run)
     out['verdict'] = verdict(out, main, meta)
     return out

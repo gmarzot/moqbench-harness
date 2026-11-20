@@ -1,17 +1,17 @@
 """moqbench contrib: compare contribution transports (MoQT lanes, SRT, RIST) over an emulated WAN.
 
-  moqbench contrib up <deployment> [--dual-path]    namespaces, veths, routes; offloads off
-  moqbench contrib down <deployment>                remove every container of the deployment
-  moqbench contrib check <deployment>               reachability, offloads, leftover impairments
+  moqbench contrib up <deployment> [--dual-path]    namespaces, veths, routes (VMs: holders, ifb); offloads off
+  moqbench contrib down <deployment>                remove every container (VMs: and the network setup)
+  moqbench contrib check <deployment>               reachability, offloads, leftover impairments, clock sync
   moqbench contrib source <deployment> <tier> <seconds>   encode a source fixture
   moqbench contrib calibrate <deployment> [--profile P ...] [--seconds S]
   moqbench contrib run <deployment> <suite> [--only N] [--lane L ...] [--profile P ...]
                        [--repeats N] [--seconds S] [--scenario NAME] [--keep]
   moqbench contrib report <run folder> ...
   moqbench contrib explain <results or run folder> ...   why late stretches were late; explain.json, explain.md
-  moqbench contrib render-vm <deployment>           the commands a VM deployment would run
+  moqbench contrib render-vm <deployment>           the network commands a VM deployment runs per node
 
-Only the docker provider runs; a VM deployment renders its commands and stops.
+A docker deployment runs on one host; an aws or oci deployment runs on its src and dst VMs over ssh.
 """
 import argparse
 import datetime
@@ -23,15 +23,21 @@ import config
 from fabric.docker import FabricError
 from contrib import calibrate, explain, lanes, profiles, report, run, sources, spec, topology
 from contrib.docker import DockerContrib
+from contrib.vm import VmContrib
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def provider(dep, dual=False):
-    if dep.provider != 'docker':
-        raise config.ConfigError(f'{dep.name}: {dep.provider} contribution runs are not enabled; '
-                                 f'moqbench contrib render-vm {dep.name} shows their commands')
-    return DockerContrib(dep, dual=dual)
+    if dep.provider == 'docker':
+        return DockerContrib(dep, dual=dual)
+    return VmContrib(dep, dual=dual)
+
+
+def render_vm(dep, nic='<nic>'):
+    """{node: commands} up runs in each VM's holder, with the interface shown as nic."""
+    paths = topology.VmPaths(dep.nodes['src']['address'], dep.nodes['dst']['address'], lambda ns: nic)
+    return {ns: paths.setup_cmds(ns) for ns in ('src', 'dst')}
 
 
 def stamp():
@@ -74,8 +80,7 @@ def cmd_run(a):
     root = ROOT / 'results' / 'contrib' / f'{dep.name}-{stamp()}'
     root.mkdir(parents=True, exist_ok=True)
     topo = prov.up()
-    before, after = calibrate.ensure_rmem(prov)
-    host = dict(calibrate.host_settings(prov), rmem_max_before=before, rmem_max_after=after, topology=topo)
+    host = dict(calibrate.host_info(prov), topology=topo)
     (root / 'host.json').write_text(json.dumps(host, indent=1) + '\n')
     print(f'host: {json.dumps(host)}', flush=True)
     feature_cache, summaries, status = {}, [], 0
@@ -88,6 +93,8 @@ def cmd_run(a):
             why = lane.pending(features, variant)
             if lane.name == 'moqt-aiomoqt-dual' and not test.dual_path:
                 why = 'needs dual_path = true'
+            if not why and hasattr(prov, 'pending'):
+                why = prov.pending(lane, test, features)
             label = f'{k:03d}-{lane.name}-{prof.id}-{lane.label(variant)}-r{repeat + 1}'
             if why:
                 print(f'{label}: PENDING ({why})', flush=True)
@@ -111,6 +118,9 @@ def cmd_run(a):
 
 def cmd_calibrate(a):
     dep = spec.load_deployment(a.deployment)
+    if dep.provider != 'docker':
+        raise config.ConfigError(f'{dep.name}: calibration measures one-way delay on one clock; it runs on '
+                                 'a docker deployment')
     prov = provider(dep)
     prov.ids()
     root = ROOT / 'results' / 'contrib' / f'{dep.name}-calibration-{stamp()}'
@@ -169,8 +179,9 @@ def main(argv):
             return explain.main(a.runs)
         dep = spec.load_deployment(a.deployment)
         if a.verb == 'render-vm':
-            nodes = {ns: n.get('instance') for ns, n in dep.nodes.items()}
-            print(json.dumps(dict(nodes=nodes, commands=topology.vm_render({'src': 'eth0', 'dst': 'eth0'})), indent=1))
+            if dep.provider == 'docker':
+                raise config.ConfigError(f'{dep.name}: render-vm is for an aws or oci deployment')
+            print(json.dumps(dict(nodes={ns: n['host'] for ns, n in dep.nodes.items()}, commands=render_vm(dep)), indent=1))
             return 0
         prov = provider(dep, getattr(a, 'dual_path', False))
         if a.verb == 'up':
@@ -178,7 +189,7 @@ def main(argv):
         elif a.verb == 'down':
             prov.down()
         elif a.verb == 'check':
-            print(json.dumps(dict(topology=prov.check(), host=calibrate.host_settings(prov)), indent=1))
+            print(json.dumps(dict(topology=prov.check(), host=calibrate.settings(prov)), indent=1))
         elif a.verb == 'source':
             prov.ids()
             print(run.ensure_source(prov, sources.TIERS[a.tier], a.seconds))

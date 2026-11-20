@@ -9,6 +9,9 @@ With capture set, tcpdump records each endpoint's WAN-facing interface (headers:
 full: whole packets, and the aiomoqt endpoints' TLS keys), every aiomoqt endpoint writes picoquic
 qlog, and the bottleneck's qdiscs are sampled every 100 ms. Captures and qlogs are gzipped on
 collection.
+
+On a VM deployment every tap stamps CLOCK_REALTIME, and each run's meta records both nodes' chrony
+tracking and the unimpaired RTT before and after the run.
 """
 import gzip
 import json
@@ -19,7 +22,6 @@ import shutil
 import threading
 import time
 
-from contrib import emu as emulator
 from contrib import lanes, profiles, report, sources
 from contrib.lanes import Proc
 
@@ -69,6 +71,7 @@ class Cell:
                              variant=variant, playout_ms=list(test.playout_ms),
                              slot_max_ms=slot[1] if slot else 0.0, ingest=test.ingest, features=features or {},
                              relay=test.relay)
+        self.wall = lane.wall_clock(self.ctx) or prov.paths.wall_clock
         self.names = []
         self.samples = []
         self.cross = {}
@@ -78,7 +81,7 @@ class Cell:
         bin_ = 'python3 /contrib/bin'
         form = self.lane.in_tap_hash(self.ctx)
         frames = f'--frames --hash --hash-form {form}' if form else '--frames'
-        if self.lane.wall_clock(self.ctx):
+        if self.wall:
             frames += ' --clock real'
         gap = self.scen['gap_ms']
         procs = [Proc('tap-in', 'src', 'tools',
@@ -102,10 +105,9 @@ class Cell:
                     procs.append(Proc(f'pcap-{ns}{ln["k"]}', ns, 'tools',
                                       f'tcpdump -i {dev} -p -n -s {snap} -U -w /out/{ns}{ln["k"]}.pcap '
                                       f'not portrange {ports}', root=True))
-            sides = ' '.join(f'--cmd {d}="tc -s -j qdisc show dev {dev}"'
-                             for d, devs in (('fwd', self.prov.paths.fwd_dev), ('rev', self.prov.paths.rev_dev))
-                             for dev in devs[:1])
-            procs.append(Proc('qdisc-wan', 'wan', 'tools', f'{bin_}/sampler.py {sides} --interval 0.1 --out /out/qdisc-wan.jsonl'))
+            for ns, name, devs in self.prov.paths.qdisc_samplers():
+                sides = ' '.join(f'--cmd {d}="tc -s -j qdisc show dev {dev}"' for d, dev in devs)
+                procs.append(Proc(name, ns, 'tools', f'{bin_}/sampler.py {sides} --interval 0.1 --out /out/{name}.jsonl'))
         for k, _ in enumerate(self.profile.cross_events()):
             procs.append(Proc(f'cross-srv{k + 1}', 'dst', 'tools',
                               f'iperf3 -s -p {profiles.CROSS_PORT + k} -J --logfile /out/cross-srv{k + 1}.json'))
@@ -184,7 +186,7 @@ class Cell:
             folder, name = ensure_source(prov, self.tier, self.length)
         for fname, text in self.lane.files(self.ctx).items():
             prov.write(run_dir, fname, text)
-        emu = emulator.Emulator(prov.paths, prov.wan_exec, self.tier.mux_bps)
+        emu = prov.emulator(self.tier.mux_bps)
         meta = dict(label=self.label, lane=self.lane.name, variant=self.variant, repeat=self.repeat,
                     profile=self.profile.summary(self.tier.mux_bps), profile_id=self.profile.id,
                     rtt_ms=self.profile.rtt_ms, placement=self.test.placement, ingest=self.test.ingest,
@@ -192,8 +194,11 @@ class Cell:
                     seconds=self.seconds, join_s=self.scen['join_s'], break_ms=self.scen['break_ms'],
                     budgets_ms=self.test.budgets(self.profile.rtt_ms),
                     playout_ms=self.ctx.playout_ms, features=self.ctx.features, taps=list(self.lane.taps(self.ctx)),
-                    wall_clock=self.lane.wall_clock(self.ctx),
+                    wall_clock=self.wall,
                     seeds=self.profile.seeds(self.repeat), topology=dict(links=prov.paths.links))
+        path_meta = getattr(prov, 'cell_meta', None)
+        if path_meta:
+            meta['path'] = dict(start=path_meta())
         emu.build(self.profile, self.repeat)
         meta['emulator_build'] = emu.qdisc_stats()
         stop = threading.Event()
@@ -253,6 +258,8 @@ class Cell:
             meta['emulator_final'] = dict(nft=emu.counters(), qdisc=emu.qdisc_stats())
             emu.clear()
             meta['leftover_impairments'] = emu.leftovers()
+            if path_meta:
+                meta['path']['end'] = path_meta()
             meta['exit'] = {}
             for n, short in self.names:
                 st = prov.state(n)

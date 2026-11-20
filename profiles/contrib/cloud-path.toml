@@ -1,0 +1,10 @@
+id = "cloud-path"
+name = "Real path only"
+description = "Adds nothing: on two VMs the lanes see the path between them as it is."
+rtt_ms = 0
+
+[forward]
+seed = 1901
+
+[reverse]
+seed = 1902

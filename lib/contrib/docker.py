@@ -10,7 +10,7 @@ import shlex
 import time
 
 from fabric.docker import Host, FabricError
-from contrib import topology
+from contrib import emu, topology
 
 ROOT = Path(__file__).resolve().parents[2]
 BIN = ROOT / 'remote' / 'contrib'
@@ -29,6 +29,36 @@ def cpu_mask(cpus):
     return f'{bits:x}'
 
 
+def stack_work(sh, stack_dir, name, target):
+    """The deployment's folder on a host, absolute (bind mounts need one): a relative stack_dir sits
+    under the remote user's home."""
+    base = stack_dir
+    if not base.startswith('/'):
+        home = sh('printf %s "$HOME"').stdout.strip()
+        if not home.startswith('/'):
+            raise FabricError(f'{target}: no absolute $HOME for stack_dir {base!r}')
+        base = f'{home}/{base}'
+    return f'{base}/{name}'
+
+
+def run_argv(proc, image, name, label, network, run_dir, bin_dir, user, cpus=None, sources_dir=None):
+    """docker run arguments for one lane process: detached, labelled, the run folder at /out."""
+    env = []
+    for k, v in sorted(proc.env.items()):
+        env += ['-e', f'{k}={v}']
+    base = ['docker', 'run', '-d', '--init', '-e', 'TINI_KILL_PROCESS_GROUP=1', '--name', name,
+            '--label', label, '--network', network, '-v', f'{run_dir}:/out',
+            '-v', f'{bin_dir}:/contrib/bin:ro', *(['-v', f'{sources_dir}:/sources:ro'] if sources_dir else []),
+            *env, *(['--cpuset-cpus', str(cpus)] if cpus else [])]
+    if proc.image != 'moqx' and not proc.root:
+        base += ['--user', user]
+    if proc.entrypoint:
+        # The shell outlives every process of its job, so a signal reaches each of a pipeline (tini
+        # forwards it to the group) and each can flush before the container stops.
+        return base + ['--entrypoint', 'sh', image, '-c', f"{proc.cmd} & trap '' TERM INT; wait"]
+    return base + [image] + (shlex.split(proc.cmd) if proc.cmd else [])
+
+
 class DockerContrib:
     kind = 'docker'
 
@@ -43,16 +73,8 @@ class DockerContrib:
 
     @property
     def work(self):
-        """The deployment's folder on the Docker host, absolute (bind mounts need one): a relative
-        stack_dir sits under the remote user's home."""
         if self._work is None:
-            base = self.dep.stack_dir
-            if not base.startswith('/'):
-                home = self.sh('printf %s "$HOME"').stdout.strip()
-                if not home.startswith('/'):
-                    raise FabricError(f'{self.dep.host}: no absolute $HOME for stack_dir {base!r}')
-                base = f'{home}/{base}'
-            self._work = f'{base}/{self.dep.name}'
+            self._work = stack_work(self.sh, self.dep.stack_dir, self.dep.name, self.dep.host)
         return self._work
 
     def holder(self, ns):
@@ -85,6 +107,9 @@ class DockerContrib:
 
     def wan_exec(self, cmd):
         return self.exec('wan', cmd)
+
+    def emulator(self, mux_bps):
+        return emu.Emulator(self.paths, self.wan_exec, mux_bps)
 
     def up(self):
         """Holders, veths, addresses, routes, offloads off; idempotent (rebuilds from scratch)."""
@@ -153,24 +178,10 @@ class DockerContrib:
     def start(self, proc, run_dir, bin_dir, cell, sources_dir=None):
         """Start one process in its namespace; returns the container name."""
         name = f'{self.prefix}-{cell}'
-        env = []
-        for k, v in sorted(proc.env.items()):
-            env += ['-e', f'{k}={v}']
-        cpus = self.dep.cpus(proc.ns)
-        base = ['docker', 'run', '-d', '--init', '-e', 'TINI_KILL_PROCESS_GROUP=1', '--name', name,
-                '--label', f'{LABEL}={self.dep.name}',
-                '--network', f'container:{self.holder(proc.ns)}', '-v', f'{run_dir}:/out',
-                '-v', f'{bin_dir}:/contrib/bin:ro', *(['-v', f'{sources_dir}:/sources:ro'] if sources_dir else []),
-                *env, *(['--cpuset-cpus', str(cpus)] if cpus else [])]
-        if proc.image != 'moqx' and not proc.root:
-            base += ['--user', self.user or self.ids()]
-        img = self.image(proc.image)
-        if proc.entrypoint:
-            # The shell outlives every process of its job, so a signal reaches each of a pipeline (tini
-            # forwards it to the group) and each can flush before the container stops.
-            args = base + ['--entrypoint', 'sh', img, '-c', f"{proc.cmd} & trap '' TERM INT; wait"]
-        else:
-            args = base + [img] + (shlex.split(proc.cmd) if proc.cmd else [])
+        args = run_argv(proc, self.image(proc.image), name, f'{LABEL}={self.dep.name}',
+                        f'container:{self.holder(proc.ns)}', run_dir, bin_dir,
+                        None if proc.image == 'moqx' or proc.root else self.user or self.ids(),
+                        self.dep.cpus(proc.ns), sources_dir)
         self.sh(' '.join(shlex.quote(a) for a in args))
         return name
 

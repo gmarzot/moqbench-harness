@@ -11,7 +11,6 @@ from pathlib import Path
 import time
 
 from fabric.report import pct, r3
-from contrib import emu as emulator
 from contrib import profiles, report
 from contrib.lanes import Proc
 
@@ -29,8 +28,7 @@ def host_settings(prov):
     rc, text = prov.exec('dst', 'python3 -c "import socket;s=socket.socket(2,2);'
                                 's.setsockopt(1,8,8<<20);print(s.getsockopt(1,8))"')
     out['dst_rcvbuf_for_8MB'] = int(text.strip()) if rc == 0 and text.strip().isdigit() else None
-    rc, text = prov.exec('wan', 'uname -r')
-    out['kernel'] = text.strip()
+    out['kernel'] = prov.sh('uname -r', check=False).stdout.strip()
     return out
 
 
@@ -41,6 +39,34 @@ def ensure_rmem(prov, minimum=RMEM_MIN):
     if before is not None and before < minimum:
         prov.sh(f'sudo -n sysctl -w net.core.rmem_max={minimum}', check=False)
     return before, host_settings(prov).get('rmem_max')
+
+
+def host_info(prov):
+    """host.json: the host settings with rmem raised; per node on a VM deployment."""
+    if getattr(prov, 'nodes', None):
+        return {ns: host_info(NodeView(prov, ns)) for ns in prov.nodes}
+    before, after = ensure_rmem(prov)
+    return dict(host_settings(prov), rmem_max_before=before, rmem_max_after=after)
+
+
+def settings(prov):
+    """host_settings, per node on a VM deployment."""
+    if getattr(prov, 'nodes', None):
+        return {ns: host_settings(NodeView(prov, ns)) for ns in prov.nodes}
+    return host_settings(prov)
+
+
+class NodeView:
+    """One VM node as host_settings and ensure_rmem see a provider."""
+
+    def __init__(self, prov, ns):
+        self.node = prov.nodes[ns]
+
+    def sh(self, script, check=True, timeout=300):
+        return self.node.sh(script, check=check, timeout=timeout)
+
+    def exec(self, ns, cmd):
+        return self.node.exec(cmd)
 
 
 def ge_sigma_pct(side, n):
@@ -99,8 +125,7 @@ def analyse(run, prof, pps, seconds):
 def run(prov, profile_ids, seconds, root, tier):
     bin_dir = prov.bin_dir()
     rows = []
-    host = dict(zip(('rmem_max_before', 'rmem_max_after'), ensure_rmem(prov)))
-    host.update(host_settings(prov))
+    host = host_info(prov)
     (Path(root) / 'host.json').write_text(json.dumps(host, indent=1) + '\n')
     for i, pid in enumerate(profile_ids, 1):
         prof = profiles.load(pid)
@@ -108,7 +133,7 @@ def run(prov, profile_ids, seconds, root, tier):
         out = Path(root) / label
         out.mkdir(parents=True, exist_ok=True)
         run_dir = prov.run_dir(label, out)
-        emu = emulator.Emulator(prov.paths, prov.wan_exec, tier.mux_bps)
+        emu = prov.emulator(tier.mux_bps)
         emu.build(prof)
         names = []
         try:
