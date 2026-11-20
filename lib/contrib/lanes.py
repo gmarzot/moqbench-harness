@@ -17,6 +17,7 @@ GROUP_IN = f'{sources.GROUP_IN}:{sources.PORT_IN}'
 OUT = topology.GROUP_OUT
 SRT_PORT, RIST_PORT, MOQT_PORT, ADMIN_PORT, INGEST_PORT, LOCAL_TS = 9000, 8193, 4433, 4500, 23106, 6010
 NAMESPACE = 'test/spts'
+REPAIR_HISTORY_S = 30    # seconds of the stream a repairing publisher keeps for FETCH
 PY = 'python3 /contrib/bin'
 
 
@@ -191,12 +192,25 @@ def relay_cc_variant(cc):
     return {} if cc is None else {'relay_cc': cc}
 
 
-def deadline_variants(test, profile):
-    """Publisher delivery timeouts as variant keys: none, or each budget D for "budget"."""
+def per_budget(key, values, test, profile):
+    """Variant keys for a per-budget option: none, or each budget D ("budget") or D/2 ("half")."""
     out = []
-    for d in test.pub_deadline:
-        out += [{}] if d == 'none' else [{'deadline': b} for b in test.budgets(profile.rtt_ms)]
+    for v in values:
+        if v == 'none':
+            out.append({})
+        else:
+            out += [{key: b if v == 'budget' else b // 2} for b in test.budgets(profile.rtt_ms)]
     return out
+
+
+def deadline_variants(test, profile):
+    """Publisher delivery timeouts as variant keys."""
+    return per_budget('deadline', test.pub_deadline, test, profile)
+
+
+def repair_variants(test, profile):
+    """sub_media FETCH repair budgets as variant keys."""
+    return per_budget('repair', test.sub_repair, test, profile)
 
 
 def self_signed_tls():
@@ -361,19 +375,23 @@ class AiomoqtMsfts(AiomoqtLoc):
     codec = 'ts'
     needs = {'ts_udp': AiomoqtLoc.needs['ts_udp'], 'ts_out': ('aiomoqt', f'{SUB_MEDIA} -h', '--ts-out'),
              'msfts': ('aiomoqt', f'{PUB_MEDIA} -h', '--msfts'),
-             'delivery_timeout': AiomoqtLoc.needs['delivery_timeout']}
+             'delivery_timeout': AiomoqtLoc.needs['delivery_timeout'],
+             'repair': ('aiomoqt', f'{SUB_MEDIA} -h', '--repair')}
     namespace = 'test/msfts'
     pub_extra = ' --msfts --msfts-packets 7'
 
     def variants(self, test, profile):
-        return [dict(relay_variant(test), pub_cc=p, **relay_cc_variant(r), timing=t, **dl)
-                for p, r, t, dl in itertools.product(test.pub_cc, test.relay_cc, test.pub_timing,
-                                                     deadline_variants(test, profile))]
+        return [dict(relay_variant(test), pub_cc=p, **relay_cc_variant(r), timing=t, **dl, **rp)
+                for p, r, t, dl, rp in itertools.product(test.pub_cc, test.relay_cc, test.pub_timing,
+                                                         deadline_variants(test, profile),
+                                                         repair_variants(test, profile))]
 
     def pub_cmd(self, ctx, url):
         cmd = super().pub_cmd(ctx, url)
         if ctx.variant.get('timing') == 'mapping':
             cmd = cmd.replace(self.pub_extra, self.pub_extra + ' --timestamp-mapping')
+        if ctx.variant.get('repair'):
+            cmd = cmd.replace(self.pub_extra, f'{self.pub_extra} --fetch-history {REPAIR_HISTORY_S * ctx.tier.mux_bps // 8}')
         return cmd
 
     def in_tap_hash(self, ctx):
@@ -389,10 +407,13 @@ class AiomoqtMsfts(AiomoqtLoc):
         missing = [f for f in ('ts_udp', 'msfts', 'ts_out') if not features.get(f)]
         if missing:
             return f'aiomoqt lacks {", ".join(missing)} (pub_media --ts udp:// and --msfts, sub_media --ts-out)'
+        if (variant or {}).get('repair') and not features.get('repair'):
+            return 'aiomoqt lacks sub_media --repair'
         return super().pending(features, variant)
 
     def receiver_procs(self, ctx, url, env):
-        rx = (f'{self.sub_cmd(url, ctx)} --ts-out udp://127.0.0.1:{LOCAL_TS} --analyze -i 5 '
+        repair = f' --repair {ctx.variant["repair"]}' if ctx.variant.get('repair') else ''
+        rx = (f'{self.sub_cmd(url, ctx)} --ts-out udp://127.0.0.1:{LOCAL_TS}{repair} --analyze -i 5 '
               f'--report /out/sub-analyze-{STAMP}.jsonl --arrival-log /out/arrival-{STAMP}.jsonl')
         return [self.sub_proc(ctx, self.tls(ctx) + again(rx, 'sub_media'), env),
                 Proc('playout', 'dst', 'tools', playout_cmd(f'--udp 127.0.0.1:{LOCAL_TS}', ctx.playout_ms), 'receiver')]

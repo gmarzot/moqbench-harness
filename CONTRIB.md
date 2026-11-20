@@ -212,8 +212,11 @@ exits. Each exit is logged and counted as a reconnection.
   aiomoqt publisher (bbr, bbr1, cubic, c4) in `first-mile` and in the dual-path lane. A test that
   sweeps a controller no lane runs on the impaired hop is rejected. The MSFTS lane also runs once
   per `pub_timing` (`none`, or `mapping` for `--timestamp-mapping`). The aiomoqt lanes run once per
-  `pub_deadline`: `none`, or `budget` for `pub_media --delivery-timeout D` at each budget D (label
-  `deadline<D>`). Each run is scored at every D from the raw arrival times.
+  `pub_deadline`: `none`, `budget` for `pub_media --delivery-timeout D` at each budget D, or `half`
+  for D/2 (label `deadline<ms>`). The MSFTS lane also runs once per `sub_repair`: `none`, or `half`
+  for `sub_media --repair D/2` with `pub_media --fetch-history` holding 30 s of the stream (label
+  `repair<ms>`), so a group reset at a D/2 deadline is fetched again within D. Each run is scored at
+  every D from the raw arrival times.
 - **Filters.** `--variant D=4xRTT`, `--variant relay_cc=bbr2`, `--lane` and `--profile` narrow a
   suite.
 
