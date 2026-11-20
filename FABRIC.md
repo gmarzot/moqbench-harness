@@ -101,7 +101,7 @@ group), `draft`, `peering_poll_s`, `slo_ms`, `links` (custom), `suffix`, `note`.
 | `via-pair-failover`, `via-pair-failover-reverse`, `via-pair-failover-kill` | the cheaper of two vias on a ring stopped (or killed), then started | only the cheaper via carries the track before and after; the other carries it meanwhile; `group-loss` on the stop, `bounded-gap` on the kill |
 | `relay-restart`, `relay-restart-kill` | the transit, egress and ingest relay stopped (or killed) and started again in turn, a reference subscriber on every relay | per event and subscriber: outage, loss and `recovers` (delivery resumes without the client reconnecting); a subscriber on the restarted relay, and every subscriber when the publisher's relay restarts, is SKIP |
 | `namespace-tuples` | two publishers on the ingest relay whose namespaces concatenate alike (`<ns>/a/bc`, `<ns>/ab/c`, object sizes 300 B apart), then a subscriber to each on every relay | each subscriber receives only its own track (by object size) |
-| `fetch-peer` | a joining FETCH (aiomoqt's join example) on the publisher's relay and on every other relay | FETCH_OK on the publisher's relay; across peering, `expect_across = "fail"` reports a refusal as XFAIL and a success as XPASS |
+| `fetch-peer` | a joining FETCH (aiomoqt's join example) on the publisher's relay and on every other relay, while a subscriber on the publisher's relay keeps the publisher sending | FETCH_OK on the publisher's relay; across peering, `expect_across = "fail"` reports a refusal as XFAIL and a success as XPASS |
 
 The gate for an audience: over its steady samples (from the first at the full
 population to three before the end), at least 95% have the full population,

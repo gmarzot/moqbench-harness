@@ -85,6 +85,27 @@ class Suites(unittest.TestCase):
                          ['steady', 'peer-churn', 'relay-restart', 'relay-restart-kill'])
 
 
+class FetchHistory(unittest.TestCase):
+    def test_a_subscriber_holds_the_publisher_open(self):
+        from fabric import run as runmod
+        r = runmod.Run(config.load_deployment('docker-mix-aio-transit-example'),
+                       dict(type='fabric', scenario='fetch-peer', topology='full', seconds=30), 't', tempfile.mkdtemp())
+        launched = []
+        r.launch = lambda name, argv, where=None, limit_s=None, pidfile=None: launched.append((name, argv))
+        r.fab.telemetry = lambda *a, **k: None
+        r.wait = lambda names, limit: []
+        orig = runmod.time.sleep
+        runmod.time.sleep = lambda s: None
+        try:
+            r.fetch()
+        finally:
+            runmod.time.sleep = orig
+        names = [n for n, _ in launched]
+        self.assertEqual(names[:2], ['pub', 'hold-moqx'])
+        self.assertIn('moqt://10.77.0.101:4433/moq-relay', launched[1][1])
+        self.assertEqual(names[2:], ['fetch-moqx', 'fetch-aio', 'fetch-laps'])
+
+
 class Tuples(unittest.TestCase):
     def test_publishers_and_subscribers(self):
         from fabric.run import Run

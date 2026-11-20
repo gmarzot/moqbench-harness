@@ -314,6 +314,9 @@ class Run:
                            netdev_s=self.scen.get('netdev_s', 0.25))
         history = self.scen.get('fetch_history', 1048576)
         self.launch('pub', self.pub_argv(total + 5, extra=['--fetch-history', history]))
+        # A publisher sends nothing until a subscriber asks; this one makes the history exist.
+        time.sleep(0.5)
+        self.launch(f'hold-{self.node("publisher")}', self.sub_argv(self.node('publisher'), total))
         time.sleep(settle)
         for n in subs:
             self.launch(f'fetch-{n}', [*self.tool('aiomoqt.examples.join_example'), self.fab.client_url(n), '-k',
