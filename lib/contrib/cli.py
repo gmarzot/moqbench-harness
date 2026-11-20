@@ -85,7 +85,7 @@ def cmd_run(a):
             if a.seconds:
                 scenario = dict(scenario, seconds=a.seconds)
             features = run.probe_features(prov, lane, feature_cache)
-            why = lane.pending(features)
+            why = lane.pending(features, variant)
             if lane.name == 'moqt-aiomoqt-dual' and not test.dual_path:
                 why = 'needs dual_path = true'
             label = f'{k:03d}-{lane.name}-{prof.id}-{lane.label(variant)}-r{repeat + 1}'

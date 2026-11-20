@@ -211,8 +211,9 @@ exits. Each exit is logged and counted as a reconnection.
   (moqx: bbr2, bbr, cubic; aiomoqt-relay: picoquic's names) in `last-mile`, `pub_cc` for the
   aiomoqt publisher (bbr, bbr1, cubic, c4) in `first-mile` and in the dual-path lane. A test that
   sweeps a controller no lane runs on the impaired hop is rejected. The MSFTS lane also runs once
-  per `pub_timing` (`none`, or `mapping` for `--timestamp-mapping`). Each run is scored at every D
-  from the raw arrival times.
+  per `pub_timing` (`none`, or `mapping` for `--timestamp-mapping`). The aiomoqt lanes run once per
+  `pub_deadline`: `none`, or `budget` for `pub_media --delivery-timeout D` at each budget D (label
+  `deadline<D>`). Each run is scored at every D from the raw arrival times.
 - **Filters.** `--variant D=4xRTT`, `--variant relay_cc=bbr2`, `--lane` and `--profile` narrow a
   suite.
 

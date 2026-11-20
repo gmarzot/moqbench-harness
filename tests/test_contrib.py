@@ -301,6 +301,30 @@ class Lanes(unittest.TestCase):
         self.assertIn('sub_media moqt://127.0.0.1:4433/moq-relay -k --draft 18', relayed['aiomoqt-sub'].cmd)
         self.assertNotIn('openssl', relayed['aiomoqt-sub'].cmd)
 
+    def test_publisher_deadline_arm(self):
+        t = make_test(lanes=['srt', 'moqt-aiomoqt-msfts'], relay='none', placement='first-mile', pub_cc=['c4'],
+                      rtt_multiples=[4], budgets_ms=[], pub_deadline=['none', 'budget'])
+        msfts = lanes.LANES['moqt-aiomoqt-msfts']
+        vs = msfts.variants(t, profiles.load('transcontinental'))
+        self.assertEqual(vs, [dict(relay='none', pub_cc='c4', timing='none'),
+                              dict(relay='none', pub_cc='c4', timing='none', deadline=320)])
+        self.assertEqual(msfts.label(vs[1]), 'relaynone-pub_ccc4-timingnone-deadline320')
+        self.assertEqual(len(lanes.LANES['srt'].variants(t, profiles.load('transcontinental'))), 1)
+        feats = dict(ts_udp=True, msfts=True, ts_out=True, delivery_timeout=True)
+        cmds = []
+        for v in vs:
+            c = ctx(v, placement='first-mile', features=feats)
+            c.relay = 'none'
+            cmds.append({p.name: p for p in msfts.procs(c)}['aiomoqt-pub'].cmd)
+        self.assertNotIn('--delivery-timeout', cmds[0])
+        self.assertTrue(cmds[1].endswith(' --delivery-timeout 320'))
+        self.assertIsNone(msfts.pending(feats, vs[1]))
+        old = dict(feats, delivery_timeout=False)
+        self.assertIn('--delivery-timeout', msfts.pending(old, vs[1]))
+        self.assertIsNone(msfts.pending(old, vs[0]))
+        with self.assertRaises(config.ConfigError):
+            make_test(pub_deadline=['D'])
+
     def test_direct_lane_needs_first_mile_and_a_direct_lane(self):
         for over in (dict(placement='last-mile'), dict(placement='first-mile', relay_cc=['bbr']),
                      dict(placement='first-mile', lanes=['moqt-aiomoqt-msfts', 'moqt-moq2ts']),

@@ -119,8 +119,8 @@ class Lane:
     def procs(self, ctx):
         raise NotImplementedError
 
-    def pending(self, features):
-        """Why the lane cannot run with these probed features, or None."""
+    def pending(self, features, variant=None):
+        """Why the lane cannot run this variant with these probed features, or None."""
         return None
 
     def label(self, variant):
@@ -189,6 +189,14 @@ def relay_variant(test):
 def relay_cc_variant(cc):
     """The relay controller as a variant key; none without a relay."""
     return {} if cc is None else {'relay_cc': cc}
+
+
+def deadline_variants(test, profile):
+    """Publisher delivery timeouts as variant keys: none, or each budget D for "budget"."""
+    out = []
+    for d in test.pub_deadline:
+        out += [{}] if d == 'none' else [{'deadline': b} for b in test.budgets(profile.rtt_ms)]
+    return out
 
 
 def self_signed_tls():
@@ -278,14 +286,15 @@ class AiomoqtLoc(Moqt):
     name = 'moqt-aiomoqt-loc'
     codec = 'h264'
     needs = {'ts_udp': ('aiomoqt', f'{PUB_MEDIA} -h', 'udp://'),
-             'frame_log': ('aiomoqt', f'{SUB_MEDIA} -h', '--frame-log')}
+             'frame_log': ('aiomoqt', f'{SUB_MEDIA} -h', '--frame-log'),
+             'delivery_timeout': ('aiomoqt', f'{PUB_MEDIA} -h', '--delivery-timeout')}
     namespace = 'test/loc'
     pub_extra = ''
     direct = True
 
     def variants(self, test, profile):
-        return [dict(relay_variant(test), pub_cc=p, **relay_cc_variant(r))
-                for p, r in itertools.product(test.pub_cc, test.relay_cc)]
+        return [dict(relay_variant(test), pub_cc=p, **relay_cc_variant(r), **dl)
+                for p, r, dl in itertools.product(test.pub_cc, test.relay_cc, deadline_variants(test, profile))]
 
     def in_tap_hash(self, ctx):
         return 'vcl' if self.fallback(ctx) else 'loc'
@@ -299,11 +308,18 @@ class AiomoqtLoc(Moqt):
     def taps(self, ctx):
         return {}
 
+    def pending(self, features, variant=None):
+        if (variant or {}).get('deadline') and not features.get('delivery_timeout'):
+            return 'aiomoqt lacks pub_media --delivery-timeout'
+        return None
+
     def pub_cmd(self, ctx, url):
         src = f'--ts udp://@{GROUP_IN}' if ctx.features.get('ts_udp') else '--ts -'
         mode = ' --pub-ns' if ctx.relay == 'none' else ''
         cmd = (f'{PUB_MEDIA} {url} -k{mode} --draft 18 -N {self.namespace} {src}{self.pub_extra} '
                f'--cc-algo {ctx.variant["pub_cc"]} --keepalive 10 --reconnect -t 0 --stats-json')
+        if ctx.variant.get('deadline'):
+            cmd += f' --delivery-timeout {ctx.variant["deadline"]}'
         return cmd if ctx.features.get('ts_udp') else f'{PY}/udp2pipe.py {GROUP_IN} | {cmd}'
 
     def sub_cmd(self, url, ctx=None):
@@ -341,13 +357,15 @@ class AiomoqtMsfts(AiomoqtLoc):
     name = 'moqt-aiomoqt-msfts'
     codec = 'ts'
     needs = {'ts_udp': AiomoqtLoc.needs['ts_udp'], 'ts_out': ('aiomoqt', f'{SUB_MEDIA} -h', '--ts-out'),
-             'msfts': ('aiomoqt', f'{PUB_MEDIA} -h', '--msfts')}
+             'msfts': ('aiomoqt', f'{PUB_MEDIA} -h', '--msfts'),
+             'delivery_timeout': AiomoqtLoc.needs['delivery_timeout']}
     namespace = 'test/msfts'
     pub_extra = ' --msfts --msfts-packets 7'
 
     def variants(self, test, profile):
-        return [dict(relay_variant(test), pub_cc=p, **relay_cc_variant(r), timing=t)
-                for p, r, t in itertools.product(test.pub_cc, test.relay_cc, test.pub_timing)]
+        return [dict(relay_variant(test), pub_cc=p, **relay_cc_variant(r), timing=t, **dl)
+                for p, r, t, dl in itertools.product(test.pub_cc, test.relay_cc, test.pub_timing,
+                                                     deadline_variants(test, profile))]
 
     def pub_cmd(self, ctx, url):
         cmd = super().pub_cmd(ctx, url)
@@ -364,9 +382,11 @@ class AiomoqtMsfts(AiomoqtLoc):
     def taps(self, ctx):
         return outputs(ctx.playout_ms)
 
-    def pending(self, features):
+    def pending(self, features, variant=None):
         missing = [f for f in ('ts_udp', 'msfts', 'ts_out') if not features.get(f)]
-        return f'aiomoqt lacks {", ".join(missing)} (pub_media --ts udp:// and --msfts, sub_media --ts-out)' if missing else None
+        if missing:
+            return f'aiomoqt lacks {", ".join(missing)} (pub_media --ts udp:// and --msfts, sub_media --ts-out)'
+        return super().pending(features, variant)
 
     def receiver_procs(self, ctx, url, env):
         rx = (f'{self.sub_cmd(url, ctx)} --ts-out udp://127.0.0.1:{LOCAL_TS} --analyze -i 5 '
