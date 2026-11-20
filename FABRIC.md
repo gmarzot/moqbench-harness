@@ -41,6 +41,8 @@ how the relays peer:
 | `threads`, `check_interval_ms`, `draft` | `2`, `5000`, `18` | relay IO threads, peer reconnect interval, client MoQT draft |
 | `dial` | none | `[dialer, listener]` pairs that override which end dials a link |
 | `metrics` | none | `[node, peer, metric]`: the session metric a dialing moqx relay starts with on that link; a dialing aiomoqt-relay gets it through peer.metric once the links are up |
+| `link_delay_ms` | none | one-way delay in each direction on every relay pair's link, set at `fabric up` with the `link.impair` netem machinery and gone at `fabric down` |
+| `link_delays` | none | `[relay, relay, ms]` entries: that link's delay instead (0 for none) |
 | `peer_pip`, `peer_command`, `peer_image` | see [Mixed fabrics](#mixed-fabrics) | peer nodes |
 | `aiomoqt`, `aiopquic` | releases | client versions in the lab image (`build/lab-node.Dockerfile`) |
 
@@ -169,6 +171,8 @@ it lists. Delivery that stops for good while the publisher still sends has no
 recovery.
 `moqbench fabric check` lists impairments left on any relay namespace and
 `--clear` removes them; every run checks before it ends and clears what it finds.
+A static link delay is not counted as left over: on a delayed link, `link.impair` without its own
+`delay` keeps it, and `link.clear` and `--clear` restore it.
 
 ## Measurement
 

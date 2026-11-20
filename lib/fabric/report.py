@@ -406,7 +406,7 @@ def analyze(run_dir):
                links=['-'.join(p) for p in links], relay_image=(meta.get('relay_image') or {}).get('tags'),
                relay_labels=(meta.get('relay_image') or {}).get('labels'), sent=len(sent),
                unfinished=meta.get('unfinished'), leftover_impairments=meta.get('leftover_impairments'),
-               options=meta.get('options'), draft=meta.get('draft'))
+               options=meta.get('options'), draft=meta.get('draft'), link_delays=meta.get('link_delays'))
     events = []
     fpath = run_dir / 'faults.jsonl'
     if fpath.is_file():

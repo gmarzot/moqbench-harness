@@ -102,6 +102,15 @@ def only_keys(where, data, allowed):
         raise ConfigError(f'{where}: unknown {", ".join(sorted(unknown))} (expected: {", ".join(sorted(allowed))})')
 
 
+MAX_DELAY_MS = 10000
+
+
+def delay_ms(value, positive=False):
+    """True for a static link delay in milliseconds: a number from 0 (above 0 when positive) to MAX_DELAY_MS."""
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and (value > 0 if positive else value >= 0) and value <= MAX_DELAY_MS)
+
+
 def positive_int(where, key, value):
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise ConfigError(f'{where}: {key} must be a positive integer, not {value!r}')
@@ -114,7 +123,7 @@ class Fabric:
     """
     KEYS = {'adapter', 'image', 'topology', 'order', 'hub', 'links', 'wire', 'subnet', 'threads',
             'check_interval_ms', 'draft', 'aiomoqt', 'aiopquic', 'lab_image', 'stack_dir', 'client_python',
-            'dial', 'metrics', 'peer_pip', 'peer_command', 'peer_image'}
+            'dial', 'metrics', 'peer_pip', 'peer_command', 'peer_image', 'link_delay_ms', 'link_delays'}
     ADAPTERS = {'moqx-peering', 'laps', 'aiomoqt-relay'}
     DEFAULT_IMAGES = {'moqx-peering': 'moqx-peering:latest'}
     # Adapters whose relays take a session metric at startup.
@@ -197,6 +206,20 @@ class Fabric:
                 raise ConfigError(f'{where}: {entry[0]} is a {self.node_adapter(entry[0])} relay, which takes no '
                                   'session metric at startup; set it with a peer.metric event')
             self.metrics[(entry[0], entry[1])] = entry[2]
+        self.link_delay_ms = data.get('link_delay_ms')
+        if self.link_delay_ms is not None and not delay_ms(self.link_delay_ms, positive=True):
+            raise ConfigError(f'{where}: fabric link_delay_ms must be a number of milliseconds above 0 and '
+                              f'at most {MAX_DELAY_MS}, not {self.link_delay_ms!r}')
+        self.link_delays = {}
+        for entry in data.get('link_delays') or []:
+            if (not isinstance(entry, list) or len(entry) != 3 or entry[0] == entry[1]
+                    or any(n not in self.order for n in entry[:2]) or not delay_ms(entry[2])):
+                raise ConfigError(f'{where}: fabric link_delays entries are [relay, relay, milliseconds], '
+                                  f'at most {MAX_DELAY_MS}, not {entry!r}')
+            pair = frozenset(entry[:2])
+            if pair in self.link_delays:
+                raise ConfigError(f'{where}: fabric link_delays names {entry[0]}-{entry[1]} twice')
+            self.link_delays[pair] = entry[2]
         for key in ('threads', 'check_interval_ms', 'draft'):
             positive_int(f'{where}: fabric', key, getattr(self, key))
         if self.check_interval_ms < 2000:
@@ -254,6 +277,11 @@ class Fabric:
                 raise ConfigError(f'{where}: fabric metrics [{a}, {b}] is not a link of this topology')
             if topology.dialer(a, b, self.order, self.dialers) != a:
                 raise ConfigError(f'{where}: fabric metrics [{a}, {b}]: {a} does not dial that link')
+
+    def link_delay(self, a, b):
+        """One-way delay in ms on the link a-b in each direction: its link_delays entry, else link_delay_ms;
+        0 for none."""
+        return self.link_delays.get(frozenset((a, b)), self.link_delay_ms or 0)
 
     def wired(self, link_list=None):
         """Relay pairs that get a link network: every pair, or only the topology's links."""

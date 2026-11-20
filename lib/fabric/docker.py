@@ -47,6 +47,25 @@ def runtime_metrics(fab):
             raise FabricError(f'{a}: session metric {metric} toward {b}: status {r["status"]} {r["body"][:200]}')
 
 
+def link_delays(fab):
+    """{(a, b): ms} for every relay pair with a link that has a static delay."""
+    out = {}
+    for a, b in fab.addr['links']:
+        ms = fab.spec.link_delay(a, b)
+        if ms:
+            out[(a, b)] = ms
+    return out
+
+
+def apply_link_delays(fab):
+    """Set each pair's static delay on both ends' sending side."""
+    for (a, b), ms in link_delays(fab).items():
+        for s, o in ((a, b), (b, a)):
+            r = fab.link_action('link.impair', s, o, faults.delay_spec(ms))
+            if r['rc']:
+                raise FabricError(f'{s}: static delay {ms} ms toward {o}: exit {r["rc"]}')
+
+
 class Host:
     def __init__(self, target, key=None):
         self.target = target
@@ -272,6 +291,7 @@ class DockerFabric:
             self.host.push(stack, self.stack)
         self.ensure_lab_image()
         self.host.sh(self.compose_cmd('up -d --force-recreate --remove-orphans'), timeout=300)
+        apply_link_delays(self)
         self.wait_ready(wait_s)
         took = self.wait_links(wait_s)
         runtime_metrics(self)
@@ -374,9 +394,11 @@ class DockerFabric:
         if side != 'send':
             raise faults.FaultError('a docker fabric impairs the sending side only')
         ip = topology.link_address(self.addr, sender, peer, sender)
-        cmd = {'link.impair': lambda: faults.netem_cmd(ip, spec),
+        ms = self.spec.link_delay(sender, peer)
+        cmd = {'link.impair': lambda: faults.netem_cmd(ip, faults.with_delay(spec, ms)),
                'link.down': lambda: faults.netem_cmd(ip, 'loss 100%'),
-               'link.clear': lambda: faults.clear_cmd(ip)}[verb]()
+               'link.clear': lambda: (faults.netem_cmd(ip, faults.delay_spec(ms)) if ms
+                                      else faults.clear_cmd(ip))}[verb]()
         r = self.exec(self.holder(sender), faults.timed(cmd))
         return {'node': sender, **json.loads(r.stdout)}
 
@@ -385,17 +407,22 @@ class DockerFabric:
         return json.loads(r.stdout)
 
     def leftovers(self):
+        """{node: lines} of impairments beyond the static link delays."""
+        delays = link_delays(self)
         left = {}
         for n in self.order:
             r = self.exec(self.holder(n), faults.CHECK_CMD, check=False)
-            if r.stdout.strip():
-                left[n] = r.stdout.strip().splitlines()
+            lines = faults.residual(r.stdout.strip().splitlines(), {ms for p, ms in delays.items() if n in p})
+            if lines:
+                left[n] = lines
         return left
 
-    def clear_impairments(self):
+    def clear_impairments(self, keep_delays=True):
         for (a, b), link in self.addr['links'].items():
             for n in (a, b):
                 self.exec(self.holder(n), faults.clear_cmd(link[n]), check=False)
+        if keep_delays:
+            apply_link_delays(self)
         return self.leftovers()
 
     def collect(self, label, out_dir):

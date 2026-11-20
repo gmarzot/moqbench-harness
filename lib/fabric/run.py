@@ -17,7 +17,7 @@ import uuid
 import config
 from fabric import faults, topology
 from fabric.adapter import Unsupported
-from fabric.docker import DockerFabric, FabricError
+from fabric.docker import DockerFabric, FabricError, link_delays
 from fabric.moqx_peering import PEERING_PORT
 
 MODES = {'stream', 'setup', 'media', 'fetch', 'tuples'}
@@ -356,6 +356,7 @@ class Run:
                     adapters={n: fab.adapter_for(n).name for n in fab.order},
                     dialers={'-'.join(p): topology.dialer(*p, fab.order, fab.spec.dialers) for p in self.links},
                     metrics={f'{a}>{b}': m for (a, b), m in fab.spec.metrics.items()},
+                    link_delays={'-'.join(p): ms for p, ms in link_delays(fab).items()},
                     peers=list(getattr(fab, 'peers', [])),
                     tuples=self.tuple_spec() if self.scen['mode'] == 'tuples' else None,
                     named_subscribers=self.subs,
