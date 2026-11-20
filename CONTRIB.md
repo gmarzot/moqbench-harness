@@ -108,6 +108,7 @@ Profiles are `profiles/contrib/<id>.toml`:
 | `bloat-cable` | bloated cable uplink | 30 ms | — | — | 2.5×, 500 ms FIFO | TCP upload 20 s on, 20 s off |
 | `bloat-cellular` | cellular uplink, deep buffer | 60 ms | 0–10 ms | — | 1.2×, 1 s FIFO | rate dips to 0.8× (8 s) and 0.5× (5 s) every 30 s |
 | `cable-fqcodel` | bloat-cable with FQ-CoDel | 30 ms | — | — | 2.5×, FQ-CoDel | as `bloat-cable` |
+| `cloud-path` | real path only (VMs) | 0 ms added | — | — | — | — |
 
 - **Profile keys.** `forward`, `reverse`: `delay_ms` (default RTT/2), `slot_ms`, `rate`,
   `loss = { gemodel = [...] }` or `{ random = PCT }`, `reorder_pct`, `cap` or `cap_mbit`,
@@ -247,7 +248,8 @@ The input tap sits on the source group in `src`; output taps sit on the output g
 | clock | 1 ms timer probe in `src` and `dst`: pauses, and wall-clock steps |
 
 - **Window.** The measurement window opens `join_s` after the first source datagram, for `seconds`.
-- **Clock steps.** Taps, the playout and the calibration probe run on CLOCK_MONOTONIC. The LOC
+- **Clock steps.** Taps, the playout and the calibration probe run on CLOCK_MONOTONIC (on VMs the
+  taps stamp CLOCK_REALTIME; see VM deployments). The LOC
   lane matches against `sub_media`'s wall-clock frame log, so its source tap stamps wall-clock time
   too; such a run is marked `clock_disturbed` when the clock probe sees a wall-clock step above
   20 ms, and its delay figures are then unreliable.
@@ -284,7 +286,8 @@ gives each stretch the first cause that fits, with the numbers that decided it:
 - **Clocks.** Taps and qlog run on CLOCK_MONOTONIC; pcaps, faults, qdisc and SRT stats on
   CLOCK_REALTIME. The offset comes from the sender's first Initial in qlog and the src pcap, SRT's
   PCRs in the src pcap, or sub_media's arrival log, corrected by the clock probe's steps. Without
-  them, the source start time gives a coarse offset that widens outage windows by 0.5 s.
+  them, the source start time gives a coarse offset that widens outage windows by 0.5 s. When the
+  taps stamp CLOCK_REALTIME (`wall_clock` in `meta.json`) only qlog is moved, by the first Initial.
 - **Output.** Each run gets `explain.json`: stretches with start, end, units, D, cause and
   evidence, and totals by cause per D, checked against `summary.json`. Each results folder gets
   `explain.md`: per profile, late-or-lost % by arm and D with the share by cause, and, at each D
@@ -302,7 +305,8 @@ profile (events off) and echoes it back. It reports, against what the profile co
 - RTT;
 - reordering, as packets and as events.
 
-It also records the host's socket buffer limits. `net.core.rmem_max` is global, not per namespace;
+Calibration runs on a docker deployment only: its one-way delay needs one clock. It also records the
+host's socket buffer limits. `net.core.rmem_max` is global, not per namespace;
 below 8 MB it is raised with `sudo -n sysctl`, and the value before and after is recorded.
 
 ## Scenarios
@@ -315,9 +319,74 @@ below 8 MB it is raised with `sudo -n sysctl`, and the value before and after is
 
 ## VM deployments
 
-An `aws` or `oci` deployment with `src` and `dst` nodes is accepted. `render-vm` prints the commands
-it would run, which impair each direction on its receiver's ingress through an ifb. Runs are not
-enabled.
+An `aws` or `oci` deployment runs on two VMs, `src` and `dst`. The real path between them is the
+WAN; a profile's impairment is layered on top of it.
+
+```toml
+provider = "oci"            # or "aws"
+
+[contribution]
+stack_dir = "moqbench-contrib"   # under each node's $HOME unless absolute
+
+[[nodes]]
+name    = "src"
+host    = "user@src-vm"         # ssh target
+address = "10.0.0.10"           # the IPv4 address dst dials to reach src
+cpus    = "0-3"                 # optional: every container on the node is pinned here
+
+[[nodes]]
+name    = "dst"
+host    = "user@dst-vm"
+address = "10.0.0.20"
+```
+
+**What each node needs.**
+
+- ssh from the controller in batch mode, and `docker` usable by that user without sudo.
+- Every image of `[contribution.images]`, already loaded; `up` lists the missing ones per node.
+- chrony, synchronised (`chronyc tracking` reports `Leap status: Normal`); `up` stops otherwise.
+- `sudo -n` for `modprobe ifb` and for raising `net.core.rmem_max`.
+- Open UDP between the two addresses: SRT 9000, RIST 8193, MoQT 4433, and TCP and UDP 5201–5208 for
+  cross traffic; ICMP for the RTT checks.
+- `address` must be the source address the peer sees, which is what the ingress filter matches.
+
+**Placement.** Each lane process runs in its own container on its node with `--network host`, under
+the node's work folder. Procs in `src` run on the src VM, `dst` on the dst VM; the relay runs on the
+node its placement names and is reached on `127.0.0.1` from its own side, as in the docker topology.
+The source and output multicast groups loop back locally on a dummy interface (`mbcmc0`, with a route
+for 239.0.0.0/8). `collect` pulls both nodes' run folders into the one local run folder.
+
+**Impairment.** `up` sends everything arriving from the peer's address through an ifb on each node
+(a `clsact` ingress filter at pref 300 with `mirred` to `mbcf0` on dst, `mbcr0` on src), and turns
+receive and segmentation offloads off on the interface toward the peer. Each run builds the
+profile's trees on the ifbs: forward on dst, reverse on src. A profile's delay is added to the real
+path; each run records the unimpaired RTT before and after (`path.start`, `path.end` in `meta.json`).
+`cloud-path` adds nothing. nft accounting has the docker counter names: `fwd0` counts what src sends
+to dst's address on src's egress, `rev0` what dst sends to src's on dst's egress, `cross-fwd0` and
+`cross-rev0` the cross-traffic ports apart. An outage adds the far sender's address to the
+receiver's blocked set, dropped (and counted as `outage`) on ingress after the tree.
+
+**Clocks.** Every tap stamps CLOCK_REALTIME, so delays across the two VMs rest on chrony. Each run
+records `chronyc tracking` (offset, RMS offset, stratum) from both nodes at its start and end, and is
+marked `clock_disturbed` when either node is more than 1 ms from NTP time, as well as on a wall-clock
+step above 20 ms.
+
+**Teardown.** `down` removes every container of the deployment, the ifbs, the filter, the dummy
+interface and the nft table on both nodes, and turns GRO, GSO and TSO back on. `check` pings each
+way and reports offloads, chrony and what the deployment has left on each node, with or without
+`up`.
+
+**Limits.**
+
+- `dual_path` and `moqt-aiomoqt-dual` need the docker provider, and so does the LOC lane without
+  `sub_media --frame-log`; those cells are PENDING on VMs.
+- Budgets and SRT buffers follow the profile's RTT, not the real path's: add the measured RTT by
+  hand when it is not small.
+- The `dst0.pcap` capture is taken on dst's ifb, after the forward tree but before the outage drop,
+  so packets an outage drops still appear in it.
+- The VM interface keeps its MTU; cloud networks often run jumbo frames, which TCP cross traffic
+  uses.
+- `render-vm` prints the commands `up` runs on each node.
 
 ## Limits
 
