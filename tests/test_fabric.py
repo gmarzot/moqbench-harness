@@ -101,6 +101,8 @@ class Config(unittest.TestCase):
 
     def test_scenarios(self):
         for path in (ROOT / 'scenarios' / 'fabric').glob('*.toml'):
+            if path.name.endswith('.local.toml'):
+                continue
             scen = load_scenario(path.stem)
             order = ['laps', 'via-1', 'moqx', 'via-2'] if path.stem.startswith('via-') else ['r1', 'r2', 'r3']
             faults.validate(scen['event'], order, [s['name'] for s in scen['subscriber']])

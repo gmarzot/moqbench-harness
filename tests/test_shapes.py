@@ -34,7 +34,7 @@ class Shapes(unittest.TestCase):
         self.assertNotEqual(sh('shape_field 4k nominal_mbps').returncode, 0)
 
     def test_plan_points_name_known_tools_and_shapes(self):
-        plans = [config.load_plan(path.stem) for path in sorted((ROOT / 'plans').glob('*.toml'))]
+        plans = [config.load_plan(path.stem) for path in sorted((ROOT / 'plans').glob('*.toml')) if not path.name.endswith('.local.toml')]
         self.assertTrue(plans)
         for plan in plans:
             for line in (line for suite in plan.suites for line in plan.sweep_text(suite).splitlines()):
