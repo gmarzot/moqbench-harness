@@ -22,7 +22,7 @@ PLACEMENTS = ('last-mile', 'first-mile')
 RELAYS = {'moqx': 'bbr2', 'aiomoqt': 'bbr', 'none': None}
 TEST_KEYS = {'type', 'lanes', 'profiles', 'source', 'scenario', 'repeats', 'placement', 'rtt_multiples',
              'rtt_floor_ms', 'budgets_ms', 'playout_ms', 'relay_cc', 'pub_cc', 'seconds', 'note', 'suffix',
-             'dual_path', 'ingest', 'pub_timing', 'pub_deadline', 'relay', 'capture'}
+             'dual_path', 'ingest', 'pub_timing', 'pub_deadline', 'sub_repair', 'relay', 'capture'}
 CAPTURES = ('none', 'headers', 'full')
 SUITE_KEYS = {'description', 'requires', 'test', 'lane'}
 SCENARIO_KEYS = {'description', 'seconds', 'join_s', 'drain_s', 'source_mode', 'gap_ms', 'break_ms',
@@ -32,7 +32,7 @@ SCENARIO_DEFAULTS = dict(seconds=300, join_s=10, drain_s=5, source_mode='file', 
 TEST_DEFAULTS = dict(source='mpeg2-20m', scenario='standard', repeats=1, placement='last-mile',
                      rtt_multiples=[2, 3, 4, 6], rtt_floor_ms=20, budgets_ms=[200, 300], playout_ms=[300, 200],
                      relay='moqx', relay_cc=None, pub_cc=['bbr'], dual_path=False, ingest='srt',
-                     pub_timing=['none'], pub_deadline=['none'], capture='none')
+                     pub_timing=['none'], pub_deadline=['none'], sub_repair=['none'], capture='none')
 
 
 class Deployment:
@@ -137,8 +137,10 @@ class Test:
             raise config.ConfigError(f'{where}: ingest is srt or stdin')
         if not set(self.pub_timing) <= {'none', 'mapping'}:
             raise config.ConfigError(f'{where}: pub_timing lists none and/or mapping')
-        if not set(self.pub_deadline) <= {'none', 'budget'}:
-            raise config.ConfigError(f'{where}: pub_deadline lists none and/or budget')
+        if not set(self.pub_deadline) <= {'none', 'budget', 'half'}:
+            raise config.ConfigError(f'{where}: pub_deadline lists none, budget and/or half')
+        if not set(self.sub_repair) <= {'none', 'half'}:
+            raise config.ConfigError(f'{where}: sub_repair lists none and/or half')
         config.positive_int(where, 'repeats', self.repeats)
         self.seconds = data.get('seconds')
         self.note = data.get('note', '')

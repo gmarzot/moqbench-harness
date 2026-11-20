@@ -323,6 +323,31 @@ class Lanes(unittest.TestCase):
         with self.assertRaises(config.ConfigError):
             make_test(pub_deadline=['D'])
 
+    def test_repair_arm(self):
+        t = make_test(lanes=['moqt-aiomoqt-msfts'], relay='none', placement='first-mile', pub_cc=['c4'],
+                      rtt_multiples=[4], budgets_ms=[], pub_deadline=['half'], sub_repair=['none', 'half'])
+        msfts = lanes.LANES['moqt-aiomoqt-msfts']
+        vs = msfts.variants(t, profiles.load('transcontinental'))
+        self.assertEqual(vs, [dict(relay='none', pub_cc='c4', timing='none', deadline=160),
+                              dict(relay='none', pub_cc='c4', timing='none', deadline=160, repair=160)])
+        self.assertEqual(msfts.label(vs[1]), 'relaynone-pub_ccc4-timingnone-deadline160-repair160')
+        feats = dict(ts_udp=True, msfts=True, ts_out=True, delivery_timeout=True, repair=True)
+        procs = []
+        for v in vs:
+            c = ctx(v, placement='first-mile', features=feats)
+            c.relay = 'none'
+            procs.append({p.name: p for p in msfts.procs(c)})
+        self.assertNotIn('--fetch-history', procs[0]['aiomoqt-pub'].cmd)
+        self.assertNotIn('--repair', procs[0]['aiomoqt-sub'].cmd)
+        self.assertIn('--msfts-packets 7 --fetch-history 75000000 ', procs[1]['aiomoqt-pub'].cmd)
+        self.assertIn(' --delivery-timeout 160', procs[1]['aiomoqt-pub'].cmd)
+        self.assertIn('--ts-out udp://127.0.0.1:6010 --repair 160 ', procs[1]['aiomoqt-sub'].cmd)
+        self.assertIn('--repair', msfts.pending(dict(feats, repair=False), vs[1]))
+        self.assertIsNone(msfts.pending(dict(feats, repair=False), vs[0]))
+        for bad in (dict(sub_repair=['budget']), dict(pub_deadline=['quarter'])):
+            with self.subTest(bad=bad), self.assertRaises(config.ConfigError):
+                make_test(**bad)
+
     def test_direct_lane_needs_first_mile_and_a_direct_lane(self):
         for over in (dict(placement='last-mile'), dict(placement='first-mile', relay_cc=['bbr']),
                      dict(placement='first-mile', lanes=['moqt-aiomoqt-msfts', 'moqt-moq2ts']),
