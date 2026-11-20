@@ -65,8 +65,18 @@ class Adapter:
     def peer_metric(self, fab, node, peer, metric):
         raise Unsupported(f'{self.name}: peer.metric')
 
-    def poll_urls(self, node):
-        """{name: (url, kind)} a poller beside the relay may fetch: kind is peering or state."""
+    def shared_dirs(self, node):
+        """{folder under nodes/<node>/: path} mounted in both the relay and its holder."""
+        return {}
+
+    def poll_urls(self, node, fab=None):
+        """{name: url} a poller beside the relay may fetch: name is peering or state."""
+        return {}
+
+    def sample(self, doc, namespace, track):
+        """One polled peering document read for the run's track, with the keys it can tell:
+        tx_bytes (cumulative bytes sent to peers), streams (data streams open on peer sessions),
+        subscribed (a fabric subscribe held for the track), own_subscribe (one for local viewers)."""
         return {}
 
 
@@ -77,4 +87,7 @@ def get(name):
     if name == 'laps':
         from fabric.laps import Laps
         return Laps()
+    if name == 'aiomoqt-relay':
+        from fabric.aiomoqt_relay import AiomoqtRelay
+        return AiomoqtRelay()
     raise Unsupported(f'no fabric adapter named {name!r}')

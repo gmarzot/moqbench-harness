@@ -1,25 +1,18 @@
 #!/usr/bin/env python3
-"""One HTTP call to a relay's control API: METHOD URL [JSON body]. Prints t0, t1, status and body as JSON."""
+"""One HTTP call to a relay's control API: METHOD URL [JSON body]. Prints t0, t1, status and body as JSON.
+
+URL is http://... or http+unix://<quoted socket path>/path.
+"""
 import json
 import sys
 import time
-import urllib.error
-import urllib.request
+
+from unixhttp import request
 
 
 def main(method, url, body=None):
-    data = body.encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    if data is not None:
-        req.add_header('Content-Type', 'application/json')
     t0 = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            status, text = r.status, r.read().decode(errors='replace')
-    except urllib.error.HTTPError as e:
-        status, text = e.code, e.read().decode(errors='replace')
-    except OSError as e:
-        status, text = 0, str(e)
+    status, text = request(url, method, body.encode() if body is not None else None)
     print(json.dumps({'t0': t0, 't1': time.time(), 'status': status, 'body': text}))
 
 

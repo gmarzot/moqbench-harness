@@ -1,0 +1,78 @@
+description = "Subscriber churn through a via: a publisher on laps, a line laps - via-1 - moqx, and four subscribers on moqx that join and leave staggered and overlapping. Each subscriber gets every object from its first one; after the last leaves, the subscribe is withdrawn and via-1 stops forwarding."
+mode        = "stream"
+publisher   = "laps"
+subscribers = []
+peering_poll_s = 1
+
+# Far-edge subscribers join and leave, staggered and overlapping.
+[[subscriber]]
+name = "far-1"
+on   = "moqx"
+
+[[subscriber]]
+name = "far-2"
+on   = "moqx"
+
+[[subscriber]]
+name = "far-3"
+on   = "moqx"
+
+[[subscriber]]
+name = "far-4"
+on   = "moqx"
+
+[[event]]
+at_s = 5
+verb = "sub.start"
+sub  = "far-1"
+
+[[event]]
+at_s = 12
+verb = "sub.start"
+sub  = "far-2"
+
+[[event]]
+at_s = 20
+verb = "sub.stop"
+sub  = "far-1"
+
+[[event]]
+at_s = 24
+verb = "sub.start"
+sub  = "far-3"
+
+[[event]]
+at_s = 30
+verb = "sub.stop"
+sub  = "far-2"
+
+[[event]]
+at_s = 34
+verb = "sub.start"
+sub  = "far-4"
+
+[[event]]
+at_s = 40
+verb = "sub.stop"
+sub  = "far-3"
+
+[[event]]
+at_s = 45
+verb = "sub.stop"
+sub  = "far-4"
+label = "the last subscriber leaves"
+
+[[expect_path]]
+node    = "via-1"
+from_s  = 6
+to_s    = 44
+carries = true
+label   = "while subscribers are on"
+
+[[expect_path]]
+node       = "via-1"
+from_s     = 56
+to_s       = 72
+carries    = false
+subscribed = false
+label      = "after the last subscriber leaves"

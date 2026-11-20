@@ -1,0 +1,55 @@
+description = "Example: a via between LAPS and moqx (deployments/docker-via-example.toml, and the moqx and LAPS controls). Subscriber churn each way, a local subscriber on the via, losses past the via, and failover between two vias on a ring, stopped and killed. Tests 1-4 peer only the line laps - via-1 - moqx. Run with moqbench fabric run."
+requires    = { relay = 4, subscriber = 1 }
+
+[[test]]
+type     = "fabric"
+scenario = "via-sub-churn"
+topology = "custom"
+links    = [["laps", "via-1"], ["via-1", "moqx"]]
+seconds  = 75
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "via-sub-churn-reverse"
+topology = "custom"
+links    = [["laps", "via-1"], ["via-1", "moqx"]]
+seconds  = 75
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "via-local-sub"
+topology = "custom"
+links    = [["laps", "via-1"], ["via-1", "moqx"]]
+seconds  = 60
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "via-edge-sub-kill"
+topology = "custom"
+links    = [["laps", "via-1"], ["via-1", "moqx"]]
+seconds  = 55
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "via-pair-failover"
+topology = "ring"
+seconds  = 75
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "via-pair-failover-reverse"
+topology = "ring"
+seconds  = 75
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "via-pair-failover-kill"
+topology = "ring"
+seconds  = 75
+draft    = 18

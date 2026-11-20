@@ -1,0 +1,93 @@
+description = "Example: a mixed moqx / LAPS / aiomoqt-relay triangle at MoQT draft 18, run once per rotation (deployments/docker-mix-aio-{ingest,transit,egress}-example.toml) so aiomoqt-relay is measured as the publisher's, the transit and the subscriber's relay. Steady delivery, propagation and subscribe setup, path changes through each relay's control API, late join, FETCH, datagrams, relay restarts, audiences on every relay and multi-tuple namespaces."
+requires    = { relay = 3, subscriber = 1 }
+
+[[test]]
+type     = "fabric"
+scenario = "steady"
+topology = "full"
+seconds  = 60
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "propagation"
+topology = "full"
+seconds  = 30
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "subscribe-setup"
+topology = "full"
+seconds  = 30
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "metric-flip"
+topology = "full"
+seconds  = 105
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "late-join"
+topology = "full"
+seconds  = 30
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "fetch-peer"
+topology = "full"
+seconds  = 30
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "datagram-transit-origin"
+topology = "full"
+seconds  = 30
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "datagram-through-transit"
+topology = "full"
+seconds  = 30
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "datagram-through-transit-control"
+topology = "full"
+seconds  = 30
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "relay-restart"
+topology = "full"
+seconds  = 95
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "relay-restart-kill"
+topology = "full"
+seconds  = 95
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "edge-scale"
+topology = "full"
+seconds  = 120
+draft    = 18
+
+[[test]]
+type     = "fabric"
+scenario = "namespace-tuples"
+topology = "full"
+seconds  = 30
+draft    = 18

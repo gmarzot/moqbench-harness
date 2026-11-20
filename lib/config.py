@@ -102,6 +102,15 @@ def only_keys(where, data, allowed):
         raise ConfigError(f'{where}: unknown {", ".join(sorted(unknown))} (expected: {", ".join(sorted(allowed))})')
 
 
+MAX_DELAY_MS = 10000
+
+
+def delay_ms(value, positive=False):
+    """True for a static link delay in milliseconds: a number from 0 (above 0 when positive) to MAX_DELAY_MS."""
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and (value > 0 if positive else value >= 0) and value <= MAX_DELAY_MS)
+
+
 def positive_int(where, key, value):
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise ConfigError(f'{where}: {key} must be a positive integer, not {value!r}')
@@ -114,12 +123,17 @@ class Fabric:
     """
     KEYS = {'adapter', 'image', 'topology', 'order', 'hub', 'links', 'wire', 'subnet', 'threads',
             'check_interval_ms', 'draft', 'aiomoqt', 'aiopquic', 'lab_image', 'stack_dir', 'client_python',
-            'dial', 'metrics', 'peer_pip', 'peer_command', 'peer_image'}
-    ADAPTERS = {'moqx-peering', 'laps'}
+            'dial', 'metrics', 'peer_pip', 'peer_command', 'peer_image', 'link_delay_ms', 'link_delays'}
+    ADAPTERS = {'moqx-peering', 'laps', 'aiomoqt-relay'}
     DEFAULT_IMAGES = {'moqx-peering': 'moqx-peering:latest'}
     # Adapters whose relays take a session metric at startup.
     START_METRICS = {'moqx-peering'}
-    PEER_COMMAND = 'moq-peer-probe {peers} -p 0 --node-id {node} -t {seconds} -i 5 -o {output}'
+    # Adapters whose relays take a session metric once their links are up (peer.metric).
+    RUNTIME_METRICS = {'aiomoqt-relay'}
+    # Adapters whose relays take a node metric (node_metric) at startup.
+    NODE_METRICS = {'moqx-peering', 'aiomoqt-relay'}
+    DEFAULT_NODE_METRIC = 100
+    PEER_COMMAND = 'moq-fabric-probe {peers} -p 0 --node-id {node} -t {seconds} -i 5 -o {output}'
     PEER_FIELDS = {'peers', 'node', 'seconds', 'output', 'namespace', 'track'}
 
     def __init__(self, data, relays, where, nodes=None):
@@ -148,7 +162,7 @@ class Fabric:
         self.lab_image = data.get('lab_image') or f'moqbench-lab:{self.aiomoqt}-{self.aiopquic}'
         self.stack_dir = data.get('stack_dir', 'moqbench-fabric')
         self.client_python = data.get('client_python', 'Projects/aiomoqt/.venv/bin/python')
-        self.peer_pip = data.get('peer_pip', 'git+https://github.com/gmarzot/aiomoqt@gmarzot-peering-data')
+        self.peer_pip = data.get('peer_pip', 'git+https://github.com/gmarzot/aiomoqt@gmarzot-0.15.0')
         self.peer_command = data.get('peer_command', self.PEER_COMMAND)
         spec_id = hashlib.sha256(self.peer_pip.encode()).hexdigest()[:8]
         self.peer_image = data.get('peer_image') or f'moqbench-peer:{self.aiomoqt}-{self.aiopquic}-{spec_id}'
@@ -158,6 +172,12 @@ class Fabric:
                 raise ConfigError(f'{where}: node {n}: adapter must be one of {", ".join(sorted(self.ADAPTERS))}')
             if not self.node_image(n):
                 raise ConfigError(f'{where}: node {n}: a {adapter} relay needs an image')
+            metric = self.nodes.get(n, {}).get('node_metric')
+            if metric is not None:
+                if adapter not in self.NODE_METRICS:
+                    raise ConfigError(f'{where}: node {n}: a {adapter} relay takes no node_metric')
+                if not isinstance(metric, int) or isinstance(metric, bool) or metric < 0:
+                    raise ConfigError(f'{where}: node {n}: node_metric must be an integer of 0 or more')
         self.peers = [name for name, node in self.nodes.items() if 'peer' in node.get('roles', [])]
         for name in self.peers:
             node = self.nodes[name]
@@ -182,10 +202,24 @@ class Fabric:
             if (not isinstance(entry, list) or len(entry) != 3 or any(n not in self.order for n in entry[:2])
                     or not isinstance(entry[2], int) or isinstance(entry[2], bool) or entry[2] < 0):
                 raise ConfigError(f'{where}: fabric metrics entries are [node, peer, metric], not {entry!r}')
-            if self.node_adapter(entry[0]) not in self.START_METRICS:
+            if self.node_adapter(entry[0]) not in self.START_METRICS | self.RUNTIME_METRICS:
                 raise ConfigError(f'{where}: {entry[0]} is a {self.node_adapter(entry[0])} relay, which takes no '
                                   'session metric at startup; set it with a peer.metric event')
             self.metrics[(entry[0], entry[1])] = entry[2]
+        self.link_delay_ms = data.get('link_delay_ms')
+        if self.link_delay_ms is not None and not delay_ms(self.link_delay_ms, positive=True):
+            raise ConfigError(f'{where}: fabric link_delay_ms must be a number of milliseconds above 0 and '
+                              f'at most {MAX_DELAY_MS}, not {self.link_delay_ms!r}')
+        self.link_delays = {}
+        for entry in data.get('link_delays') or []:
+            if (not isinstance(entry, list) or len(entry) != 3 or entry[0] == entry[1]
+                    or any(n not in self.order for n in entry[:2]) or not delay_ms(entry[2])):
+                raise ConfigError(f'{where}: fabric link_delays entries are [relay, relay, milliseconds], '
+                                  f'at most {MAX_DELAY_MS}, not {entry!r}')
+            pair = frozenset(entry[:2])
+            if pair in self.link_delays:
+                raise ConfigError(f'{where}: fabric link_delays names {entry[0]}-{entry[1]} twice')
+            self.link_delays[pair] = entry[2]
         for key in ('threads', 'check_interval_ms', 'draft'):
             positive_int(f'{where}: fabric', key, getattr(self, key))
         if self.check_interval_ms < 2000:
@@ -201,11 +235,20 @@ class Fabric:
         return self.nodes.get(name, {}).get('adapter', self.adapter)
 
     def node_image(self, name):
+        """A relay's own image, else its adapter's: the fabric image, a default, or for aiomoqt-relay the peer image."""
         node = self.nodes.get(name, {})
         if 'image' in node:
             return node['image']
         adapter = self.node_adapter(name)
-        return self.image if adapter == self.adapter else self.DEFAULT_IMAGES.get(adapter)
+        image = self.image if adapter == self.adapter else self.DEFAULT_IMAGES.get(adapter)
+        return image or (self.peer_image if adapter == 'aiomoqt-relay' else None)
+
+    def runtime_metrics(self):
+        """Metrics entries applied through peer.metric once the links are up."""
+        return {k: m for k, m in self.metrics.items() if self.node_adapter(k[0]) not in self.START_METRICS}
+
+    def node_metric(self, name):
+        return self.nodes.get(name, {}).get('node_metric', self.DEFAULT_NODE_METRIC)
 
     def node_admin_image(self, name):
         """The image a relay's control sidecar runs, when its adapter needs one."""
@@ -235,6 +278,11 @@ class Fabric:
             if topology.dialer(a, b, self.order, self.dialers) != a:
                 raise ConfigError(f'{where}: fabric metrics [{a}, {b}]: {a} does not dial that link')
 
+    def link_delay(self, a, b):
+        """One-way delay in ms on the link a-b in each direction: its link_delays entry, else link_delay_ms;
+        0 for none."""
+        return self.link_delays.get(frozenset((a, b)), self.link_delay_ms or 0)
+
     def wired(self, link_list=None):
         """Relay pairs that get a link network: every pair, or only the topology's links."""
         from fabric import topology
@@ -245,8 +293,8 @@ class Fabric:
 
 class Deployment:
     NODE_KEYS = {'name', 'instance', 'roles', 'vcpus', 'ocpus', 'memory_gb', 'address', 'cpus', 'fabric_role',
-                 'adapter', 'image', 'admin_image', 'dials', 'command'}
-    RELAY_ONLY = {'adapter', 'admin_image'}
+                 'adapter', 'image', 'admin_image', 'dials', 'command', 'node_metric'}
+    RELAY_ONLY = {'adapter', 'admin_image', 'node_metric'}
     PEER_ONLY = {'dials', 'command'}
     KEYS = {'provider', 'region', 'zone', 'arch', 'tag', 'network_type', 'nodes', 'host', 'fabric'}
 

@@ -1,0 +1,40 @@
+description = "A local subscriber on the via: a publisher on laps, a line laps - via-1 - moqx, one subscriber on moqx throughout, and one on via-1 that joins and leaves. moqx's subscriber loses nothing at either transition; via-1's subscriber is complete from its first object; via-1 withdraws its own subscribe after it leaves while transit to moqx continues."
+mode        = "stream"
+publisher   = "laps"
+subscribers = []
+peering_poll_s = 1
+
+[[subscriber]]
+name = "far"
+on   = "moqx"
+
+[[subscriber]]
+name = "local"
+on   = "via-1"
+
+[[event]]
+at_s = 3
+verb = "sub.start"
+sub  = "far"
+
+[[event]]
+at_s   = 15
+verb   = "sub.start"
+sub    = "local"
+expect = "hitless"
+subs   = ["far"]
+
+[[event]]
+at_s   = 35
+verb   = "sub.stop"
+sub    = "local"
+expect = "hitless"
+subs   = ["far"]
+
+[[expect_path]]
+node          = "via-1"
+from_s        = 45
+to_s          = 57
+own_subscribe = false
+carries       = true
+label         = "after the local subscriber leaves"

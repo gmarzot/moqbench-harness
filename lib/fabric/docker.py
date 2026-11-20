@@ -39,6 +39,33 @@ class FabricError(RuntimeError):
     """A fabric command that failed, with what it printed."""
 
 
+def runtime_metrics(fab):
+    """Give each dialer that takes its session metric only at runtime the deployment's metric."""
+    for (a, b), metric in fab.spec.runtime_metrics().items():
+        r = fab.adapter_for(a).peer_metric(fab, a, b, metric)
+        if not 200 <= r['status'] < 300:
+            raise FabricError(f'{a}: session metric {metric} toward {b}: status {r["status"]} {r["body"][:200]}')
+
+
+def link_delays(fab):
+    """{(a, b): ms} for every relay pair with a link that has a static delay."""
+    out = {}
+    for a, b in fab.addr['links']:
+        ms = fab.spec.link_delay(a, b)
+        if ms:
+            out[(a, b)] = ms
+    return out
+
+
+def apply_link_delays(fab):
+    """Set each pair's static delay on both ends' sending side."""
+    for (a, b), ms in link_delays(fab).items():
+        for s, o in ((a, b), (b, a)):
+            r = fab.link_action('link.impair', s, o, faults.delay_spec(ms))
+            if r['rc']:
+                raise FabricError(f'{s}: static delay {ms} ms toward {o}: exit {r["rc"]}')
+
+
 class Host:
     def __init__(self, target, key=None):
         self.target = target
@@ -175,10 +202,12 @@ class DockerFabric:
             for pair, link in a['links'].items():
                 if n in pair:
                     attach[link['name']] = {'ipv4_address': link[n]}
-            services[n] = {**common, 'container_name': self.holder(n), 'hostname': n, 'cap_add': ['NET_ADMIN'],
-                           'networks': attach}
             adapter = self.adapter_for(n)
+            shared = [f'./nodes/{n}/{sub}:{path}' for sub, path in adapter.shared_dirs(n).items()]
+            services[n] = {**common, 'container_name': self.holder(n), 'hostname': n, 'cap_add': ['NET_ADMIN'],
+                           'networks': attach, 'volumes': common['volumes'] + shared}
             relay = adapter.service(n, ctx)
+            relay['volumes'] = relay.get('volumes', []) + shared
             relay.update({'container_name': self.relay(n), 'network_mode': f'service:{n}', 'depends_on': [n],
                           'user': f'{uid}:{gid}', 'restart': 'no',
                           'ulimits': {'nofile': {'soft': 1048576, 'hard': 1048576}}})
@@ -215,6 +244,8 @@ class DockerFabric:
         for n in self.order:
             folder = stack / 'nodes' / n
             (folder / 'certs').mkdir(parents=True, exist_ok=True)
+            for sub in self.adapter_for(n).shared_dirs(n):
+                (folder / sub).mkdir(exist_ok=True)
             for rel, text in self.adapter_for(n).render(n, ctx).items():
                 (folder / rel).write_text(text)
             addrs = [a for pair, link in self.addr['links'].items() if n in pair for a in [link[n]]]
@@ -241,7 +272,9 @@ class DockerFabric:
             self.host.sh(f'cd {shlex.quote(self.stack)} && docker build -q -t {self.spec.lab_image} '
                          f'--build-arg AIOMOQT={self.spec.aiomoqt} --build-arg AIOPQUIC={self.spec.aiopquic} '
                          f'-f build/{LAB_DOCKERFILE.name} build', timeout=1800)
-        if (any(not self.nodes[n].get('image') for n in self.peers)
+        wanted = (any(not self.nodes[n].get('image') for n in self.peers)
+                  or any(self.spec.node_image(n) == self.spec.peer_image for n in self.order))
+        if (wanted
                 and self.host.sh(f'docker image inspect {self.spec.peer_image} >/dev/null 2>&1',
                                  check=False).returncode):
             self.host.sh(f'cd {shlex.quote(self.stack)} && docker build -q -t {self.spec.peer_image} '
@@ -258,8 +291,11 @@ class DockerFabric:
             self.host.push(stack, self.stack)
         self.ensure_lab_image()
         self.host.sh(self.compose_cmd('up -d --force-recreate --remove-orphans'), timeout=300)
+        apply_link_delays(self)
         self.wait_ready(wait_s)
-        return self.wait_links(wait_s)
+        took = self.wait_links(wait_s)
+        runtime_metrics(self)
+        return took
 
     def down(self):
         self.host.sh(self.compose_cmd('down -t 5 --remove-orphans'), check=False)
@@ -314,11 +350,16 @@ class DockerFabric:
         script = f'docker exec {" ".join(flags)} {container} sh -c {shlex.quote(command)}'
         return self.host.sh(script, check=check, timeout=timeout)
 
-    def admin(self, node, method, path, body=None):
-        """One call to a relay's loopback control API, timed on the host clock inside its namespace."""
-        url = f'http://127.0.0.1:8000{path}'
+    def shared_dir(self, node, sub, path):
+        """Where the holder sees a relay's shared folder: the same path."""
+        return path
+
+    def admin(self, node, method, path, body=None, base='http://127.0.0.1:8000'):
+        """One call to a relay's control API from its holder (base: an http:// or http+unix:// URL),
+        timed on the host clock inside its namespace."""
+        url = f'{base}{path}'
         arg = f' {shlex.quote(json.dumps(body))}' if body is not None else ''
-        r = self.exec(self.holder(node), f'python3 /fabric/bin/fabric-admin.py {method} {url}{arg}')
+        r = self.exec(self.holder(node), f'python3 /fabric/bin/fabric-admin.py {method} {shlex.quote(url)}{arg}')
         return json.loads(r.stdout)
 
     def reset(self, label):
@@ -336,7 +377,7 @@ class DockerFabric:
         and /state every state_ms for state_s seconds when given."""
         out = self.results_dir(label)
         for n in self.order:
-            urls = self.adapter_for(n).poll_urls(n)
+            urls = self.adapter_for(n).poll_urls(n, self)
             jobs = [(f'--url peering={urls["peering"]}', peering_s, seconds, '')] if 'peering' in urls else []
             jobs.append(('--netdev', netdev_s, seconds, '-net'))
             if state_ms and 'state' in urls:
@@ -353,9 +394,11 @@ class DockerFabric:
         if side != 'send':
             raise faults.FaultError('a docker fabric impairs the sending side only')
         ip = topology.link_address(self.addr, sender, peer, sender)
-        cmd = {'link.impair': lambda: faults.netem_cmd(ip, spec),
+        ms = self.spec.link_delay(sender, peer)
+        cmd = {'link.impair': lambda: faults.netem_cmd(ip, faults.with_delay(spec, ms)),
                'link.down': lambda: faults.netem_cmd(ip, 'loss 100%'),
-               'link.clear': lambda: faults.clear_cmd(ip)}[verb]()
+               'link.clear': lambda: (faults.netem_cmd(ip, faults.delay_spec(ms)) if ms
+                                      else faults.clear_cmd(ip))}[verb]()
         r = self.exec(self.holder(sender), faults.timed(cmd))
         return {'node': sender, **json.loads(r.stdout)}
 
@@ -364,17 +407,22 @@ class DockerFabric:
         return json.loads(r.stdout)
 
     def leftovers(self):
+        """{node: lines} of impairments beyond the static link delays."""
+        delays = link_delays(self)
         left = {}
         for n in self.order:
             r = self.exec(self.holder(n), faults.CHECK_CMD, check=False)
-            if r.stdout.strip():
-                left[n] = r.stdout.strip().splitlines()
+            lines = faults.residual(r.stdout.strip().splitlines(), {ms for p, ms in delays.items() if n in p})
+            if lines:
+                left[n] = lines
         return left
 
-    def clear_impairments(self):
+    def clear_impairments(self, keep_delays=True):
         for (a, b), link in self.addr['links'].items():
             for n in (a, b):
                 self.exec(self.holder(n), faults.clear_cmd(link[n]), check=False)
+        if keep_delays:
+            apply_link_delays(self)
         return self.leftovers()
 
     def collect(self, label, out_dir):

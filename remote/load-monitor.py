@@ -92,7 +92,14 @@ def snapshot(pid, comms=(), nic=''):
 
 
 def fetch(url, timeout=0.5):
-    """(status, body) of one GET; status 0 when the server did not answer."""
+    """(status, body) of one GET; status 0 when the server did not answer. A relay's control socket is
+    http+unix://<quoted socket path>/path, through unixhttp.py beside this script."""
+    if url.startswith('http+unix://'):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from unixhttp import request
+        status, body = request(url, timeout=timeout)
+        return status, body if status < 400 else ''
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             return response.status, response.read(4194304).decode(errors='replace')

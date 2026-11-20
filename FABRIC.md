@@ -4,8 +4,10 @@ A fabric is several relays peered into one mesh and tested as one system: per-ho
 latency, how fast names and subscriptions cross it, and what live delivery does
 while peers change or links degrade. A fabric runs on one Docker host, or with
 one relay per VM in a cloud testbed ([VM fabrics](#vm-fabrics)). Adapters
-exist for moqx with moq-fabric and for LAPS; each relay node picks its own, so
-one fabric can mix them ([Mixed fabrics](#mixed-fabrics)).
+exist for moqx with moq-fabric, for LAPS and for aiomoqt-relay; each relay node
+picks its own, so one fabric can mix them ([Mixed fabrics](#mixed-fabrics),
+[aiomoqt-relay as a via](#aiomoqt-relay-as-a-via),
+[aiomoqt-relay in the mixed fabrics](#aiomoqt-relay-in-the-mixed-fabrics)).
 
 ## Quick start
 
@@ -29,8 +31,8 @@ how the relays peer:
 
 | key | default | meaning |
 |---|---|---|
-| `adapter` | `moqx-peering` | the relay and its interconnect, for relay nodes that name none (`moqx-peering`, `laps`) |
-| `image` | `moqx-peering:latest` for moqx | relay image, for relay nodes of that adapter that name none |
+| `adapter` | `moqx-peering` | the relay and its interconnect, for relay nodes that name none (`moqx-peering`, `laps`, `aiomoqt-relay`) |
+| `image` | `moqx-peering:latest` for moqx, `peer_image` for aiomoqt-relay | relay image, for relay nodes of that adapter that name none |
 | `topology` | `line` | `line`, `star`, `ring`, `full` or `custom` (with `links`) |
 | `order` | relay nodes in file order | the first node is the ingest relay, the last the egress relay |
 | `hub` | first in order | the centre of a star |
@@ -38,14 +40,17 @@ how the relays peer:
 | `subnet` | `10.77.0.0/16` | the access network is its first /24, then one /24 per link |
 | `threads`, `check_interval_ms`, `draft` | `2`, `5000`, `18` | relay IO threads, peer reconnect interval, client MoQT draft |
 | `dial` | none | `[dialer, listener]` pairs that override which end dials a link |
-| `metrics` | none | `[node, peer, metric]`: the session metric a dialing moqx relay starts with on that link |
+| `metrics` | none | `[node, peer, metric]`: the session metric a dialing moqx relay starts with on that link; a dialing aiomoqt-relay gets it through peer.metric once the links are up |
+| `link_delay_ms` | none | one-way delay in each direction on every relay pair's link, set at `fabric up` with the `link.impair` netem machinery and gone at `fabric down` |
+| `link_delays` | none | `[relay, relay, ms]` entries: that link's delay instead (0 for none) |
 | `peer_pip`, `peer_command`, `peer_image` | see [Mixed fabrics](#mixed-fabrics) | peer nodes |
 | `aiomoqt`, `aiopquic` | releases | client versions in the lab image (`build/lab-node.Dockerfile`) |
 
 Each link is dialed from one side only: the node earlier in `order` dials,
 unless a `dial` entry says otherwise. Nodes take an optional `fabric_role`
 (`edge`, `via`, `stub`) and `cpus` (a cpuset); relay nodes also take `adapter`,
-`image` and `admin_image`.
+`image`, `admin_image` and `node_metric` (the node metric a moqx or aiomoqt-relay
+node advertises, default 100).
 
 On the Docker host each relay is two containers, as a pod is. The holder owns
 the relay's addresses: one on the access network, one per link network. The
@@ -92,14 +97,20 @@ group), `draft`, `peering_poll_s`, `slo_ms`, `links` (custom), `suffix`, `note`.
 | `datagram-transit-origin` | datagrams published on the transit relay, a subscriber on every relay | every subscriber gets every datagram once |
 | `datagram-through-transit` | datagrams from the ingest relay while the transit relay has a local subscriber | every subscriber, the egress relay's included, gets every datagram once |
 | `datagram-through-transit-control` | the same with no subscriber on the transit relay | as above |
-| `fetch-peer` | a joining FETCH (aiomoqt's join example) on the publisher's relay and on every other relay | FETCH_OK on the publisher's relay; across peering, `expect_across = "fail"` reports a refusal as XFAIL and a success as XPASS |
+| `via-sub-churn`, `via-sub-churn-reverse` | four named subscribers joining and leaving, staggered and overlapping, past a via | each is complete from its first object; after the last leaves the via carries nothing and holds no subscribe |
+| `via-local-sub` | a subscriber on the via joining and leaving while one past it runs throughout | hitless for the far subscriber at both transitions; the via's subscriber complete; afterwards the via holds no subscribe of its own and still carries the track |
+| `via-edge-sub-kill` | SIGKILL of the subscriber past the via, then of the relay past it | at both, `no-gap` for the via's subscriber |
+| `via-pair-failover`, `via-pair-failover-reverse`, `via-pair-failover-kill` | the cheaper of two vias on a ring stopped (or killed), then started | only the cheaper via carries the track before and after; the other carries it meanwhile; `group-loss` on the stop, `bounded-gap` on the kill |
+| `relay-restart`, `relay-restart-kill` | the transit, egress and ingest relay stopped (or killed) and started again in turn, a reference subscriber on every relay | per event and subscriber: outage, loss and `recovers` (delivery resumes without the client reconnecting); a subscriber on the restarted relay, and every subscriber when the publisher's relay restarts, is SKIP |
+| `namespace-tuples` | two publishers on the ingest relay whose namespaces concatenate alike (`<ns>/a/bc`, `<ns>/ab/c`, object sizes 300 B apart), then a subscriber to each on every relay | each subscriber receives only its own track (by object size) |
+| `fetch-peer` | a joining FETCH (aiomoqt's join example) on the publisher's relay and on every other relay, while a subscriber on the publisher's relay keeps the publisher sending | FETCH_OK on the publisher's relay; across peering, `expect_across = "fail"` reports a refusal as XFAIL and a success as XPASS |
 
 The gate for an audience: over its steady samples (from the first at the full
 population to three before the end), at least 95% have the full population,
 at least 90% of the expected receive rate and a p90 at or under the test's
 `slo_ms` (default 500), and load_sim exits 0.
 
-Scenario keys: `mode` (`stream` or `setup`), `publisher`, `subscribers`
+Scenario keys: `mode` (`stream`, `setup`, `media`, `fetch` or `tuples`), `publisher`, `subscribers`
 (`["all"]` or node names and roles), `pub_ns`, `sub_start_s`, `peering_poll_s`,
 `state_poll_ms`, `netdev_s`, `settle_s`, `gap_s`, `warm_s`, `cold_order`,
 `namespace_check`, `datagram` (the publisher sends ObjectDatagrams),
@@ -107,6 +118,23 @@ Scenario keys: `mode` (`stream` or `setup`), `publisher`, `subscribers`
 `[[event]]` tables (an event may carry a `label` for the report), and
 `[[population]]` tables (`edge`: a node, a role or `each`; `subs`;
 `subs_per_proc`) for load_sim audiences on the load hosts.
+
+Stream scenarios may also name subscribers and path expectations:
+
+- `[[subscriber]]`: `name`, `on` (a node or role) and `expect` (`complete`,
+  the default, or `none`). `sub.*` events start and end it; it runs as
+  `sub-<name>`. Its loss is counted over the time it ran: `complete` passes
+  when it received every object from its first to its last, once. Events are
+  analysed for a named subscriber only while it runs.
+- `[[expect_path]]`: `node`, a window `from_s`-`to_s` (seconds from the
+  publisher's start), `label`, and one or more of `carries` (the relay sends the
+  track to a peer at half its rate or more), `subscribed` (it holds a fabric
+  subscribe for the track, its own or one it forwards) and `own_subscribe` (its
+  own, for local viewers), each `true` or `false`. They are read from the
+  relay's polled peering state through its adapter (`Adapter.sample`): bytes
+  sent to peers for aiomoqt-relay, data streams open on peer sessions for moqx.
+  Where the state cannot tell (LAPS, whose state is not polled), `carries` comes
+  from the relay's link send rates; a state nothing reports is SKIP.
 
 `[expect_remote]` marks a known defect: when the publisher's relay runs
 `publisher_adapter`, subscribers on every other relay are expected to fail
@@ -127,12 +155,24 @@ or role (`ingest`, `egress`, `transit`):
 | `link.down`, `link.clear` | `on`, `peer`, `direction` | 100% loss on the link; remove its impairment |
 | `node.kill`, `node.stop`, `node.start` | `on`, `signal`, `grace_s` | the relay container; its namespace stays |
 | `node.freeze`, `node.thaw` | `on` | pause and resume the relay's cgroup |
+| `sub.start` | `sub` | start a named subscriber, until the run's end |
+| `sub.stop`, `sub.kill` | `sub` | SIGINT (it ends and prints its summary) or SIGKILL to a named subscriber |
 
 The same verbs are commands: `moqbench fabric peer|link|node <deployment> ...`.
 Each applied event records host-clock times bracketing it in `faults.jsonl`. An
-event `expect` (`hitless`, `group-loss`) sets that event's verdict.
+event `expect` sets that event's verdict: `hitless` (no loss, no duplicates),
+`group-loss` (at most one group lost, no duplicates), `no-gap` (hitless, and no
+inter-arrival gap over `max_gap_ms`, by default twice the object interval) or
+`bounded-gap` (delivery resumed within `max_gap_ms`, which it needs) or
+`recovers` (delivery resumed without a reconnect, for each subscriber that was
+receiving; on a node event, a subscriber of the restarted relay or of the
+publisher's relay is SKIP). `subs` limits the verdict to the named subscribers
+it lists. Delivery that stops for good while the publisher still sends has no
+recovery.
 `moqbench fabric check` lists impairments left on any relay namespace and
 `--clear` removes them; every run checks before it ends and clears what it finds.
+A static link delay is not counted as left over: on a delayed link, `link.impair` without its own
+`delay` keeps it, and `link.clear` and `--clear` restore it.
 
 ## Measurement
 
@@ -251,7 +291,8 @@ fix: give the LAPS node the image to test.
 **Peer nodes** (`roles = ["peer"]`) join the fabric as aiomoqt peering nodes, not
 relays. Each runs `peer_command` in its own container on the access network,
 from `peer_image` (`build/fabric-peer.Dockerfile`: the lab image plus `peer_pip`,
-by default aiomoqt's peering-probe branch). The command is a template:
+by default aiomoqt's 0.15.0 dev branch). The image is built once per `peer_pip`;
+remove it to rebuild from a branch that moved. The command is a template:
 
 | field | becomes |
 |---|---|
@@ -261,18 +302,97 @@ by default aiomoqt's peering-probe branch). The command is a template:
 | `{output}` | the JSON report path in the run's results |
 | `{namespace}`, `{track}` | the run's track |
 
-The default is `moq-peer-probe {peers} -p 0 --node-id {node} -t {seconds} -i 5 -o {output}`;
+The default is `moq-fabric-probe {peers} -p 0 --node-id {node} -t {seconds} -i 5 -o {output}`;
 a node's own `command` replaces it, and its own `image` replaces `peer_image`.
-`moq-peer-bench` fits the same template, for example
-`moq-peer-bench {peers} --node-id {node} --role sub -N {namespace} -T {track} -t {seconds} -o {output}`
+`moq-fabric-bench` fits the same template, for example
+`moq-fabric-bench {peers} --node-id {node} --role sub -N {namespace} -T {track} -t {seconds} -o {output}`
 receives the run's track over peering. The summary reports what each peer node
 learned: the relays it saw, how many announces and subscribes passed the hash
 check, and whether it stayed a leaf (it sent no NODE_INFO and no learned path
-runs through it). For moq-peer-bench it does so per end (`pub`, `sub`), and adds
+runs through it). For moq-fabric-bench it does so per end (`pub`, `sub`), and adds
 each received track's objects, loss, duplicates, payload check, latency
 (p50/p90/p99) and header-to-first-object time, and each published track's
 object count; a received track is checked for every object once. Peer nodes run
 on Docker fabrics only.
+
+## aiomoqt-relay as a via
+
+`deployments/docker-via-example.toml` is a ring of LAPS, two aiomoqt-relay vias
+and moqx: `laps`, `via-1` (node metric 100), `moqx`, `via-2` (200).
+`suites/example-via.toml` runs the via scenarios on it: tests 1-4 peer only the
+line `laps - via-1 - moqx`, tests 5-7 the ring. The controls run the same suite
+with moqx as both vias (`docker-via-moqx-example`) and with LAPS
+(`docker-via-laps-example`, tests 1-4 only: LAPS takes no node metric), so a
+loss is attributed to the via or to the ends.
+
+```bash
+./bin/moqx-peering-build.sh docker-via-example
+./bin/laps-build.sh docker-via-example
+./bin/moqbench fabric run docker-via-example example-via
+./bin/moqbench fabric run docker-via-moqx-example example-via
+./bin/moqbench fabric run docker-via-laps-example example-via --only 1 --only 2 --only 3 --only 4
+```
+
+An aiomoqt-relay node runs from `peer_image` unless it names an `image`:
+
+    aiomoqt-relay --quic --bind 0.0.0.0 --port 4433 --cert /certs/relay.pem --key /certs/relay.key
+      --control /fabric/run/control.sock --pause-after 5 --node-id <node> --node-metric <node_metric>
+      --peer-port 33434 [--peer <address>:33434 ...]
+
+with one `--peer` per link it dials. `--pause-after 5` withdraws a track's
+fabric subscribe 5 s after its last local viewer leaves. The control socket's
+folder (`nodes/<node>/run`) is mounted in the relay and in its holder, so the
+harness and the pollers reach it from the holder across relay restarts:
+`GET /moq-fabric` gives peer state, namespaces and the samples path checks read;
+`POST /moq-fabric/peer?op=add|remove|restart|metric&host=H&port=P[&metric=M]`
+changes a peer, addressed by the session's host and port as `GET /moq-fabric`
+reports them. `op=restart` closes the session and dials again; a relay that
+answers 400 to it has no restart, and `peer.restart` is SKIP.
+
+On a VM fabric the relay runs with host networking from `peer_image`, its run
+folder under the stack on the VM (`~/<stack_dir>/<deployment>/nodes/<node>/run`),
+where the harness and load-monitor reach the control socket.
+`./bin/aiomoqt-relay-build.sh <deployment> [ref]` builds the image on the first
+relay host (the lab image, then aiomoqt from `peer_pip` resolved to a commit),
+records it in `.testbed/builds/`, and `moqbench fabric deploy` copies it to the
+other relays. On Docker, `fabric up` builds `peer_image` when the host lacks it;
+the script rebuilds it from a ref.
+
+## aiomoqt-relay in the mixed fabrics
+
+The mixed scenarios name relays by role, so each rotation is a relay order that
+puts aiomoqt-relay (`aio`) in one role, with moqx and LAPS in the others:
+
+| deployment | ingest (publisher's relay) | transit | egress | session metric 300 |
+|---|---|---|---|---|
+| `docker-mix-aio-ingest-example` | aio | laps | moqx | aio to moqx, through peer.metric once the links are up |
+| `docker-mix-aio-transit-example` | moqx | aio | laps | moqx to laps |
+| `docker-mix-aio-egress-example` | moqx | laps | aio | moqx to aio |
+
+Each is a triangle whose direct ingest-egress link costs 300, so traffic takes
+the transit relay until metric-flip makes the direct link cheaper. A
+`-line-example` beside each has the same order on a line with no metrics, for
+the line tests; a metric must be on a link of the test's topology.
+`suites/example-mix-aio.toml` runs the triangle tests (steady, propagation,
+subscribe-setup, metric-flip, late-join, fetch-peer, the datagram scenarios,
+relay-restart and its kill variant, edge-scale and namespace-tuples) and
+`suites/example-mix-aio-line.toml` the line tests (steady, peer-churn,
+relay-restart and its kill variant). The ingest rotation measures aio as the
+publisher's relay, the egress rotation as the subscriber's relay; every relay
+has subscribers in each.
+
+```bash
+./bin/moqx-peering-build.sh docker-mix-aio-ingest-example
+./bin/laps-build.sh docker-mix-aio-ingest-example
+for role in ingest transit egress; do
+  ./bin/moqbench fabric run docker-mix-aio-$role-example example-mix-aio
+  ./bin/moqbench fabric run docker-mix-aio-$role-line-example example-mix-aio-line
+done
+```
+
+aiomoqt-relay runs with `--node-id <node>`, so a restarted relay comes back
+under the label it had. A session metric it took through peer.metric is gone
+after a restart; in the ingest rotation the ingest relay restarts last.
 
 ## Adapters
 
@@ -280,8 +400,8 @@ on Docker fabrics only.
 and container (and a control sidecar when it needs one), report readiness, add,
 remove, restart and re-price a peer, and read peer state, namespaces, raw state
 and metrics. A verb the relay lacks raises `Unsupported` and the event is
-reported as skipped. `lib/fabric/moqx_peering.py` implements it for moqx and
-`lib/fabric/laps.py` for LAPS.
+reported as skipped. `lib/fabric/moqx_peering.py` implements it for moqx,
+`lib/fabric/laps.py` for LAPS and `lib/fabric/aiomoqt_relay.py` for aiomoqt-relay.
 
 ## Limits
 

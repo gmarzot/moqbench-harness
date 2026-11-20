@@ -1,0 +1,43 @@
+# Example: aiomoqt-relay as the egress relay of a mixed moq-fabric triangle on the
+# local Docker, with moqx and LAPS. The order makes moqx the ingest (publisher)
+# relay, laps the transit and aio the egress (subscriber relay). moqx's direct
+# session to aio costs 300, so traffic goes through laps until metric-flip makes
+# the direct link cheaper.
+# Clients use MoQT draft 18, the only draft LAPS clients speak. The aiomoqt-relay
+# image is the lab image plus aiomoqt from peer_pip.
+provider = "docker"
+host     = "local"
+tag      = "mixeg"
+
+[fabric]
+adapter  = "moqx-peering"
+image    = "moqx-peering:latest"          # bin/moqx-peering-build.sh
+topology = "full"
+order    = ["moqx", "laps", "aio"]
+metrics  = [["moqx", "aio", 300]]
+draft    = 18
+check_interval_ms = 2000
+
+[[nodes]]
+name        = "moqx"
+roles       = ["relay"]
+cpus        = "2-3"
+
+[[nodes]]
+name        = "laps"
+roles       = ["relay"]
+adapter     = "laps"
+image       = "laps:latest"               # bin/laps-build.sh
+admin_image = "laps:builder-latest"       # carries lapsAdmin
+cpus        = "4-5"
+
+[[nodes]]
+name        = "aio"
+roles       = ["relay"]
+adapter     = "aiomoqt-relay"
+cpus        = "6-7"
+
+[[nodes]]
+name  = "client"
+roles = ["publisher", "subscriber", "probe"]
+cpus  = "8-11"

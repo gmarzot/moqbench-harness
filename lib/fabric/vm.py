@@ -21,7 +21,8 @@ import time
 
 from fabric import adapter as adapters
 from fabric import certs, faults, topology
-from fabric.docker import ROOT, REMOTE_BIN, FabricError, Host, parse_timed, timed_out
+from fabric.docker import (ROOT, REMOTE_BIN, FabricError, Host, apply_link_delays, link_delays, parse_timed,
+                           runtime_metrics, timed_out)
 
 NFT_TABLE = 'moqbench_fabric'
 DOCKER = 'sudo docker'
@@ -172,6 +173,8 @@ class VMFabric:
         for n in self.order:
             folder = stack / 'nodes' / n
             (folder / 'certs').mkdir(parents=True, exist_ok=True)
+            for sub in self.adapter_for(n).shared_dirs(n):
+                (folder / sub).mkdir(exist_ok=True)
             for rel, text in self.adapter_for(n).render(n, ctx).items():
                 (folder / rel).write_text(text)
             pem, key = certs.ensure_leaf(self.local_dir / 'certs', n,
@@ -192,6 +195,8 @@ class VMFabric:
         ctx = self.ctx()
         adapter = self.adapter_for(node)
         svc = adapter.service(node, ctx)
+        svc['volumes'] = svc.get('volumes', []) + [f'./nodes/{node}/{sub}:{path}'
+                                                   for sub, path in adapter.shared_dirs(node).items()]
         cpus = self.nodes[node].get('cpus')
         args = ['-d', '--name', self.relay(node), '--network', 'host', '--user', self.user, '--restart', 'no',
                 '--ulimit', 'nofile=1048576:1048576', *(['--cpuset-cpus', str(cpus)] if cpus else []),
@@ -251,15 +256,18 @@ class VMFabric:
 
         self.each(self.order, relay_up)
         self.each(['ref', *self.loads], client_up)
+        apply_link_delays(self)
         self.wait_ready(wait_s)
-        return self.wait_links(wait_s)
+        took = self.wait_links(wait_s)
+        runtime_metrics(self)
+        return took
 
     def down(self):
         def relay_down(n):
             self.hostfor(n).sh(f'{DOCKER} rm -f {self.relay(n)} {self.sidecar(n)} >/dev/null 2>&1; '
                                f'sudo nft delete table inet {NFT_TABLE} 2>/dev/null; true', check=False)
         self.each(self.order, relay_down)
-        self.clear_impairments()
+        self.clear_impairments(keep_delays=False)
 
     def deploy(self, source=None):
         """Copy each relay node's images to its host when it lacks them, from source (an ssh target) or
@@ -334,10 +342,14 @@ class VMFabric:
         except (FabricError, ValueError, KeyError):
             return False
 
-    def admin(self, node, method, path, body=None):
-        url = f'http://127.0.0.1:8000{path}'
+    def shared_dir(self, node, sub, path):
+        """Where the relay's VM sees its shared folder: under the stack, relative to the login's home."""
+        return f'{self.root}/nodes/{node}/{sub}'
+
+    def admin(self, node, method, path, body=None, base='http://127.0.0.1:8000'):
+        url = f'{base}{path}'
         arg = f' {shlex.quote(json.dumps(body))}' if body is not None else ''
-        r = self.exec(node, f'python3 {self.bin_dir}/fabric-admin.py {method} {url}{arg}')
+        r = self.exec(node, f'python3 {self.bin_dir}/fabric-admin.py {method} {shlex.quote(url)}{arg}')
         return json.loads(r.stdout)
 
     def sidecar_exec(self, node, command, timeout=60):
@@ -383,14 +395,14 @@ class VMFabric:
         def start(t):
             extra = ''
             if t in self.order:
-                urls = self.adapter_for(t).poll_urls(t)
+                urls = self.adapter_for(t).poll_urls(t, self)
                 extra = (f'--comm moqx --nft {NFT_TABLE} --json-interval {peering_s} '
                          + ' '.join(f'--json-url {k}={u}' for k, u in urls.items() if k == 'peering'))
             self.exec(t, f'mkdir -p {out} && rm -f {out}/monitor.stop && python3 -u {self.bin_dir}/load-monitor.py '
                       f'--duration {int(seconds)} --interval {interval} --stop-file {out}/monitor.stop {extra} '
                       f'> {out}/monitor-{t}.jsonl 2> {out}/monitor-{t}.err', detach=True)
-            if state_ms and t in self.order and 'state' in self.adapter_for(t).poll_urls(t):
-                self.exec(t, f'python3 {self.bin_dir}/fabric-poll.py --url state={self.adapter_for(t).poll_urls(t)["state"]} '
+            if state_ms and t in self.order and 'state' in self.adapter_for(t).poll_urls(t, self):
+                self.exec(t, f'python3 {self.bin_dir}/fabric-poll.py --url state={self.adapter_for(t).poll_urls(t, self)["state"]} '
                           f'--interval {state_ms / 1000} --duration {state_s or seconds} '
                           f'--out {out}/poll-state-{t}.jsonl', detach=True)
         self.each(self.targets(), start)
@@ -406,10 +418,14 @@ class VMFabric:
         at, other = (sender, peer) if side == 'send' else (peer, sender)
         index = self.order.index(other) + 1
         own, far = self.hosts[at]['private'], self.hosts[other]['private']
+        # The static delay shares the sending side's ifb: an event there keeps it, a clear restores it.
+        ms = self.spec.link_delay(sender, peer) if side == 'send' else 0
         if verb == 'link.clear':
-            cmd = faults.ifb_clear_cmd(own, index, side)
+            cmd = (faults.ifb_impair_cmd(own, far, index, side, faults.delay_spec(ms)) if ms
+                   else faults.ifb_clear_cmd(own, index, side))
         else:
-            cmd = faults.ifb_impair_cmd(own, far, index, side, spec if verb == 'link.impair' else 'loss 100%')
+            cmd = faults.ifb_impair_cmd(own, far, index, side,
+                                        faults.with_delay(spec, ms) if verb == 'link.impair' else 'loss 100%')
         r = self.exec(at, faults.timed(cmd))
         return {'node': at, 'side': side, **json.loads(r.stdout)}
 
@@ -417,17 +433,26 @@ class VMFabric:
         r = self.hostfor(node).sh(faults.timed(faults.node_cmd(DOCKER, verb, self.relay(node), signal, grace_s)))
         return json.loads(r.stdout)
 
-    def leftovers(self):
-        found = self.each(self.order, lambda n: self.exec(n, faults.IFB_CHECK_CMD, check=False).stdout.strip())
-        return {n: text.splitlines() for n, text in found.items() if text}
+    def delay_ifbs(self, node):
+        """{ifb device: ms} holding node's static delays toward its peers."""
+        return {faults.ifb_name('send', self.order.index(o) + 1): ms
+                for p, ms in link_delays(self).items() if node in p for o in p if o != node}
 
-    def clear_impairments(self):
+    def leftovers(self):
+        """{node: lines} of impairments beyond the static link delays."""
+        found = self.each(self.order, lambda n: self.exec(n, faults.IFB_CHECK_CMD, check=False).stdout.strip())
+        left = {n: faults.residual(text.splitlines(), (), self.delay_ifbs(n)) for n, text in found.items() if text}
+        return {n: lines for n, lines in left.items() if lines}
+
+    def clear_impairments(self, keep_delays=True):
         def clear(n):
             own = self.hosts[n]['private']
             for i in range(1, len(self.order) + 1):
                 for side in ('send', 'receive'):
                     self.exec(n, faults.ifb_clear_cmd(own, i, side), check=False)
         self.each(self.order, clear)
+        if keep_delays:
+            apply_link_delays(self)
         return self.leftovers()
 
     def collect(self, label, out_dir):

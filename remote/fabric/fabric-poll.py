@@ -3,26 +3,22 @@
 
   fabric-poll.py [--url NAME=URL ...] [--netdev] --interval S --duration S --out PATH
 
-A URL's body is written only when it changed since its last sample. --netdev
-writes this namespace's interface addresses once, then every interface's
-rx/tx bytes and packets each interval.
+A URL is http://... or http+unix://<quoted socket path>/path. Its body is
+written only when it changed since its last sample. --netdev writes this
+namespace's interface addresses once, then every interface's rx/tx bytes and
+packets each interval.
 """
 import argparse
 import json
 import subprocess
 import time
-import urllib.error
-import urllib.request
+
+from unixhttp import request
 
 
 def fetch(url):
-    try:
-        with urllib.request.urlopen(url, timeout=2) as r:
-            return r.status, r.read().decode(errors='replace')
-    except urllib.error.HTTPError as e:
-        return e.code, ''
-    except OSError as e:
-        return 0, str(e)
+    status, body = request(url, timeout=2)
+    return status, body if status < 400 else ''
 
 
 def netdev():

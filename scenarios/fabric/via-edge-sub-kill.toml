@@ -1,0 +1,38 @@
+description = "Losses past the via: a publisher on laps, a line laps - via-1 - moqx, subscribers on via-1 and on moqx. SIGKILL the subscriber on moqx, later kill moqx. The subscriber on via-1 loses nothing and has no gap beyond the normal object interval (twice it, by default) at either event."
+mode        = "stream"
+publisher   = "laps"
+subscribers = []
+peering_poll_s = 1
+
+[[subscriber]]
+name = "local"
+on   = "via-1"
+
+[[subscriber]]
+name   = "far"
+on     = "moqx"
+expect = "none"
+
+[[event]]
+at_s = 3
+verb = "sub.start"
+sub  = "local"
+
+[[event]]
+at_s = 3
+verb = "sub.start"
+sub  = "far"
+
+[[event]]
+at_s   = 20
+verb   = "sub.kill"
+sub    = "far"
+expect = "no-gap"
+subs   = ["local"]
+
+[[event]]
+at_s   = 35
+verb   = "node.kill"
+on     = "moqx"
+expect = "no-gap"
+subs   = ["local"]
