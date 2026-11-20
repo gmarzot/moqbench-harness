@@ -57,6 +57,8 @@ class FakeHost:
             out = PING + ('PING-OK\n' if 'PING-OK' in script else '')
         elif 'nft -j list table' in script and self.nft:
             out = json.dumps(self.nft)
+        elif 'tc -s -j qdisc show dev' in script:
+            out = json.dumps([dict(kind='netem', handle='1:', packets=7, bytes=700, drops=1)])
         return SimpleNamespace(stdout=out, stderr='', returncode=0)
 
     def push(self, local, remote):
@@ -268,6 +270,10 @@ class Emulator(unittest.TestCase):
         self.assertEqual(c['rev0'], dict(packets=5, bytes=500))
         self.assertEqual(c['outage'], dict(packets=5, bytes=50))
         self.assertEqual(set(c), {'fwd0', 'cross-fwd0', 'rev0', 'cross-rev0', 'outage'})
+
+    def test_qdisc_stats_name_their_ifb(self):
+        qd = provider().emulator(20e6).qdisc_stats()
+        self.assertEqual(sorted(q['dev'] for q in qd), ['mbcf0', 'mbcr0'])
 
     def test_report_reads_the_ifb_qdiscs(self):
         paths = topology.VmPaths(SRC, DST, lambda ns: 'ens3')

@@ -264,9 +264,10 @@ class VmEmulator(Emulator):
     def qdisc_stats(self):
         out = []
         for ns in ('dst', 'src'):
-            rc, text = self.node_exec(ns, f'tc -s -j qdisc show dev {self.paths.ifb(ns)}')
+            dev = self.paths.ifb(ns)
+            rc, text = self.node_exec(ns, f'tc -s -j qdisc show dev {dev}')
             if rc == 0:
-                out += parse_qdiscs(text)
+                out += [dict(q, dev=q.get('dev') or dev) for q in parse_qdiscs(text)]
         return out
 
     def clear(self):
