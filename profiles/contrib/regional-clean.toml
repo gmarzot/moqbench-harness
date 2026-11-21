@@ -1,4 +1,4 @@
-id = "P1"
+id = "regional-clean"
 name = "Clean regional"
 basis = "G.1050 profile A; RIST ARQ best practices, short haul"
 rtt_ms = 20

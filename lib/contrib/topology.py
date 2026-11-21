@@ -6,6 +6,10 @@ reverse profile on its egress toward src (va0). With dual_path a second, indepen
 (va1/vb1) gives a second path. Each endpoint has a dummy interface for its local multicast groups:
 the source fan-out in src, the receiver outputs in dst. Offloads are off on every veth so each
 datagram meets the emulator as its own packet.
+
+VmPaths is the same interface for two VMs: the real path between their addresses is the WAN, each
+direction impaired on its receiver's ingress through an ifb, and the multicast groups looped back on
+a dummy interface on each VM.
 """
 import ipaddress
 
@@ -17,6 +21,7 @@ PORTS_OUT = {'out': 6000, 'second': 6001, 'raw': 6002}
 
 class Paths:
     """Interfaces and addresses of a contribution topology under a /16."""
+    wall_clock = False
 
     def __init__(self, subnet, dual=False):
         base = int(ipaddress.ip_network(subnet).network_address)
@@ -80,16 +85,89 @@ class Paths:
             return 'src', '127.0.0.1', self.src_ip()
         return 'dst', self.dst_ip(), '127.0.0.1'
 
+    def qdisc_samplers(self):
+        """[(namespace, sampler name, [(side, device)])] for the 100 ms qdisc samplers."""
+        return [('wan', 'qdisc-wan', [('fwd', self.fwd_dev[0]), ('rev', self.rev_dev[0])])]
 
-def vm_render(ifaces):
-    """Shell per VM for a two-VM path that impairs each direction on its receiver's ingress through an
-    ifb, so no emulator VM is needed. Rendered only; VM runs are not enabled."""
-    lines = {'src': [], 'dst': []}
-    for role in ('dst', 'src'):
-        nic = ifaces[role]
-        lines[role] += [f'sudo ethtool -K {nic} gro off lro off {OFFLOADS} || true',
-                        'sudo modprobe ifb numifbs=1', 'sudo ip link set ifb0 up',
-                        f'sudo tc qdisc replace dev {nic} handle ffff: ingress',
-                        f'sudo tc filter replace dev {nic} parent ffff: protocol ip prio 10 u32 match ip protocol 17 0xff '
-                        'action mirred egress redirect dev ifb0']
-    return lines
+
+FWD_IFB, REV_IFB = 'mbcf0', 'mbcr0'
+MC_DEV = 'mbcmc0'
+IFB_PREF = 300
+VM_OFFLOADS = 'gro off lro off ' + OFFLOADS
+VM_OFFLOADS_ON = 'gro on gso on tso on'
+
+
+class VmPaths:
+    """Two VMs: src and dst addresses, the interface each reaches the other on (nic(ns), resolved on
+    first use), the forward ifb on dst and the reverse ifb on src."""
+    wall_clock = True
+    dual = False
+    fwd_dev = [FWD_IFB]
+    rev_dev = [REV_IFB]
+
+    def __init__(self, src_addr, dst_addr, nic):
+        self.addr = {'src': src_addr, 'dst': dst_addr}
+        self.nic = nic
+
+    @property
+    def links(self):
+        """The one path, keyed as Paths.links: captures on src's interface and on dst's ifb (after
+        the forward tree), the trees on the ifbs."""
+        return [dict(k=0, src_if=self.nic('src'), dst_if=FWD_IFB, wan_a=REV_IFB, wan_b=FWD_IFB,
+                     src_ip=self.addr['src'], dst_ip=self.addr['dst'])]
+
+    def src_ip(self, k=0):
+        return self.addr['src']
+
+    def dst_ip(self, k=0):
+        return self.addr['dst']
+
+    @staticmethod
+    def peer(ns):
+        return 'dst' if ns == 'src' else 'src'
+
+    @staticmethod
+    def ifb(ns):
+        """The ifb on a node: its ingress from the peer, so dst holds the forward direction."""
+        return FWD_IFB if ns == 'dst' else REV_IFB
+
+    @staticmethod
+    def node_of(dev):
+        return 'dst' if dev == FWD_IFB else 'src'
+
+    def setup_cmds(self, ns):
+        """Commands on a node (host network namespace) that loop multicast back locally and send
+        everything from the peer through the node's ifb."""
+        nic, ifb, peer = self.nic(ns), self.ifb(ns), self.addr[self.peer(ns)]
+        return [f'ethtool -K {nic} {VM_OFFLOADS} >/dev/null 2>&1 || true',
+                f'ip link add {MC_DEV} type dummy 2>/dev/null || true', f'ip link set {MC_DEV} multicast on up',
+                f'ip addr replace 169.254.79.1/32 dev {MC_DEV}', f'ip route replace {MCAST} dev {MC_DEV}',
+                f'ip link add {ifb} type ifb 2>/dev/null || true', f'ip link set {ifb} up',
+                f'tc qdisc add dev {nic} clsact 2>/dev/null || true',
+                f'tc filter del dev {nic} ingress pref {IFB_PREF} 2>/dev/null || true',
+                f'tc filter add dev {nic} ingress pref {IFB_PREF} protocol ip flower src_ip {peer} '
+                f'action mirred egress redirect dev {ifb}']
+
+    def teardown_cmds(self, nic):
+        """Commands that remove everything setup_cmds and the emulator leave on a node."""
+        return ['nft delete table inet mbc 2>/dev/null', f'tc filter del dev {nic} ingress pref {IFB_PREF} 2>/dev/null',
+                f'ip link del {FWD_IFB} 2>/dev/null', f'ip link del {REV_IFB} 2>/dev/null',
+                f'ip link del {MC_DEV} 2>/dev/null', f'ethtool -K {nic} {VM_OFFLOADS_ON} >/dev/null 2>&1']
+
+    def leftover_cmd(self, nic):
+        """Shell that prints what setup_cmds or the emulator left on a node, one item per line."""
+        return (f"ip -o link show {FWD_IFB} 2>/dev/null | cut -d: -f2; ip -o link show {REV_IFB} 2>/dev/null | cut -d: -f2; "
+                f"ip -o link show {MC_DEV} 2>/dev/null | cut -d: -f2; "
+                f"tc filter show dev {nic} ingress pref {IFB_PREF} 2>/dev/null | grep -m1 mirred; "
+                f"for d in {FWD_IFB} {REV_IFB}; do tc qdisc show dev $d 2>/dev/null | grep -E 'netem|tbf|fq_codel 30:'; done; "
+                "nft list table inet mbc 2>/dev/null | head -1; true")
+
+    def relay_addresses(self, placement):
+        if placement == 'last-mile':
+            return 'src', '127.0.0.1', self.src_ip()
+        return 'dst', self.dst_ip(), '127.0.0.1'
+
+    def qdisc_samplers(self):
+        return [('dst', 'qdisc-wan', [('fwd', FWD_IFB)]), ('src', 'qdisc-rev', [('rev', REV_IFB)])]
+
+

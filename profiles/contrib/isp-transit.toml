@@ -1,0 +1,37 @@
+id = "isp-transit"
+name = "Best-effort ISP transit"
+role = "realistic"
+description = "Long-haul best-effort Internet: 100 ms RTT, a 2x bottleneck behind a 100 ms drop-tail buffer that four TCP uploads fill for 10 s about every 42 s, a 256 ms outage and an 8 ms route step per run; loss comes from the queue, not a commanded rate."
+basis = "ITU-T G.1050-2007 severity C/D events; RFC 7928 congestion phases; flent RRUL 4-flow load; FCC Measuring Broadband America latency under load"
+rtt_ms = 100
+
+[forward]
+cap = 2.0
+cap_latency_ms = 100
+seed = 4031
+
+[reverse]
+seed = 4032
+
+[[event]]
+kind = "cross"
+label = "congestion"
+at_s = 23.3
+every_s = 41.7
+for_s = 10
+streams = 4
+
+[[event]]
+kind = "outage"
+label = "outage-256ms"
+at_s = 61.7
+every_s = 900
+for_ms = 256
+
+[[event]]
+kind = "step"
+label = "route-step-8ms"
+at_s = 91.1
+every_s = 900
+delta_ms = 8
+for_s = 20

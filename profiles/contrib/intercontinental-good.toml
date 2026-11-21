@@ -1,4 +1,4 @@
-id = "P4"
+id = "intercontinental-good"
 name = "Intercontinental, good"
 basis = "Backbone transatlantic hub RTT; G.1050 (2007) severity C"
 rtt_ms = 100

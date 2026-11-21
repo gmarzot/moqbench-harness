@@ -11,7 +11,6 @@ from pathlib import Path
 import time
 
 from fabric.report import pct, r3
-from contrib import emu as emulator
 from contrib import profiles, report
 from contrib.lanes import Proc
 
@@ -29,8 +28,7 @@ def host_settings(prov):
     rc, text = prov.exec('dst', 'python3 -c "import socket;s=socket.socket(2,2);'
                                 's.setsockopt(1,8,8<<20);print(s.getsockopt(1,8))"')
     out['dst_rcvbuf_for_8MB'] = int(text.strip()) if rc == 0 and text.strip().isdigit() else None
-    rc, text = prov.exec('wan', 'uname -r')
-    out['kernel'] = text.strip()
+    out['kernel'] = prov.sh('uname -r', check=False).stdout.strip()
     return out
 
 
@@ -41,6 +39,34 @@ def ensure_rmem(prov, minimum=RMEM_MIN):
     if before is not None and before < minimum:
         prov.sh(f'sudo -n sysctl -w net.core.rmem_max={minimum}', check=False)
     return before, host_settings(prov).get('rmem_max')
+
+
+def host_info(prov):
+    """host.json: the host settings with rmem raised; per node on a VM deployment."""
+    if getattr(prov, 'nodes', None):
+        return {ns: host_info(NodeView(prov, ns)) for ns in prov.nodes}
+    before, after = ensure_rmem(prov)
+    return dict(host_settings(prov), rmem_max_before=before, rmem_max_after=after)
+
+
+def settings(prov):
+    """host_settings, per node on a VM deployment."""
+    if getattr(prov, 'nodes', None):
+        return {ns: host_settings(NodeView(prov, ns)) for ns in prov.nodes}
+    return host_settings(prov)
+
+
+class NodeView:
+    """One VM node as host_settings and ensure_rmem see a provider."""
+
+    def __init__(self, prov, ns):
+        self.node = prov.nodes[ns]
+
+    def sh(self, script, check=True, timeout=300):
+        return self.node.sh(script, check=check, timeout=timeout)
+
+    def exec(self, ns, cmd):
+        return self.node.exec(cmd)
 
 
 def ge_sigma_pct(side, n):
@@ -57,6 +83,24 @@ def ge_sigma_pct(side, n):
         if lam < 1:
             var += 2 * (bad - good) ** 2 * pb * (1 - pb) * lam / (1 - lam)
     return 100 * math.sqrt(max(var, 0.0) / n)
+
+
+def loss_periods(received, sent):
+    """RFC 3357 loss periods over sequence numbers 0..sent-1: (period lengths, distances between
+    period starts), in packets."""
+    lengths, starts, run = [], [], 0
+    for seq in range(sent):
+        if seq in received:
+            if run:
+                lengths.append(run)
+                run = 0
+        else:
+            if not run:
+                starts.append(seq)
+            run += 1
+    if run:
+        lengths.append(run)
+    return lengths, [b - a for a, b in zip(starts, starts[1:])]
 
 
 def analyse(run, prof, pps, seconds):
@@ -86,6 +130,12 @@ def analyse(run, prof, pps, seconds):
     ok_delay = owd50 is not None and prof.forward.delay_ms <= owd50 <= prof.forward.delay_ms + slot_f + 2
     rtt50 = pct(rtt, 50)
     rtt_cmd = prof.forward.delay_ms + prof.reverse.delay_ms
+    lengths, distances = loss_periods(got, sent)
+    periods = dict(count=len(lengths), mean_pkts=r3(sum(lengths) / len(lengths)) if lengths else None,
+                   p99_pkts=pct(lengths, 99) if lengths else None, max_pkts=max(lengths, default=None),
+                   mean_ms=r3(1000 * sum(lengths) / len(lengths) / pps) if lengths and pps else None,
+                   distance_mean_pkts=r3(sum(distances) / len(distances)) if distances else None)
+    burst = prof.forward.burst_pkts()
     ok_rtt = rtt50 is not None and rtt_cmd <= rtt50 <= rtt_cmd + 2 * slot_f + 3
     return dict(profile=prof.id, packets=sent, fwd_loss_pct=r3(fwd_loss), fwd_expected_pct=r3(exp_f),
                 fwd_sigma_pct=r3(sig_f), rev_loss_pct=r3(rev_loss), rev_expected_pct=r3(exp_r),
@@ -93,14 +143,14 @@ def analyse(run, prof, pps, seconds):
                 owd_commanded_ms=prof.forward.delay_ms, slot_ms=list(prof.forward.slot_ms or ()),
                 rtt_ms=dict(p50=r3(rtt50), p99=r3(pct(rtt, 99))), rtt_commanded_ms=rtt_cmd,
                 reordered=reordered, reorder_events=events, reorder_commanded_pct=prof.forward.reorder_pct,
+                fwd_loss_periods=periods, fwd_burst_commanded_pkts=r3(burst) if burst else None,
                 ok=bool(ok_loss and ok_delay and ok_rtt), ok_loss=ok_loss, ok_delay=ok_delay, ok_rtt=ok_rtt)
 
 
 def run(prov, profile_ids, seconds, root, tier):
     bin_dir = prov.bin_dir()
     rows = []
-    host = dict(zip(('rmem_max_before', 'rmem_max_after'), ensure_rmem(prov)))
-    host.update(host_settings(prov))
+    host = host_info(prov)
     (Path(root) / 'host.json').write_text(json.dumps(host, indent=1) + '\n')
     for i, pid in enumerate(profile_ids, 1):
         prof = profiles.load(pid)
@@ -108,7 +158,7 @@ def run(prov, profile_ids, seconds, root, tier):
         out = Path(root) / label
         out.mkdir(parents=True, exist_ok=True)
         run_dir = prov.run_dir(label, out)
-        emu = emulator.Emulator(prov.paths, prov.wan_exec, tier.mux_bps)
+        emu = prov.emulator(tier.mux_bps)
         emu.build(prof)
         names = []
         try:
@@ -139,11 +189,13 @@ def run(prov, profile_ids, seconds, root, tier):
 
 
 def line(r):
-    return (f"{r['profile']:<4} fwd loss {r['fwd_loss_pct']}% (cmd {r['fwd_expected_pct']} ± {r['fwd_sigma_pct']}), "
+    return (f"{r['profile']:<21} fwd loss {r['fwd_loss_pct']}% (cmd {r['fwd_expected_pct']} ± {r['fwd_sigma_pct']}), "
             f"rev {r['rev_loss_pct']}% (cmd {r['rev_expected_pct']} ± {r['rev_sigma_pct']}), "
             f"OWD p1/p50/p99 {r['owd_ms']['p1']}/{r['owd_ms']['p50']}/{r['owd_ms']['p99']} ms (cmd {r['owd_commanded_ms']}"
             f"{' + slot ' + str(r['slot_ms']) if r['slot_ms'] else ''}), RTT p50 {r['rtt_ms']['p50']} ms "
-            f"(cmd {r['rtt_commanded_ms']}), reordered {r['reordered']} in {r['reorder_events']} events  "
+            f"(cmd {r['rtt_commanded_ms']}), reordered {r['reordered']} in {r['reorder_events']} events, "
+            f"loss periods {r['fwd_loss_periods']['count']} of mean {r['fwd_loss_periods']['mean_pkts']} pkts "
+            f"(cmd {r['fwd_burst_commanded_pkts']})  "
             f"{'OK' if r['ok'] else 'CHECK'}")
 
 

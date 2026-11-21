@@ -2,20 +2,31 @@
 
 Order: emulator tree and counters; taps, analyser and probes; the lane's relay, receivers and senders;
 the paced source; subscribers. The measurement window opens join_s after the first source datagram;
-profile events are timed from it. At the end the source stops, the lane drains, everything stops, and
+profile events are timed from it, cross-traffic flows included (iperf3 from src to a server in dst). At the end the source stops, the lane drains, everything stops, and
 logs, counters and the summary land in the run folder.
+
+With capture set, tcpdump records each endpoint's WAN-facing interface (headers: 96 bytes per packet;
+full: whole packets, and the aiomoqt endpoints' TLS keys), every aiomoqt endpoint writes picoquic
+qlog, and the bottleneck's qdiscs are sampled every 100 ms. Captures and qlogs are gzipped on
+collection.
+
+On a VM deployment every tap stamps CLOCK_REALTIME, and each run's meta records both nodes' chrony
+tracking and the unimpaired RTT before and after the run.
 """
+import gzip
 import json
 from pathlib import Path
+import re
 import shlex
+import shutil
 import threading
 import time
 
-from contrib import emu as emulator
-from contrib import lanes, report, sources
+from contrib import lanes, profiles, report, sources
 from contrib.lanes import Proc
 
 STAGES = ('relay', 'receiver', 'sender', 'source', 'subscriber')
+SNAPLEN = {'headers': 96, 'full': 0}
 
 
 def source_seconds(scenario, profile, test):
@@ -60,15 +71,17 @@ class Cell:
                              variant=variant, playout_ms=list(test.playout_ms),
                              slot_max_ms=slot[1] if slot else 0.0, ingest=test.ingest, features=features or {},
                              relay=test.relay)
+        self.wall = lane.wall_clock(self.ctx) or prov.paths.wall_clock
         self.names = []
         self.samples = []
+        self.cross = {}
 
     def helpers(self):
         """Taps, analyser and probes for this lane."""
         bin_ = 'python3 /contrib/bin'
         form = self.lane.in_tap_hash(self.ctx)
         frames = f'--frames --hash --hash-form {form}' if form else '--frames'
-        if self.lane.wall_clock(self.ctx):
+        if self.wall:
             frames += ' --clock real'
         gap = self.scen['gap_ms']
         procs = [Proc('tap-in', 'src', 'tools',
@@ -84,11 +97,74 @@ class Cell:
             main = next(name for name in taps if name != 'raw')
             g, p, _ = taps[main]
             procs.append(Proc('analyser', 'dst', 'tools', f'tsp -I ip {g}:{p} -P continuity -P pcrverify -O drop'))
+        if self.test.capture != 'none':
+            snap = SNAPLEN[self.test.capture]
+            ports = f'{profiles.CROSS_PORT}-{profiles.CROSS_PORT + profiles.CROSS_MAX - 1}'
+            for ln in self.prov.paths.links:
+                for ns, dev in (('src', ln['src_if']), ('dst', ln['dst_if'])):
+                    procs.append(Proc(f'pcap-{ns}{ln["k"]}', ns, 'tools',
+                                      f'tcpdump -i {dev} -p -n -s {snap} -U -w /out/{ns}{ln["k"]}.pcap '
+                                      f'not portrange {ports}', root=True))
+            for ns, name, devs in self.prov.paths.qdisc_samplers():
+                sides = ' '.join(f'--cmd {d}="tc -s -j qdisc show dev {dev}"' for d, dev in devs)
+                procs.append(Proc(name, ns, 'tools', f'{bin_}/sampler.py {sides} --interval 0.1 --out /out/{name}.jsonl'))
+        for k, _ in enumerate(self.profile.cross_events()):
+            procs.append(Proc(f'cross-srv{k + 1}', 'dst', 'tools',
+                              f'iperf3 -s -p {profiles.CROSS_PORT + k} -J --logfile /out/cross-srv{k + 1}.json'))
         if self.lane.relay and self.lane.relay_impl(self.ctx) == 'moqx':
             procs.append(Proc('relay-admin', self.lane.relay_ns(self.ctx), 'tools',
                               f'{bin_}/sampler.py --url metrics=http://127.0.0.1:{lanes.ADMIN_PORT}/metrics '
                               f'--interval 1 --out /out/relay-admin.jsonl'))
         return procs
+
+    def cross_handlers(self, run_dir, bin_dir):
+        """Timeline handlers that start a cross flow's iperf3 client in src and stop it."""
+        def on(args):
+            name = 'cross-' + re.sub(r'[^A-Za-z0-9]+', '-', args['name']).strip('-')
+            cmd = (f"iperf3 -c {self.prov.paths.dst_ip()} -p {args['port']} -t {profiles.fmt(args['for_s'])} -i 1 -J "
+                   f"--connect-timeout 3000 --logfile /out/{name}.json")
+            if args['proto'] == 'udp':
+                cmd += f" -u -l 1200 -b {int(args['load'] * profiles.l2_bps(self.tier.mux_bps))}"
+            else:
+                cmd += (f" -P {args['streams']}" if args['streams'] > 1 else '') + (f" -C {args['cc']}" if args['cc'] else '')
+            proc = Proc(name, 'src', 'tools', cmd)
+            t0 = time.time()
+            n = self.prov.start(proc, run_dir, bin_dir, self.cid(proc))
+            self.names.append((n, name))
+            self.cross[args['name']] = n
+            return dict(action='cross_on', **args, command=cmd, t0=t0, t1=time.time())
+
+        def off(args):
+            n = self.cross.pop(args['name'], None)
+            t0 = time.time()
+            if n:
+                self.prov.stop([n], signal='INT', grace_s=2)
+            return dict(action='cross_off', **args, t0=t0, t1=time.time())
+        return {'cross_on': on, 'cross_off': off}
+
+    def capture_env(self, procs, run_dir):
+        """qlog (and with full capture, TLS keys) for every aiomoqt endpoint; returns the qlog folders."""
+        if self.test.capture == 'none':
+            return []
+        dirs = []
+        for p in procs:
+            if p.image != 'aiomoqt':
+                continue
+            dirs.append(f'qlog-{p.name}')
+            self.prov.sh(f'mkdir -p -m 777 {shlex.quote(run_dir)}/{dirs[-1]}')
+            # A text log raises picoquic's log level, so qlog keeps every packet rather than the first 100.
+            p.env = dict(p.env, AIOPQUIC_QLOG_DIR=f'/out/{dirs[-1]}', AIOPQUIC_TEXTLOG_FILE='/dev/null')
+            if self.test.capture == 'full':
+                p.env['SSLKEYLOGFILE'] = f'/out/keys-{p.name}.log'
+        return dirs
+
+    def compress_captures(self):
+        """gzip the run's pcaps and qlogs in place."""
+        for f in [*self.out.glob('*.pcap'), *self.out.glob('qlog-*/*')]:
+            if f.is_file() and f.suffix != '.gz':
+                with open(f, 'rb') as src, gzip.open(f'{f}.gz', 'wb', compresslevel=1) as dst:
+                    shutil.copyfileobj(src, dst, 1 << 20)
+                f.unlink()
 
     def sample_emulator(self, emu, stop):
         while not stop.wait(1.0):
@@ -110,7 +186,7 @@ class Cell:
             folder, name = ensure_source(prov, self.tier, self.length)
         for fname, text in self.lane.files(self.ctx).items():
             prov.write(run_dir, fname, text)
-        emu = emulator.Emulator(prov.paths, prov.wan_exec, self.tier.mux_bps)
+        emu = prov.emulator(self.tier.mux_bps)
         meta = dict(label=self.label, lane=self.lane.name, variant=self.variant, repeat=self.repeat,
                     profile=self.profile.summary(self.tier.mux_bps), profile_id=self.profile.id,
                     rtt_ms=self.profile.rtt_ms, placement=self.test.placement, ingest=self.test.ingest,
@@ -118,13 +194,17 @@ class Cell:
                     seconds=self.seconds, join_s=self.scen['join_s'], break_ms=self.scen['break_ms'],
                     budgets_ms=self.test.budgets(self.profile.rtt_ms),
                     playout_ms=self.ctx.playout_ms, features=self.ctx.features, taps=list(self.lane.taps(self.ctx)),
-                    wall_clock=self.lane.wall_clock(self.ctx),
+                    wall_clock=self.wall,
                     seeds=self.profile.seeds(self.repeat), topology=dict(links=prov.paths.links))
+        path_meta = getattr(prov, 'cell_meta', None)
+        if path_meta:
+            meta['path'] = dict(start=path_meta())
         emu.build(self.profile, self.repeat)
         meta['emulator_build'] = emu.qdisc_stats()
         stop = threading.Event()
         sampler = threading.Thread(target=self.sample_emulator, args=(emu, stop), daemon=True)
         procs = []
+        timeline = None
         try:
             sampler.start()
             helpers = self.helpers()
@@ -132,6 +212,7 @@ class Cell:
                 self.names.append((prov.start(p, run_dir, bin_dir, self.cid(p), sources_dir=folder), p.name))
             time.sleep(1.0)
             lane_procs = self.lane.procs(self.ctx)
+            meta['capture'] = dict(mode=self.test.capture, qlog=self.capture_env(lane_procs, run_dir))
             source = [Proc('source', 'src', 'tools',
                            sources.tsp_cmd('/out/source.fifo' if live else f'/sources/{name}'), 'source')]
             if live:
@@ -155,7 +236,8 @@ class Cell:
             actions = self.profile.timeline(self.seconds, start_s=self.scen['join_s'])
             meta['events_planned'] = [dict(t_s=t, action=a, **args) for t, a, args in actions]
             timeline = threading.Thread(target=emu.run_timeline,
-                                        args=(actions, t_source, str(self.out / 'faults.jsonl'), stop.is_set),
+                                        args=(actions, t_source, str(self.out / 'faults.jsonl'), stop.is_set,
+                                              self.cross_handlers(run_dir, bin_dir)),
                                         daemon=True)
             timeline.start()
             end = t_source + self.scen['join_s'] + self.seconds + 2
@@ -167,6 +249,8 @@ class Cell:
             time.sleep(self.scen['drain_s'])
         finally:
             stop.set()
+            if timeline:
+                timeline.join(timeout=10)
             meta['ended'] = time.time()
             lane_names = [n for _, n in reversed(procs)]
             prov.stop(lane_names)
@@ -174,6 +258,8 @@ class Cell:
             meta['emulator_final'] = dict(nft=emu.counters(), qdisc=emu.qdisc_stats())
             emu.clear()
             meta['leftover_impairments'] = emu.leftovers()
+            if path_meta:
+                meta['path']['end'] = path_meta()
             meta['exit'] = {}
             for n, short in self.names:
                 st = prov.state(n)
@@ -181,6 +267,8 @@ class Cell:
                 (self.out / f'{short}.log').write_text(prov.logs(n))
             prov.remove([n for n, _ in self.names])
             prov.collect(run_dir, self.out)
+            if self.test.capture != 'none':
+                self.compress_captures()
             (self.out / 'emu-samples.jsonl').write_text(''.join(json.dumps(s) + '\n' for s in self.samples))
             (self.out / 'meta.json').write_text(json.dumps(meta, indent=1, default=str) + '\n')
         summary = report.analyze(self.out)

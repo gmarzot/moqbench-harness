@@ -19,12 +19,15 @@ docker pull ghcr.io/openmoq/moqx:v0.3.7-amd64
 ./bin/moqbench contrib up docker-contrib-example          # namespaces, veths, routes; prints the checks
 ./bin/moqbench contrib calibrate docker-contrib-example   # what the emulator applies, per profile
 ./bin/moqbench contrib run docker-contrib-example example-contrib --scenario dev \
-    --lane srt --lane moqt-moq2ts --profile REF --variant D=4xRTT --variant relay_cc=bbr2 --repeats 1
+    --lane srt --lane moqt-moq2ts --profile random-loss --variant D=4xRTT --variant relay_cc=bbr2 --repeats 1
 ./bin/moqbench contrib report results/contrib/<run>       # re-analyze run folders
+./bin/moqbench contrib explain results/contrib/<run>      # why each late stretch was late
 ```
 
 Results land in `results/contrib/<deployment>-<stamp>/<NNN>-<lane>-<profile>-<variant>-r<repeat>/`,
-with `suite.json` and `host.json` beside them. `results/` is ignored by git.
+with `suite.json` and `host.json` beside them. `results/` is ignored by git. Each run prints one
+line: delay, PCR loss and breaks at its first output (for a MoQT lane, the first playout buffer), and
+late or lost at each D from raw arrivals when the lane has them.
 
 ## Topology
 
@@ -51,6 +54,11 @@ with `suite.json` and `host.json` beside them. `results/` is ignored by git.
   to the receiver is impaired.
 - `first-mile`: the relay in `dst`. The publisher's delivery to the relay is impaired.
 
+With `relay = "none"` (first-mile only, aiomoqt LOC and MSFTS lanes) there is no relay: `sub_media`
+listens on raw QUIC in `dst` and `pub_media --pub-ns` in `src` dials it across the WAN, one hop with
+the sender calling the receiver, as SRT's caller and listener do. The publisher's controller is on
+that hop.
+
 SRT and RIST are one hop either way.
 
 ## Impairment
@@ -62,41 +70,72 @@ direction has a fixed tree built once per run, on its egress interface:
 root 1:  netem limit 100000 delay D [slot MIN MAX] rate 1gbit [loss gemodel p r 1-h 1-k] seed S
 10:      netem delay 1ms reorder P%       (when the profile reorders)
 20:      tbf rate CAP burst 64kb latency 60ms   (CAP = cap x the stream's Ethernet rate)
+30:      fq_codel                         (cap_aqm = "fq_codel": replaces tbf's drop-tail FIFO)
 ```
 
 - **Jitter** uses `slot`. `rate 1gbit` keeps the delay line FIFO, so jitter does not reorder;
   reordering is a separate, small stage.
 - **Events** change the tree in place (`tc qdisc change`, restating every netem parameter). Outages
   add the direction's ingress interface to an nft set that one counted drop rule matches.
-- **Counters.** nft accounting counters count every packet per direction before any qdisc. Each run
-  records them every second, with every qdisc's packets and drops.
+- **Bottleneck buffer.** `cap_latency_ms` sizes the tbf FIFO as queueing delay at the cap rate (60 ms
+  by default). The bloat profiles deepen it to bloated sizes; with `cap_aqm = "fq_codel"` FQ-CoDel at its
+  defaults manages that queue instead.
+- **Cross traffic.** A `cross` event runs iperf3 from `src` to a server in `dst` through the same
+  tree, so the queue it builds depends on load: a TCP flow (the kernel's controller, or `cc`) fills
+  the bottleneck buffer the way a competing upload does. The k-th cross event uses port 5201 + k.
+- **Counters.** nft accounting counters count every packet per direction before any qdisc, and cross
+  traffic apart. Each run records them every second, with every qdisc's packets, drops and backlog.
 - **Reported loss** is the loss applied, not the loss commanded: netem drops, cap drops and outage
   drops are reported apart.
 - **Seeds.** The two directions have different seeds; every lane of a repeat sees the same loss
-  pattern.
+  pattern. netem restarts its PRNG at the seed a `change` restates, so every event change restates a
+  fresh one: the pattern never replays from an event.
 
-Profiles are `profiles/contrib/<ID>.toml`:
+Profiles are `profiles/contrib/<id>.toml`:
 
-| ID | profile | RTT | jitter (slot) | forward loss | cap | events |
+| id | name | RTT | jitter (slot) | forward loss | cap | events |
 |---|---|---|---|---|---|---|
-| P0 | control LAN | 1 ms | — | — | 2.0× | — |
-| REF | reference WAN | 50 ms | — | 0.5 % random | — | — |
-| P1 | clean regional | 20 ms | 0–2 ms | GE 0.02 % | 2.0× | — |
-| P2 | managed national | 60 ms | 0–6 ms | GE 0.1 % | 1.5× | 200 ms loss run, 64 ms link fail |
-| P3 | unmanaged transcontinental | 80 ms | 0–16 ms | GE 0.5 % | 1.5× | 256 ms outage, 8 ms route step |
-| P4 | intercontinental, good | 100 ms | 0–10 ms | GE 0.3 % | 1.5× | 128 ms outage, 4 ms step |
-| P5 | long-haul unmanaged | 250 ms | 0–20 ms | GE 1 % | 1.3× | 400 ms outage, 16 ms step |
-| P6 | bad intercontinental | 400 ms | 0–50 ms | GE 3 % | 1.2× | 1.6 s outage and 64 ms step every 2 min; 0.5 s loss runs |
-| P7 | cellular uplink | 60 ms | 0–20 ms | GE 2 % | 1.5× | handover gap and RTT rise; rate dip to 0.8× |
-| P8 | LEO satellite | 60 ms | 0–14 ms | GE 0.4 % | 1.5× | 45 ms burst and RTT step every 15 s |
-| P9 | outage ladder | P3 | P3 | P3 | 1.5× | 0.5, 2, 5, 30 s: forward only, then both |
+| `lan` | control LAN | 1 ms | — | — | 2.0× | — |
+| `random-loss` | reference WAN | 50 ms | — | 0.5 % random | — | — |
+| `regional-clean` | clean regional | 20 ms | 0–2 ms | GE 0.02 % | 2.0× | — |
+| `national-managed` | managed national | 60 ms | 0–6 ms | GE 0.1 % | 1.5× | 200 ms loss run, 64 ms link fail |
+| `transcontinental` | unmanaged transcontinental | 80 ms | 0–16 ms | GE 0.5 % | 1.5× | 256 ms outage, 8 ms route step |
+| `intercontinental-good` | intercontinental, good | 100 ms | 0–10 ms | GE 0.3 % | 1.5× | 128 ms outage, 4 ms step |
+| `longhaul-lossy` | long-haul unmanaged | 250 ms | 0–20 ms | GE 1 % | 1.3× | 400 ms outage, 16 ms step |
+| `intercontinental-bad` | bad intercontinental | 400 ms | 0–50 ms | GE 3 % | 1.2× | 1.6 s outage and 64 ms step every 2 min; 0.5 s loss runs |
+| `cellular-handover` | cellular uplink | 60 ms | 0–20 ms | GE 2 % | 1.5× | handover gap and RTT rise; rate dip to 0.8× |
+| `leo-satellite` | LEO satellite | 60 ms | 0–14 ms | GE 0.4 % | 1.5× | 45 ms burst and RTT step every 15 s |
+| `outage-ladder` | outage ladder | as `transcontinental` | | | 1.5× | 0.5, 2, 5, 30 s: forward only, then both |
+| `bloat-cable` | bloated cable uplink | 30 ms | — | — | 2.5×, 500 ms FIFO | TCP upload 20 s on, 20 s off |
+| `bloat-cellular` | cellular uplink, deep buffer | 60 ms | 0–10 ms | — | 1.2×, 1 s FIFO | rate dips to 0.8× (8 s) and 0.5× (5 s) every 30 s |
+| `cable-fqcodel` | bloat-cable with FQ-CoDel | 30 ms | — | — | 2.5×, FQ-CoDel | as `bloat-cable` |
+| `cloud-path` | real path only (VMs) | 0 ms added | — | — | — | — |
+| `cloud-lossy` | real path, unmanaged loss (VMs) | 0 ms added | 0–16 ms | GE 0.5 % | 1.5× | as `transcontinental` |
+| `cloud-bloat` | real path, bloated uplink (VMs) | 0 ms added | — | — | 2.5×, 500 ms FIFO | as `bloat-cable` |
+| `cloud-outage-ladder` | real path, outage ladder (VMs) | as `cloud-lossy` | | | 1.5× | as `outage-ladder` |
+| `clean-50`, `clean-100` | clean provisioned path | 50 / 100 ms | — | — | — | — |
+| `provisioned` | dedicated access or cloud interconnect | 40 ms | — | GE 0.01 % | 1.25×, policed (5 ms queue) | 200 ms route flap |
+| `isp-transit` | best-effort ISP transit | 100 ms | — | — (from the queue) | 2.0×, 100 ms FIFO | 4 TCP uploads 10 s every 41.7 s; 256 ms outage; 8 ms step |
+| `geo-satellite` | GEO satellite IP link | 600 ms | — | GE 0.01 % | 1.5×, 100 ms FIFO | rain fade to 0.75× for 30 s (assumed) |
+| `starlink-business` | LEO business uplink | 40 ms, redrawn | — | GE 0.4 % each way | 30 Mb/s, 150 ms FIFO | capacity, delay and a 60 ms loss burst every 15 s (assumed sizes) |
+| `transit-outage-ladder` | outage ladder on `isp-transit` | 100 ms | | | 2.0× | as `outage-ladder` |
+| `random-stress` | random-loss envelope | 100 ms | — | random 3 % | — | — |
 
-- **Profile keys.** `forward`, `reverse`: `delay_ms` (default RTT/2), `slot_ms`, `rate`,
+**Broadcast contribution set.** `clean-50`, `clean-100`, `provisioned`, `isp-transit`, `geo-satellite`,
+`starlink-business`, `transit-outage-ladder` and `random-stress` cover the paths large-scale contribution
+uses: provisioned or cloud interconnect, best-effort transit, satellite and LEO. On them loss comes from
+queues, policers and outages over a small floor, as measured paths show; random loss is kept to one
+labelled envelope. A profile's `role` says which it is: `control`, `realistic`, `envelope` or `stress`;
+`basis` cites its sources and names the parameters that are assumed.
+
+- **Profile keys.** `role`, `basis`; `forward`, `reverse`: `delay_ms` (default RTT/2), `slot_ms`, `rate`,
   `loss = { gemodel = [...] }` or `{ random = PCT }`, `reorder_pct`, `cap` or `cap_mbit`,
-  `cap_latency_ms`, `seed`. `[[event]]` tables have a `kind`:
+  `cap_latency_ms`, `cap_aqm` (`fifo` or `fq_codel`), `seed`. `[[event]]` tables have a `kind`:
   - `outage`: `for_ms`, `direction`;
   - `step`: `delta_ms`, `for_s`;
-  - `rate`: `factor`, `for_s`.
+  - `rate`: `factor`, `for_s`;
+  - `cross`: `for_s`, `proto` (`tcp`, default, or `udp`), `load` (udp: its rate as a multiple of the
+    stream's), `streams`, `cc` (tcp).
 
   Every event takes `at_s` and an optional `every_s`.
 - **Inheritance.** `base` extends another profile.
@@ -146,7 +185,7 @@ least 25 ms (more than the profile's slot), and `bandwidth` = 1.5 × the multipl
 
 **aiomoqt-relay** replaces moqx with `relay = "aiomoqt"` in a test: `moq_interop_relay --quic` from
 the aiomoqt image, with `--cc-algo` from `relay_cc` (default `bbr`). The relay-admin sampler runs
-only for moqx.
+only for moqx. `relay = "none"` takes no `relay_cc`; its runs carry the variant key `relay=none`.
 
 **moq2ts** is built from pinned commits against moqxr v0.4.18, and the receiver against moq5.
 
@@ -158,6 +197,8 @@ only for moqx.
 
 - `pub_media --ts udp://@GROUP:PORT` reads the source group directly; without it, `udp2pipe.py`
   feeds `--ts -`.
+- `pub_media` runs with `--reconnect`: a session lost in an outage longer than QUIC's idle timeout is
+  redialled and published again, as SRT's caller reconnects.
 - The LOC lane matches frames on the sha1 that `sub_media --frame-log` writes; the source tap
   hashes each H.264 frame as the LOC payload aiomoqt's demuxer yields. Without `--frame-log` it
   falls back to `--pipe video` into an H.264 tap matched on slice data.
@@ -184,13 +225,19 @@ exits. Each exit is logged and counted as a reconnection.
 
 - **Budgets.** D = each of `rtt_multiples` (2, 3, 4, 6) × max(RTT, `rtt_floor_ms` = 20), plus
   `budgets_ms` (200, 300).
-- **SRT and RIST** run once per D, with SRT latency and RIST buffer set to D.
+- **SRT and RIST** run once per D, with SRT latency and RIST buffer set to D. SRT also runs once per
+  `srt_crypto`: `none` (default), `aes-ctr` or `aes-gcm` (a test passphrase, AES-128; GCM needs the
+  tools image's SRT built with its AEAD option, which `build/contrib-tools.Dockerfile` does).
 - **MoQT lanes** run once per congestion controller on the impaired hop: `relay_cc` for the relay
   (moqx: bbr2, bbr, cubic; aiomoqt-relay: picoquic's names) in `last-mile`, `pub_cc` for the
   aiomoqt publisher (bbr, bbr1, cubic, c4) in `first-mile` and in the dual-path lane. A test that
   sweeps a controller no lane runs on the impaired hop is rejected. The MSFTS lane also runs once
-  per `pub_timing` (`none`, or `mapping` for `--timestamp-mapping`). Each run is scored at every D
-  from the raw arrival times.
+  per `pub_timing` (`none`, or `mapping` for `--timestamp-mapping`). The aiomoqt lanes run once per
+  `pub_deadline`: `none`, `budget` for `pub_media --delivery-timeout D` at each budget D, or `half`
+  for D/2 (label `deadline<ms>`). The MSFTS lane also runs once per `sub_repair`: `none`, or `half`
+  for `sub_media --repair D/2` with `pub_media --fetch-history` holding 30 s of the stream (label
+  `repair<ms>`), so a group reset at a D/2 deadline is fetched again within D. Each run is scored at
+  every D from the raw arrival times.
 - **Filters.** `--variant D=4xRTT`, `--variant relay_cc=bbr2`, `--lane` and `--profile` narrow a
   suite.
 
@@ -214,8 +261,10 @@ The input tap sits on the source group in `src`; output taps sit on the output g
 | residual TS loss | 1 − output/input non-null packets between the first and last PCR both taps saw |
 | output breaks | gaps ≥ `break_ms` (200) at an output, on each playout buffer and offline from raw arrivals; and the longest stretch without one (the soak headline) |
 | late or lost at D | units missing, or with delay above the live-edge delay + D |
-| overhead | forward and reverse wire bytes (nft, before any qdisc) against the source |
-| applied impairment | netem, cap and outage drops per direction; the events as applied, with host times |
+| wire bytes, goodput | bytes each way on the WAN over the scored seconds (nft, before any qdisc) against the source's; on-time source bytes per forward wire byte at each D (`wire` in `summary.json`; the run line prints both ratios) |
+| applied impairment | netem, cap, AQM and outage drops per direction, and cross-traffic packets; the events as applied, with host times |
+| queue fill | the bottleneck's largest backlog as queueing delay against the depth it was given, from the 100 ms qdisc samples (`capture = "headers"`) |
+| cross traffic | iperf3 JSON per flow from the client (`cross-<event>.json`: per-second rate, retransmissions, cwnd, RTT) and the server |
 | relay | moqx admin counters, first to last sample (sent, losses, retransmissions, PTO, cwnd-blocked, pacer lag, RTT) |
 | publisher | moq2ts objects and SRT ingest loss and drops; aiomoqt `--stats-json`; SRT and RIST JSON statistics |
 | receiver | playout buffer depth against target, late packets, reconnections, socket drops (`ss -uamn`) |
@@ -223,12 +272,51 @@ The input tap sits on the source group in `src`; output taps sit on the output g
 | clock | 1 ms timer probe in `src` and `dst`: pauses, and wall-clock steps |
 
 - **Window.** The measurement window opens `join_s` after the first source datagram, for `seconds`.
-- **Clock steps.** Taps, the playout and the calibration probe run on CLOCK_MONOTONIC. The LOC
+- **Clock steps.** Taps, the playout and the calibration probe run on CLOCK_MONOTONIC (on VMs the
+  taps stamp CLOCK_REALTIME; see VM deployments). The LOC
   lane matches against `sub_media`'s wall-clock frame log, so its source tap stamps wall-clock time
   too; such a run is marked `clock_disturbed` when the clock probe sees a wall-clock step above
   20 ms, and its delay figures are then unreliable.
-- **Verdicts.** P0 must read zero errors: nothing missing, no continuity errors, no breaks. Any run
+- **Verdicts.** `lan` must read zero errors: nothing missing, no continuity errors, no breaks. Any run
   that delivers nothing fails.
+
+**Captures.** `capture` in a test records what a late frame needs explained:
+
+| `capture` | records |
+|---|---|
+| `none` (default) | nothing more |
+| `headers` | tcpdump on the WAN-facing interface in `src` and `dst` (`src0.pcap`, `dst0.pcap`), 96 bytes per packet, cross traffic left out; picoquic qlog from every aiomoqt endpoint (`qlog-<process>/`, through `AIOPQUIC_QLOG_DIR`); the bottleneck's qdiscs every 100 ms (`qdisc-wan.jsonl`) |
+| `full` | as `headers`, with whole packets, and each aiomoqt endpoint's TLS keys (`keys-<process>.log`) so the QUIC captures can be decrypted |
+
+SRT runs unencrypted, so its headers in the capture carry sequence numbers and retransmission flags;
+its per-interval statistics are recorded on every run. moqx writes no qlog. qlog records every
+packet, which costs the endpoints some CPU. Captures and qlogs are gzipped when the run is collected;
+at 20 Mb/s a 5-minute `headers` run keeps a few tens of MB per interface and per qlog, and `full`
+adds about 750 MB per interface.
+
+**Explaining a run.** `moqbench contrib explain <results or run folder> ...` finds, at each D, the
+units late or lost exactly as the score counts them, groups consecutive ones into stretches, and
+gives each stretch the first cause that fits, with the numbers that decided it:
+
+| cause | means | needs |
+|---|---|---|
+| `outage` | the stretch overlaps an outage or the recovery after it (at least 1 s, or 10 RTTs) | `faults.jsonl` and a clock anchor |
+| `sender-below-media-rate` | the sender's WAN egress fell behind the source; its backlog covers half the stretch's median excess delay | `src0.pcap`, or a covering qlog; qlog adds cwnd, bytes in flight and pacing, SRT stats its send buffer |
+| `queueing` | one-way WAN delay above its floor covers half that excess | both pcaps (packets matched on their captured bytes), or `qdisc-wan.jsonl` |
+| `repair` | WAN losses in the stretch or just before it, with their repair latency | SRT: both pcaps; QUIC: a covering qlog, else both pcaps (losses only) |
+| `head-of-line` | MoQT units whose own data was not lost waited behind a repaired loss in their stream | a covering qlog of the WAN sender |
+| `unexplained` | nothing fits; lists the causes whose inputs were absent | — |
+
+- **Clocks.** Taps and qlog run on CLOCK_MONOTONIC; pcaps, faults, qdisc and SRT stats on
+  CLOCK_REALTIME. The offset comes from the sender's first Initial in qlog and the src pcap, SRT's
+  PCRs in the src pcap, or sub_media's arrival log, corrected by the clock probe's steps. Without
+  them, the source start time gives a coarse offset that widens outage windows by 0.5 s. When the
+  taps stamp CLOCK_REALTIME (`wall_clock` in `meta.json`) only qlog is moved, by the first Initial.
+- **Output.** Each run gets `explain.json`: stretches with start, end, units, D, cause and
+  evidence, and totals by cause per D, checked against `summary.json`. Each results folder gets
+  `explain.md`: per profile, late-or-lost % by arm and D with the share by cause, and, at each D
+  where the SRT run at latency D has fewer late units than a MoQT arm, the difference and the
+  causes behind it.
 
 ## Calibration
 
@@ -239,9 +327,12 @@ profile (events off) and echoes it back. It reports, against what the profile co
   packets;
 - one-way delay p1, p50 and p99;
 - RTT;
-- reordering, as packets and as events.
+- reordering, as packets and as events;
+- forward loss periods (RFC 3357): count, mean, p99 and longest in packets, mean in ms, and the mean
+  distance between them, against the mean burst the loss model commands.
 
-It also records the host's socket buffer limits. `net.core.rmem_max` is global, not per namespace;
+Calibration runs on a docker deployment only: its one-way delay needs one clock. It also records the
+host's socket buffer limits. `net.core.rmem_max` is global, not per namespace;
 below 8 MB it is raised with `sudo -n sysctl`, and the value before and after is recorded.
 
 ## Scenarios
@@ -254,9 +345,74 @@ below 8 MB it is raised with `sudo -n sysctl`, and the value before and after is
 
 ## VM deployments
 
-An `aws` or `oci` deployment with `src` and `dst` nodes is accepted. `render-vm` prints the commands
-it would run, which impair each direction on its receiver's ingress through an ifb. Runs are not
-enabled.
+An `aws` or `oci` deployment runs on two VMs, `src` and `dst`. The real path between them is the
+WAN; a profile's impairment is layered on top of it.
+
+```toml
+provider = "oci"            # or "aws"
+
+[contribution]
+stack_dir = "moqbench-contrib"   # under each node's $HOME unless absolute
+
+[[nodes]]
+name    = "src"
+host    = "user@src-vm"         # ssh target
+address = "10.0.0.10"           # the IPv4 address dst dials to reach src
+cpus    = "0-3"                 # optional: every container on the node is pinned here
+
+[[nodes]]
+name    = "dst"
+host    = "user@dst-vm"
+address = "10.0.0.20"
+```
+
+**What each node needs.**
+
+- ssh from the controller in batch mode, and `docker` usable by that user without sudo.
+- Every image of `[contribution.images]`, already loaded; `up` lists the missing ones per node.
+- chrony, synchronised (`chronyc tracking` reports `Leap status: Normal`); `up` stops otherwise.
+- `sudo -n` for `modprobe ifb` and for raising `net.core.rmem_max`.
+- Open UDP between the two addresses: SRT 9000, RIST 8193, MoQT 4433, and TCP and UDP 5201–5208 for
+  cross traffic; ICMP for the RTT checks.
+- `address` must be the source address the peer sees, which is what the ingress filter matches.
+
+**Placement.** Each lane process runs in its own container on its node with `--network host`, under
+the node's work folder. Procs in `src` run on the src VM, `dst` on the dst VM; the relay runs on the
+node its placement names and is reached on `127.0.0.1` from its own side, as in the docker topology.
+The source and output multicast groups loop back locally on a dummy interface (`mbcmc0`, with a route
+for 239.0.0.0/8). `collect` pulls both nodes' run folders into the one local run folder.
+
+**Impairment.** `up` sends everything arriving from the peer's address through an ifb on each node
+(a `clsact` ingress filter at pref 300 with `mirred` to `mbcf0` on dst, `mbcr0` on src), and turns
+receive and segmentation offloads off on the interface toward the peer. Each run builds the
+profile's trees on the ifbs: forward on dst, reverse on src. A profile's delay is added to the real
+path; each run records the unimpaired RTT before and after (`path.start`, `path.end` in `meta.json`).
+`cloud-path` adds nothing. nft accounting has the docker counter names: `fwd0` counts what src sends
+to dst's address on src's egress, `rev0` what dst sends to src's on dst's egress, `cross-fwd0` and
+`cross-rev0` the cross-traffic ports apart. An outage adds the far sender's address to the
+receiver's blocked set, dropped (and counted as `outage`) on ingress after the tree.
+
+**Clocks.** Every tap stamps CLOCK_REALTIME, so delays across the two VMs rest on chrony. Each run
+records `chronyc tracking` (offset, RMS offset, stratum) from both nodes at its start and end, and is
+marked `clock_disturbed` when either node is more than 1 ms from NTP time, as well as on a wall-clock
+step above 20 ms.
+
+**Teardown.** `down` removes every container of the deployment, the ifbs, the filter, the dummy
+interface and the nft table on both nodes, and turns GRO, GSO and TSO back on. `check` pings each
+way and reports offloads, chrony and what the deployment has left on each node, with or without
+`up`.
+
+**Limits.**
+
+- `dual_path` and `moqt-aiomoqt-dual` need the docker provider, and so does the LOC lane without
+  `sub_media --frame-log`; those cells are PENDING on VMs.
+- Budgets and SRT buffers follow the profile's RTT, not the real path's: add the measured RTT by
+  hand when it is not small.
+- The `dst0.pcap` capture is taken on dst's ifb, after the forward tree but before the outage drop,
+  so packets an outage drops still appear in it.
+- The VM interface keeps its MTU; cloud networks often run jumbo frames, which TCP cross traffic
+  uses.
+- `render-vm` prints the commands `up` runs on each node.
 
 ## Limits
 

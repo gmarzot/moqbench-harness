@@ -1,4 +1,4 @@
-id = "P0"
+id = "lan"
 name = "Control LAN"
 description = "Negative control: every lane must read zero errors."
 rtt_ms = 1

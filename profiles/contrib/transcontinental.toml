@@ -1,0 +1,31 @@
+id = "transcontinental"
+name = "Unmanaged transcontinental"
+basis = "G.1050 profile B; G.1050 (2007) severity D"
+rtt_ms = 80
+
+[forward]
+slot_ms = [0, 16]
+loss = { gemodel = [0.17, 33, 100, 0] }
+reorder_pct = 0.01
+cap = 1.5
+seed = 1301
+
+[reverse]
+slot_ms = [0, 16]
+loss = { gemodel = [0.17, 33, 100, 0] }
+seed = 1302
+
+[[event]]
+kind = "outage"
+label = "outage-256ms"
+at_s = 60
+every_s = 900
+for_ms = 256
+
+[[event]]
+kind = "step"
+label = "route-step-8ms"
+at_s = 120
+every_s = 900
+delta_ms = 8
+for_s = 60

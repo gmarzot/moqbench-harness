@@ -209,7 +209,7 @@ def write_run(d, delays, lost=(), gap_at=None, lane='srt', taps=('out',), step=N
         rewrite.write_text('\n'.join(fixed) + '\n')
     if step is not None:
         (run / 'clock-dst.csv').write_text(f't_ns,kind,ms\n{step[0]},step,{step[1] / 1e6}\n')
-    meta = dict(label='001-x', lane=lane, variant={}, repeat=0, placement='last-mile', profile_id='P3', rtt_ms=80,
+    meta = dict(label='001-x', lane=lane, variant={}, repeat=0, placement='last-mile', profile_id='transcontinental', rtt_ms=80,
                 source=dict(tier='mpeg2-20m'), seconds=len(delays) * 0.04 - 0.5, join_s=0.2, break_ms=200,
                 budgets_ms=[100, 300], playout_ms=[300, 200], taps=list(taps), topology=dict(links=[]),
                 emulator_final={}, wall_clock=wall_clock)
@@ -237,15 +237,52 @@ class Analysis(unittest.TestCase):
         self.assertEqual(o['frames']['missing'], 2)
         self.assertEqual(s['verdict'], 'OK')
 
-    def test_zero_errors_on_p0(self):
+    def test_zero_errors_on_lan(self):
         with tempfile.TemporaryDirectory() as d:
             run = write_run(d, [5.0] * 100)
             m = json.loads((run / 'meta.json').read_text())
-            m['profile_id'] = 'P0'
+            m['profile_id'] = 'lan'
             (run / 'meta.json').write_text(json.dumps(m))
             s = report.analyze(run)
         self.assertEqual(s['verdict'], 'PASS')
         self.assertEqual(s['outputs']['out']['ts']['residual_loss_pct'], 0.0)
+
+    def test_run_line_scores_late_or_lost_on_raw_arrivals(self):
+        out = dict(delay_ms=dict(p50=400, p99=450, max=500), pcr_lost_pct=0.0, breaks=dict(count=0, longest_ms=0.0),
+                   ts=dict(cc_errors=0))
+        s = dict(label='001-x', lane='moqt-aiomoqt-msfts', profile='transcontinental', variant={}, verdict='OK',
+                 outputs=dict(raw=dict(out, late_or_lost_pct={'320': 2.9}), po300=dict(out, late_or_lost_pct={'320': 0.0})))
+        text = report.line(s)
+        self.assertIn('po300: delay p50/p99/max 400/450/500 ms', text)
+        self.assertIn("late|lost@D (raw) {'320': 2.9}", text)
+        s['outputs'] = dict(out=dict(out, late_or_lost_pct={'320': 0.1}))
+        self.assertIn("out: delay", report.line(s))
+        self.assertIn("late|lost@D {'320': 0.1}", report.line(s))
+
+    def test_wire_bytes_against_the_source_over_the_scored_seconds(self):
+        with tempfile.TemporaryDirectory() as d:
+            run = write_run(d, [100.0] * 200, lost={80})
+            m = json.loads((run / 'meta.json').read_text())
+            m['source_started'] = 5000.0
+            (run / 'meta.json').write_text(json.dumps(m))
+            src = sum(int(r['bytes']) for r in report.rows(run / 'in-sec.csv') if 1001 <= int(r['t_s']) < 1008)
+            per_s = src / 7
+
+            def nft(t):
+                cross = 500 * t
+                return {'fwd0': dict(packets=0, bytes=int(1.1 * per_s * t) + cross),
+                        'cross-fwd0': dict(packets=0, bytes=cross), 'rev0': dict(packets=0, bytes=int(0.01 * per_s * t))}
+            (run / 'emu-samples.jsonl').write_text(
+                ''.join(json.dumps(dict(t=5000.0 + t, nft=nft(t))) + '\n' for t in range(10)))
+            s = report.analyze(run)
+            self.assertNotIn('wire', report.analyze(write_run(tempfile.mkdtemp(dir=d), [100.0] * 200)))
+        w = s['wire']
+        self.assertEqual(w['source_bytes'], src)
+        self.assertAlmostEqual(w['fwd_ratio'], 1.1, delta=0.002)
+        self.assertAlmostEqual(w['rev_ratio'], 0.01, delta=0.0002)
+        lol = s['outputs']['out']['late_or_lost_pct']['300']
+        self.assertAlmostEqual(w['goodput_per_wire']['300'], (1 - lol / 100) / 1.1, delta=0.002)
+        self.assertIn('wire fwd/rev 1.1/0.01x src', report.line(s))
 
     def test_nothing_delivered_fails(self):
         with tempfile.TemporaryDirectory() as d:

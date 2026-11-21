@@ -1,4 +1,4 @@
-id = "P7"
+id = "cellular-handover"
 name = "Cellular uplink"
 description = "Handover gaps, a handover RTT rise and a rate dip; the rate model is assumed."
 basis = "VoLTE and LTE field studies"

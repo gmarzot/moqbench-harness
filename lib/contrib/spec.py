@@ -1,6 +1,7 @@
 """Contribution deployments, suites and scenarios: load and validate.
 
-A contribution deployment names a provider and its three namespaces (src, wan, dst); a suite lists
+A contribution deployment names a provider and its nodes: three namespaces (src, wan, dst) on one
+Docker host, or two VMs (src, dst) reached over ssh, each with the address its peer dials; a suite lists
 lanes, profiles and the parameters to sweep; a scenario sets the run shape (length, join window,
 source mode). Each file is found over the MOQBENCH_CONFIG folders, like every other config.
 """
@@ -12,15 +13,17 @@ PROVIDERS = {'docker', 'aws', 'oci'}
 NAMESPACES = ('src', 'wan', 'dst')
 DEPLOYMENT_KEYS = {'provider', 'host', 'region', 'zone', 'arch', 'tag', 'contribution', 'nodes'}
 CONTRIB_KEYS = {'subnet', 'images', 'stack_dir', 'uid', 'gid'}
-NODE_KEYS = {'name', 'roles', 'cpus', 'instance', 'ocpus', 'memory_gb', 'vcpus'}
+NODE_KEYS = {'name', 'roles', 'cpus', 'instance', 'ocpus', 'memory_gb', 'vcpus', 'host', 'address'}
+VM_NODES = ('src', 'dst')
 IMAGES = {'tools': 'moqbench-contrib-tools:dev', 'ffmpeg': 'moqbench-contrib-ffmpeg:n9.0.2',
           'moq2ts': 'moqbench-contrib-moq2ts:dev', 'aiomoqt': 'moqbench-contrib-aiomoqt:dev',
           'moqx': 'ghcr.io/openmoq/moqx:v0.3.7-amd64'}
 PLACEMENTS = ('last-mile', 'first-mile')
-RELAYS = {'moqx': 'bbr2', 'aiomoqt': 'bbr'}
+RELAYS = {'moqx': 'bbr2', 'aiomoqt': 'bbr', 'none': None}
 TEST_KEYS = {'type', 'lanes', 'profiles', 'source', 'scenario', 'repeats', 'placement', 'rtt_multiples',
              'rtt_floor_ms', 'budgets_ms', 'playout_ms', 'relay_cc', 'pub_cc', 'seconds', 'note', 'suffix',
-             'dual_path', 'ingest', 'pub_timing', 'relay'}
+             'dual_path', 'ingest', 'pub_timing', 'pub_deadline', 'sub_repair', 'srt_crypto', 'relay', 'capture'}
+CAPTURES = ('none', 'headers', 'full')
 SUITE_KEYS = {'description', 'requires', 'test', 'lane'}
 SCENARIO_KEYS = {'description', 'seconds', 'join_s', 'drain_s', 'source_mode', 'gap_ms', 'break_ms',
                  'calibration_s', 'soak'}
@@ -29,7 +32,8 @@ SCENARIO_DEFAULTS = dict(seconds=300, join_s=10, drain_s=5, source_mode='file', 
 TEST_DEFAULTS = dict(source='mpeg2-20m', scenario='standard', repeats=1, placement='last-mile',
                      rtt_multiples=[2, 3, 4, 6], rtt_floor_ms=20, budgets_ms=[200, 300], playout_ms=[300, 200],
                      relay='moqx', relay_cc=None, pub_cc=['bbr'], dual_path=False, ingest='srt',
-                     pub_timing=['none'])
+                     pub_timing=['none'], pub_deadline=['none'], sub_repair=['none'], srt_crypto=['none'],
+                     capture='none')
 
 
 class Deployment:
@@ -62,10 +66,25 @@ class Deployment:
             if node.get('name') not in NAMESPACES:
                 raise config.ConfigError(f'{where}: contribution nodes are {", ".join(NAMESPACES)}, not {node.get("name")!r}')
             self.nodes[node['name']] = node
-        if self.provider != 'docker' and not {'src', 'dst'} <= set(self.nodes):
-            raise config.ConfigError(f'{where}: a VM deployment lists src and dst nodes')
+        if self.provider != 'docker':
+            self.vm_nodes(where)
         self.tag = data.get('tag', '')
         self.region = data.get('region')
+
+    def vm_nodes(self, where):
+        """A VM deployment: exactly src and dst, each an ssh host with the IPv4 address its peer dials."""
+        if set(self.nodes) != set(VM_NODES):
+            raise config.ConfigError(f'{where}: a VM deployment lists src and dst nodes only; the path between them is the WAN')
+        for ns in VM_NODES:
+            node = self.nodes[ns]
+            if not node.get('host'):
+                raise config.ConfigError(f'{where}: node {ns} needs host, an ssh target or "local"')
+            try:
+                ipaddress.IPv4Address(node.get('address', ''))
+            except ValueError:
+                raise config.ConfigError(f'{where}: node {ns} needs address, the IPv4 address its peer dials') from None
+        if self.nodes['src']['address'] == self.nodes['dst']['address']:
+            raise config.ConfigError(f'{where}: src and dst need different addresses')
 
     def cpus(self, ns):
         return (self.nodes.get(ns) or {}).get('cpus')
@@ -99,17 +118,32 @@ class Test:
             raise config.ConfigError(f'{where}: placement is last-mile or first-mile')
         if self.relay not in RELAYS:
             raise config.ConfigError(f'{where}: relay is {" or ".join(RELAYS)}')
-        if self.relay_cc is None:
+        if self.relay == 'none':
+            if self.placement != 'first-mile' or self.relay_cc is not None:
+                raise config.ConfigError(f'{where}: relay = "none" runs first-mile, with no relay_cc')
+            need_relay = [n for n in self.lanes if lanes.LANES[n].relay and not lanes.LANES[n].direct]
+            if need_relay:
+                raise config.ConfigError(f'{where}: {", ".join(need_relay)} cannot run without a relay')
+            self.relay_cc = [None]
+        elif self.relay_cc is None:
             self.relay_cc = [RELAYS[self.relay]]
         for key in ('pub_cc', 'relay_cc'):
             if len(getattr(self, key)) > 1 and not any(key in lanes.LANES[n].cc_on_wan(self.placement)
                                                         for n in self.lanes):
                 raise config.ConfigError(f'{where}: {key} sweeps a controller that no lane runs on the impaired '
                                          f'hop in {self.placement}')
+        if self.capture not in CAPTURES:
+            raise config.ConfigError(f'{where}: capture is one of {", ".join(CAPTURES)}')
         if self.ingest not in ('srt', 'stdin'):
             raise config.ConfigError(f'{where}: ingest is srt or stdin')
         if not set(self.pub_timing) <= {'none', 'mapping'}:
             raise config.ConfigError(f'{where}: pub_timing lists none and/or mapping')
+        if not set(self.pub_deadline) <= {'none', 'budget', 'half'}:
+            raise config.ConfigError(f'{where}: pub_deadline lists none, budget and/or half')
+        if not set(self.sub_repair) <= {'none', 'half'}:
+            raise config.ConfigError(f'{where}: sub_repair lists none and/or half')
+        if not set(self.srt_crypto) <= set(lanes.SRT_CRYPTO):
+            raise config.ConfigError(f'{where}: srt_crypto lists {", ".join(lanes.SRT_CRYPTO)}')
         config.positive_int(where, 'repeats', self.repeats)
         self.seconds = data.get('seconds')
         self.note = data.get('note', '')

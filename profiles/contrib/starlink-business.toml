@@ -1,0 +1,135 @@
+id = "starlink-business"
+name = "Starlink business uplink"
+role = "realistic"
+description = "LEO uplink on a business plan: 30 Mb/s capacity and the base delay redrawn every 15 s, 0.4% loss in short bursts each way, and a 60 ms loss burst at each reconfiguration (burst length and the spread of the redraws assumed)."
+basis = "Tanveer et al., Making Sense of Constellations (CoNEXT 2023): 15 s reconfiguration; Michel et al., A First Look at Starlink Performance (IMC 2022): about 0.4% loss for a video-like flow, mostly single packets; business uplink 20-40 Mb/s"
+rtt_ms = 40
+
+[forward]
+loss = { gemodel = [0.308928, 76.923077, 100, 0] }
+cap_mbit = 30
+cap_latency_ms = 150
+seed = 4051
+
+[reverse]
+loss = { gemodel = [0.308928, 76.923077, 100, 0] }
+seed = 4052
+
+[[event]]
+kind = "outage"
+label = "reconfiguration"
+at_s = 12
+every_s = 15
+for_ms = 60
+
+[[event]]
+kind = "rate"
+label = "capacity-2"
+at_s = 27
+every_s = 120
+factor = 0.75
+for_s = 14.9
+
+[[event]]
+kind = "rate"
+label = "capacity-3"
+at_s = 42
+every_s = 120
+factor = 1.15
+for_s = 14.9
+
+[[event]]
+kind = "rate"
+label = "capacity-4"
+at_s = 57
+every_s = 120
+factor = 0.85
+for_s = 14.9
+
+[[event]]
+kind = "rate"
+label = "capacity-5"
+at_s = 72
+every_s = 120
+factor = 1.25
+for_s = 14.9
+
+[[event]]
+kind = "rate"
+label = "capacity-6"
+at_s = 87
+every_s = 120
+factor = 0.8
+for_s = 14.9
+
+[[event]]
+kind = "rate"
+label = "capacity-7"
+at_s = 102
+every_s = 120
+factor = 1.05
+for_s = 14.9
+
+[[event]]
+kind = "rate"
+label = "capacity-8"
+at_s = 117
+every_s = 120
+factor = 0.9
+for_s = 14.9
+
+[[event]]
+kind = "step"
+label = "delay-2"
+at_s = 27
+every_s = 120
+delta_ms = 12
+for_s = 14.9
+
+[[event]]
+kind = "step"
+label = "delay-3"
+at_s = 42
+every_s = 120
+delta_ms = -8
+for_s = 14.9
+
+[[event]]
+kind = "step"
+label = "delay-4"
+at_s = 57
+every_s = 120
+delta_ms = 20
+for_s = 14.9
+
+[[event]]
+kind = "step"
+label = "delay-5"
+at_s = 72
+every_s = 120
+delta_ms = 4
+for_s = 14.9
+
+[[event]]
+kind = "step"
+label = "delay-6"
+at_s = 87
+every_s = 120
+delta_ms = -10
+for_s = 14.9
+
+[[event]]
+kind = "step"
+label = "delay-7"
+at_s = 102
+every_s = 120
+delta_ms = 16
+for_s = 14.9
+
+[[event]]
+kind = "step"
+label = "delay-8"
+at_s = 117
+every_s = 120
+delta_ms = 6
+for_s = 14.9

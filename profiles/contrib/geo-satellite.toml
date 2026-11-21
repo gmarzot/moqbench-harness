@@ -1,0 +1,23 @@
+id = "geo-satellite"
+name = "GEO satellite IP link"
+role = "realistic"
+description = "IP over a geostationary satellite: 600 ms RTT, provisioned 1.5x capacity behind a 100 ms modem buffer, a 0.01% loss floor, and one rain fade that cuts capacity to 0.75x for 30 s (fade depth and length assumed)."
+basis = "GEO propagation (about 550-650 ms RTT); adaptive coding and modulation lowers capacity in rain fade (depth assumed); ITU-T Y.1541 loss objective"
+rtt_ms = 600
+
+[forward]
+loss = { gemodel = [0.005001, 50, 100, 0] }
+cap = 1.5
+cap_latency_ms = 100
+seed = 4041
+
+[reverse]
+seed = 4042
+
+[[event]]
+kind = "rate"
+label = "rain-fade"
+at_s = 50.3
+every_s = 900
+factor = 0.75
+for_s = 30

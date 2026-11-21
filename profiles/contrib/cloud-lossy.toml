@@ -1,19 +1,20 @@
-id = "P3"
-name = "Unmanaged transcontinental"
+id = "cloud-lossy"
+name = "Real path, unmanaged loss"
+description = "transcontinental's loss, jitter, reordering, 256 ms outage and route step on two VMs' real path, with no delay added."
 basis = "G.1050 profile B; G.1050 (2007) severity D"
-rtt_ms = 80
+rtt_ms = 0
 
 [forward]
 slot_ms = [0, 16]
 loss = { gemodel = [0.17, 33, 100, 0] }
 reorder_pct = 0.01
 cap = 1.5
-seed = 1301
+seed = 1911
 
 [reverse]
 slot_ms = [0, 16]
 loss = { gemodel = [0.17, 33, 100, 0] }
-seed = 1302
+seed = 1912
 
 [[event]]
 kind = "outage"

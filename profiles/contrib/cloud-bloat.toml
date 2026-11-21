@@ -1,0 +1,20 @@
+id = "cloud-bloat"
+name = "Real path, bloated uplink"
+description = "bloat-cable on two VMs' real path: a 2.5x uplink behind a 500 ms drop-tail buffer, shared with a TCP upload 20 s on, 20 s off; no delay added."
+basis = "Gettys and Nichols, Bufferbloat: Dark Buffers in the Internet (ACM Queue, 2011); Kreibich et al., Netalyzr (IMC 2010)"
+rtt_ms = 0
+
+[forward]
+cap = 2.5
+cap_latency_ms = 500
+seed = 1921
+
+[reverse]
+seed = 1922
+
+[[event]]
+kind = "cross"
+label = "tcp-upload"
+at_s = 20
+every_s = 40
+for_s = 20

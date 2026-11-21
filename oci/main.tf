@@ -92,6 +92,17 @@ variable "allowed_cidrs" {
 // The tester's SSH key: the .pub beside it goes onto every host, and the
 // drivers (testbed-provision.sh, relay-load.sh, ...) use the private key via the ssh_key_file
 // output, so it is configured in exactly one place.
+variable "extra_tcp_ports" {
+  description = "More TCP ports to open to allowed_cidrs (contribution cross traffic, say)."
+  type        = list(number)
+  default     = []
+}
+variable "extra_udp_ports" {
+  description = "More UDP ports to open to allowed_cidrs (SRT 9000, RIST 8192-8194, cross traffic)."
+  type        = list(number)
+  default     = []
+}
+
 variable "ssh_key_file" {
   type        = string
   description = "Path to your SSH private key, e.g. ~/.ssh/id_ed25519; <path>.pub must exist."
@@ -184,9 +195,9 @@ locals {
   dns_label      = substr(replace(lower(local.deployment), "/[^a-z0-9]/", ""), 0, 15)
   ssh_public_key = trimspace(file(pathexpand("${var.ssh_key_file}.pub")))
   ad             = var.availability_domain != "" ? var.availability_domain : data.oci_identity_availability_domains.ads.availability_domains[0].name
-  // Ports the harness uses: SSH, MoQ relay range, relay admin, node_exporter.
-  ingress_tcp = [22, 4433, 4533, 4500, 9100, 5201]
-  ingress_udp = [443, 4433, 4533, 5201]
+  // Ports the harness uses: SSH, MoQ relay range, relay admin, node_exporter, plus the extras.
+  ingress_tcp = distinct(concat([22, 4433, 4533, 4500, 9100, 5201], var.extra_tcp_ports))
+  ingress_udp = distinct(concat([443, 4433, 4533, 5201], var.extra_udp_ports))
 }
 
 data "oci_identity_availability_domains" "ads" {
@@ -293,6 +304,17 @@ resource "oci_core_security_list" "sl" {
     icmp_options {
       type = 3
       code = 4
+    }
+  }
+
+  dynamic "ingress_security_rules" {
+    for_each = var.allowed_cidrs
+    content {
+      source   = ingress_security_rules.value
+      protocol = "1" // ICMP echo, for RTT checks
+      icmp_options {
+        type = 8
+      }
     }
   }
 }

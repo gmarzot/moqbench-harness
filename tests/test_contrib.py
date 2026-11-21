@@ -8,15 +8,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lib'))
 import config  # noqa: E402
 import argparse  # noqa: E402
-from contrib import calibrate, cli, emu, lanes, profiles, sources, spec, topology  # noqa: E402
+from contrib import calibrate, cli, emu, lanes, profiles, run, sources, spec, topology  # noqa: E402
+from contrib import docker as contrib_docker  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
 
 # Mean forward loss in percent each profile is built for.
-TARGET_LOSS = {'P0': 0.0, 'P1': 0.02, 'P2': 0.1, 'P3': 0.5, 'P4': 0.3, 'P5': 1.0, 'P6': 3.0, 'P7': 2.0, 'P8': 0.4,
-               'P9': 0.5, 'REF': 0.5}
+TARGET_LOSS = {'lan': 0.0, 'regional-clean': 0.02, 'national-managed': 0.1, 'transcontinental': 0.5, 'intercontinental-good': 0.3, 'longhaul-lossy': 1.0, 'intercontinental-bad': 3.0, 'cellular-handover': 2.0, 'leo-satellite': 0.4,
+               'outage-ladder': 0.5, 'random-loss': 0.5, 'bloat-cable': 0.0, 'bloat-cellular': 0.0, 'cable-fqcodel': 0.0,
+               'cloud-path': 0.0, 'cloud-lossy': 0.5, 'cloud-bloat': 0.0, 'cloud-outage-ladder': 0.5,
+               'clean-50': 0.0, 'clean-100': 0.0, 'provisioned': 0.01, 'isp-transit': 0.0, 'geo-satellite': 0.01,
+               'starlink-business': 0.4, 'transit-outage-ladder': 0.0, 'random-stress': 3.0}
 
 
 def make_test(**over):
-    data = dict(type='contribution', lanes=['srt', 'rist', 'moqt-moq2ts', 'moqt-aiomoqt-loc'], profiles=['P3'])
+    data = dict(type='contribution', lanes=['srt', 'rist', 'moqt-moq2ts', 'moqt-aiomoqt-loc'], profiles=['transcontinental'])
     data.update(over)
     return spec.Test(data, 'test', {})
 
@@ -37,6 +42,12 @@ class Profiles(unittest.TestCase):
                 self.assertAlmostEqual(p.forward.mean_loss_pct(), TARGET_LOSS[name], delta=0.06 * max(1, TARGET_LOSS[name]))
                 self.assertNotEqual(p.seeds(0)[0], p.seeds(0)[1])
 
+    def test_roles(self):
+        self.assertEqual(profiles.load('random-stress').role, 'envelope')
+        self.assertEqual(profiles.load('transit-outage-ladder').role, 'envelope')
+        with self.assertRaises(config.ConfigError):
+            profiles.parse(dict(id='x', role='typical', rtt_ms=10), 'x')
+
     def test_ge_helpers(self):
         self.assertAlmostEqual(profiles.ge_mean(0.17, 33, 100, 0), 0.5126, places=3)
         p, r, bad, good = profiles.ge_for(0.5, 3)
@@ -44,7 +55,7 @@ class Profiles(unittest.TestCase):
         self.assertAlmostEqual(100 / r, 3, places=3)
 
     def test_tree_keeps_order_and_restates_everything(self):
-        p = profiles.load('P3')
+        p = profiles.load('transcontinental')
         cmds = p.forward.build('vb0', 20e6, seed=7)
         self.assertTrue(cmds[0].startswith('tc qdisc del dev vb0 root'))
         root = cmds[1]
@@ -62,32 +73,59 @@ class Profiles(unittest.TestCase):
         self.assertIn('tbf rate', p.forward.change_rate('vb0', 20e6, 0.5))
 
     def test_cap_is_a_multiple_of_the_wire_rate(self):
-        p = profiles.load('P3')
+        p = profiles.load('transcontinental')
         self.assertAlmostEqual(p.forward.cap_bps(20e6), 1.5 * 20e6 * 1358 / 1316)
-        self.assertIsNone(profiles.load('REF').forward.cap_bps(20e6))
+        self.assertIsNone(profiles.load('random-loss').forward.cap_bps(20e6))
 
     def test_reference_profile(self):
-        p = profiles.load('REF')
+        p = profiles.load('random-loss')
         self.assertEqual(p.forward.netem_args(), 'limit 100000 delay 50ms rate 1gbit loss random 0.5% seed 2001')
         self.assertEqual(p.reverse.mean_loss_pct(), 0.0)
 
     def test_timeline_expands_repeats_and_ladders(self):
-        p6 = profiles.load('P6')
+        p6 = profiles.load('intercontinental-bad')
         acts = p6.timeline(300, start_s=10)
         outages = [a for a in acts if a[1] == 'outage_on']
         self.assertEqual(sum(1 for a in outages if a[2]['name'].startswith('outage-1600ms')), 2)
         self.assertTrue(all(10 <= t < 310 + 2 for t, _, _ in acts))
         self.assertEqual(acts, sorted(acts, key=lambda a: a[0]))
-        p9 = profiles.load('P9')
+        p9 = profiles.load('outage-ladder')
         self.assertEqual(p9.rtt_ms, 80)
-        self.assertEqual(p9.forward.loss, profiles.load('P3').forward.loss)
+        self.assertEqual(p9.forward.loss, profiles.load('transcontinental').forward.loss)
         ladder = [a for a in p9.timeline(p9.run_s) if a[1] == 'outage_on']
         self.assertEqual([a[2]['direction'] for a in ladder], ['fwd'] * 4 + ['both'] * 4)
         off = {args['name']: t for t, kind, args in p9.timeline(p9.run_s) if kind == 'outage_off'}
         self.assertAlmostEqual(off['fwd-30s'] - 160, 30)
 
+    def test_bufferbloat_profiles(self):
+        b1, b2, b3 = (profiles.load(n) for n in ('bloat-cable', 'bloat-cellular', 'cable-fqcodel'))
+        tree = b1.forward.build('vb0', 20e6, seed=7)
+        self.assertIn('handle 20: tbf rate 51595744bit burst 64kb latency 500ms', tree[2])
+        self.assertEqual(len(tree), 3)
+        tree = b3.forward.build('vb0', 20e6, seed=7)
+        self.assertEqual(tree[3], 'tc qdisc add dev vb0 parent 20:1 handle 30: fq_codel')
+        self.assertEqual(b3.events, b1.events)
+        self.assertIn('latency 1000ms', b2.forward.build('vb0', 20e6)[2])
+        acts = b1.timeline(300, start_s=10)
+        on = [a for a in acts if a[1] == 'cross_on']
+        off = [a for a in acts if a[1] == 'cross_off']
+        self.assertEqual(len(on), 7)
+        self.assertEqual(on[0], (30, 'cross_on', dict(name='tcp-upload#1', port=5201, proto='tcp', load=None, streams=1,
+                                                       cc=None, for_s=20)))
+        self.assertEqual(off[0], (50, 'cross_off', dict(name='tcp-upload#1', port=5201)))
+        self.assertEqual(b1.summary(20e6)['cross'], 1)
+        self.assertEqual(b3.summary(20e6)['cap_aqm'], 'fq_codel')
+        two = profiles.parse(dict(id='X', forward=dict(cap=2), event=[
+            dict(kind='cross', at_s=1, for_s=2), dict(kind='cross', at_s=5, for_s=2, proto='udp', load=0.5)]), 't')
+        self.assertEqual([a[2]['port'] for a in two.timeline(10) if a[1] == 'cross_on'], [5201, 5202])
+
     def test_rejects(self):
         bad = [dict(id='X', forward=dict(loss={'gemodel': [120]})), dict(id='X', forward=dict(slot_ms=[5, 1])),
+               dict(id='X', forward=dict(cap_aqm='fq_codel')), dict(id='X', forward=dict(cap=2, cap_aqm='red')),
+               dict(id='X', event=[dict(kind='cross', at_s=1, for_s=2, proto='udp')]),
+               dict(id='X', event=[dict(kind='cross', at_s=1, for_s=2, load=0.5)]),
+               dict(id='X', event=[dict(kind='cross', at_s=1, for_s=2, proto='sctp')]),
+               dict(id='X', event=[dict(kind='cross', at_s=1)]),
                dict(id='X', event=[dict(kind='outage', at_s=1)]), dict(id='X', event=[dict(kind='rate', at_s=1, factor=0.5, for_s=1)]),
                dict(id='X', forward=dict(jitter=3))]
         for data in bad:
@@ -114,7 +152,7 @@ class Spec(unittest.TestCase):
         self.assertEqual(t.budgets(1), [40, 60, 80, 120, 200, 300])
 
     def test_variant_filters_apply_only_to_their_own_keys(self):
-        a = argparse.Namespace(only=[1], lane=['srt', 'moqt-moq2ts', 'moqt-aiomoqt-msfts'], profile=['P3'], repeats=1,
+        a = argparse.Namespace(only=[1], lane=['srt', 'moqt-moq2ts', 'moqt-aiomoqt-msfts'], profile=['transcontinental'], repeats=1,
                                variant=['D=4xRTT', 'relay_cc=bbr2', 'pub_cc=bbr'])
         got = [(lane.name, v) for _, lane, _, _, v in cli.cells(spec.load_suite('example-contrib'), a)]
         self.assertEqual(got, [('srt', {'D': 320}), ('moqt-moq2ts', {'relay_cc': 'bbr2'}),
@@ -162,11 +200,6 @@ class Topology(unittest.TestCase):
         self.assertEqual(p.relay_addresses('last-mile'), ('src', '127.0.0.1', '10.79.1.10'))
         self.assertEqual(p.relay_addresses('first-mile'), ('dst', '10.79.2.10', '127.0.0.1'))
 
-    def test_vm_render(self):
-        out = topology.vm_render({'src': 'ens3', 'dst': 'ens4'})
-        self.assertTrue(any('mirred egress redirect dev ifb0' in c for c in out['dst']))
-        self.assertTrue(any('ens4' in c for c in out['dst']))
-
 
 class Lanes(unittest.TestCase):
     def test_srt_follows_the_traps(self):
@@ -182,6 +215,23 @@ class Lanes(unittest.TestCase):
         self.assertGreaterEqual(buf, (0.320 + 0.080) * 20e6 / 8)
         self.assertGreaterEqual(fc * 1316, (0.320 + 0.080) * 20e6 / 8)
 
+    def test_srt_encryption_variants(self):
+        t = make_test(lanes=['srt'], rtt_multiples=[4], budgets_ms=[], srt_crypto=['none', 'aes-ctr', 'aes-gcm'])
+        srt = lanes.LANES['srt']
+        vs = srt.variants(t, profiles.load('transcontinental'))
+        self.assertEqual(vs, [dict(D=320), dict(D=320, crypto='aes-ctr'), dict(D=320, crypto='aes-gcm')])
+        plain, ctr, gcm = ({p.name: p.cmd for p in srt.procs(ctx(v))} for v in vs)
+        self.assertNotIn('passphrase', plain['srt-snd'] + plain['srt-rcv'])
+        for cmd in (ctr['srt-snd'], ctr['srt-rcv']):
+            self.assertIn('&passphrase=moqbench-contribution&pbkeylen=16"', cmd)
+        for cmd in (gcm['srt-snd'], gcm['srt-rcv']):
+            self.assertIn('&pbkeylen=16&cryptomode=2"', cmd)
+        self.assertIn('AES-GCM', srt.pending({}, vs[2]))
+        self.assertIsNone(srt.pending({'srt_aead': True}, vs[2]))
+        self.assertIsNone(srt.pending({}, vs[1]))
+        with self.assertRaises(config.ConfigError):
+            make_test(srt_crypto=['aes-256'])
+
     def test_rist(self):
         procs = {p.name: p for p in lanes.LANES['rist'].procs(ctx(dict(D=320)))}
         self.assertIn('-p 1', procs['rist-snd'].cmd)
@@ -191,7 +241,7 @@ class Lanes(unittest.TestCase):
     def test_variants(self):
         t = make_test(lanes=['srt', 'moqt-moq2ts', 'moqt-aiomoqt-loc', 'moqt-aiomoqt-dual'],
                       relay_cc=['bbr2', 'bbr', 'cubic'], pub_cc=['bbr', 'bbr1'])
-        p = profiles.load('P3')
+        p = profiles.load('transcontinental')
         self.assertEqual([v['D'] for v in lanes.LANES['srt'].variants(t, p)], t.budgets(80))
         self.assertEqual(len(lanes.LANES['moqt-moq2ts'].variants(t, p)), 3)
         self.assertEqual(len(lanes.LANES['moqt-aiomoqt-loc'].variants(t, p)), 6)
@@ -226,10 +276,10 @@ class Lanes(unittest.TestCase):
     def test_relay_choice(self):
         moqx = make_test()
         self.assertEqual(moqx.relay_cc, ['bbr2'])
-        self.assertNotIn('relay', lanes.LANES['moqt-moq2ts'].variants(moqx, profiles.load('P3'))[0])
+        self.assertNotIn('relay', lanes.LANES['moqt-moq2ts'].variants(moqx, profiles.load('transcontinental'))[0])
         t = make_test(lanes=['moqt-moq2ts', 'moqt-aiomoqt-msfts'], relay='aiomoqt', relay_cc=['bbr', 'bbr1'])
         msfts = lanes.LANES['moqt-aiomoqt-msfts']
-        self.assertEqual([v['relay'] for v in msfts.variants(t, profiles.load('P3'))], ['aiomoqt', 'aiomoqt'])
+        self.assertEqual([v['relay'] for v in msfts.variants(t, profiles.load('transcontinental'))], ['aiomoqt', 'aiomoqt'])
         self.assertEqual(make_test(relay='aiomoqt').relay_cc, ['bbr'])
         c = ctx(dict(relay='aiomoqt', pub_cc='bbr', relay_cc='bbr1'))
         c.relay = 'aiomoqt'
@@ -242,6 +292,95 @@ class Lanes(unittest.TestCase):
         self.assertEqual(msfts.relay_impl(c), 'aiomoqt')
         dual = lanes.LANES['moqt-aiomoqt-dual']
         self.assertEqual((dual.relay_ns(c), dual.relay_impl(ctx({}))), ('dst', 'aiomoqt'))
+
+    def test_direct_lane(self):
+        t = make_test(lanes=['srt', 'moqt-aiomoqt-msfts'], relay='none', placement='first-mile', pub_cc=['bbr', 'bbr1'])
+        self.assertEqual(t.relay_cc, [None])
+        msfts = lanes.LANES['moqt-aiomoqt-msfts']
+        vs = msfts.variants(t, profiles.load('transcontinental'))
+        self.assertEqual(vs, [dict(relay='none', pub_cc='bbr', timing='none'), dict(relay='none', pub_cc='bbr1', timing='none')])
+        self.assertEqual(msfts.label(vs[0]), 'relaynone-pub_ccbbr-timingnone')
+        c = ctx(vs[0], placement='first-mile', features=dict(ts_udp=True, msfts=True, ts_out=True))
+        c.relay = 'none'
+        procs = {p.name: p for p in msfts.procs(c)}
+        self.assertNotIn('relay', procs)
+        pub = procs['aiomoqt-pub']
+        self.assertEqual((pub.ns, pub.image), ('src', 'aiomoqt'))
+        for part in ('pub_media moqt://10.79.2.10:4433/ -k --pub-ns --draft 18', '--msfts --msfts-packets 7',
+                     '--cc-algo bbr ', ' --reconnect '):
+            self.assertIn(part, pub.cmd)
+        sub = procs['aiomoqt-sub']
+        self.assertEqual((sub.ns, sub.stage), ('dst', 'receiver'))
+        self.assertLess(run.STAGES.index(sub.stage), run.STAGES.index(pub.stage))
+        self.assertTrue(sub.cmd.startswith('openssl req -x509'))
+        self.assertIn('sub_media -Q -p 4433 --cert /tmp/cert.pem --key /tmp/priv.key --draft 18', sub.cmd)
+        self.assertNotIn(' -k ', sub.cmd)
+        self.assertEqual(msfts.cc_on_wan('first-mile'), {'pub_cc'})
+        relayed = {p.name: p for p in msfts.procs(ctx(dict(pub_cc='bbr', relay_cc='bbr2', timing='none'),
+                                                      placement='first-mile', features=c.features))}
+        self.assertIn('pub_media moqt://10.79.2.10:4433/moq-relay -k --draft 18', relayed['aiomoqt-pub'].cmd)
+        self.assertIn(' --reconnect ', relayed['aiomoqt-pub'].cmd)
+        self.assertIn('sub_media moqt://127.0.0.1:4433/moq-relay -k --draft 18', relayed['aiomoqt-sub'].cmd)
+        self.assertNotIn('openssl', relayed['aiomoqt-sub'].cmd)
+        self.assertEqual(relayed['aiomoqt-sub'].stage, 'subscriber')
+
+    def test_publisher_deadline_arm(self):
+        t = make_test(lanes=['srt', 'moqt-aiomoqt-msfts'], relay='none', placement='first-mile', pub_cc=['c4'],
+                      rtt_multiples=[4], budgets_ms=[], pub_deadline=['none', 'budget'])
+        msfts = lanes.LANES['moqt-aiomoqt-msfts']
+        vs = msfts.variants(t, profiles.load('transcontinental'))
+        self.assertEqual(vs, [dict(relay='none', pub_cc='c4', timing='none'),
+                              dict(relay='none', pub_cc='c4', timing='none', deadline=320)])
+        self.assertEqual(msfts.label(vs[1]), 'relaynone-pub_ccc4-timingnone-deadline320')
+        self.assertEqual(len(lanes.LANES['srt'].variants(t, profiles.load('transcontinental'))), 1)
+        feats = dict(ts_udp=True, msfts=True, ts_out=True, delivery_timeout=True)
+        cmds = []
+        for v in vs:
+            c = ctx(v, placement='first-mile', features=feats)
+            c.relay = 'none'
+            cmds.append({p.name: p for p in msfts.procs(c)}['aiomoqt-pub'].cmd)
+        self.assertNotIn('--delivery-timeout', cmds[0])
+        self.assertTrue(cmds[1].endswith(' --delivery-timeout 320'))
+        self.assertIsNone(msfts.pending(feats, vs[1]))
+        old = dict(feats, delivery_timeout=False)
+        self.assertIn('--delivery-timeout', msfts.pending(old, vs[1]))
+        self.assertIsNone(msfts.pending(old, vs[0]))
+        with self.assertRaises(config.ConfigError):
+            make_test(pub_deadline=['D'])
+
+    def test_repair_arm(self):
+        t = make_test(lanes=['moqt-aiomoqt-msfts'], relay='none', placement='first-mile', pub_cc=['c4'],
+                      rtt_multiples=[4], budgets_ms=[], pub_deadline=['half'], sub_repair=['none', 'half'])
+        msfts = lanes.LANES['moqt-aiomoqt-msfts']
+        vs = msfts.variants(t, profiles.load('transcontinental'))
+        self.assertEqual(vs, [dict(relay='none', pub_cc='c4', timing='none', deadline=160),
+                              dict(relay='none', pub_cc='c4', timing='none', deadline=160, repair=160)])
+        self.assertEqual(msfts.label(vs[1]), 'relaynone-pub_ccc4-timingnone-deadline160-repair160')
+        feats = dict(ts_udp=True, msfts=True, ts_out=True, delivery_timeout=True, repair=True)
+        procs = []
+        for v in vs:
+            c = ctx(v, placement='first-mile', features=feats)
+            c.relay = 'none'
+            procs.append({p.name: p for p in msfts.procs(c)})
+        self.assertNotIn('--fetch-history', procs[0]['aiomoqt-pub'].cmd)
+        self.assertNotIn('--repair', procs[0]['aiomoqt-sub'].cmd)
+        self.assertIn('--msfts-packets 7 --fetch-history 75000000 ', procs[1]['aiomoqt-pub'].cmd)
+        self.assertIn(' --delivery-timeout 160', procs[1]['aiomoqt-pub'].cmd)
+        self.assertIn('--ts-out udp://127.0.0.1:6010 --repair 160 ', procs[1]['aiomoqt-sub'].cmd)
+        self.assertIn('--repair', msfts.pending(dict(feats, repair=False), vs[1]))
+        self.assertIsNone(msfts.pending(dict(feats, repair=False), vs[0]))
+        for bad in (dict(sub_repair=['budget']), dict(pub_deadline=['quarter'])):
+            with self.subTest(bad=bad), self.assertRaises(config.ConfigError):
+                make_test(**bad)
+
+    def test_direct_lane_needs_first_mile_and_a_direct_lane(self):
+        for over in (dict(placement='last-mile'), dict(placement='first-mile', relay_cc=['bbr']),
+                     dict(placement='first-mile', lanes=['moqt-aiomoqt-msfts', 'moqt-moq2ts']),
+                     dict(placement='first-mile', lanes=['moqt-aiomoqt-dual'])):
+            data = dict(lanes=['moqt-aiomoqt-msfts'], relay='none')
+            data.update(over)
+            with self.subTest(over=over), self.assertRaises(config.ConfigError):
+                make_test(**data)
 
     def test_controller_sweeps_must_reach_the_impaired_hop(self):
         for over in (dict(pub_cc=['bbr', 'bbr1']),
@@ -281,7 +420,7 @@ class Lanes(unittest.TestCase):
         self.assertIn('--msfts --msfts-packets 7 --timestamp-mapping',
                       {p.name: p for p in msfts.procs(mapped)}['aiomoqt-pub'].cmd)
         t = make_test(pub_timing=['none', 'mapping'])
-        self.assertEqual([v['timing'] for v in msfts.variants(t, profiles.load('P3'))], ['none', 'mapping'])
+        self.assertEqual([v['timing'] for v in msfts.variants(t, profiles.load('transcontinental'))], ['none', 'mapping'])
         self.assertIn('--ts-out udp://127.0.0.1:6010', procs['aiomoqt-sub'].cmd)
         self.assertIn('--udp 127.0.0.1:6010', procs['playout'].cmd)
         self.assertIn('po300', msfts.taps(new_ctx))
@@ -301,11 +440,46 @@ class FakeWan:
         return 0, ''
 
 
+class Delivered(unittest.TestCase):
+    def test_loss_periods_and_distances(self):
+        got = set(range(20)) - {3, 4, 5, 10, 17}
+        self.assertEqual(calibrate.loss_periods(got, 20), ([3, 1, 1], [7, 7]))
+        self.assertEqual(calibrate.loss_periods(set(range(5)), 7), ([2], []))
+        self.assertAlmostEqual(profiles.load('transcontinental').forward.burst_pkts(), 100 / 33, places=3)
+        self.assertAlmostEqual(profiles.load('random-stress').forward.burst_pkts(), 1 / 0.97, places=3)
+        self.assertIsNone(profiles.load('clean-50').forward.burst_pkts())
+
+    def test_queue_fill_reads_the_bottleneck_backlog(self):
+        import json
+        from contrib import report
+        tbf = dict(kind='tbf', handle='20:', options=dict(rate=2_500_000, burst=65535, lat=100_000), backlog=125_000)
+        with tempfile.TemporaryDirectory() as d:
+            lines = [dict(t=1.0, name='fwd', out=json.dumps([dict(kind='netem', handle='1:'), dict(tbf, backlog=b)]))
+                     for b in (0, 125_000, 50_000)]
+            (Path(d) / 'qdisc-wan.jsonl').write_text(''.join(json.dumps(x) + '\n' for x in lines))
+            self.assertEqual(report.queue_fill(Path(d)), {'fwd': dict(max_ms=50.0, depth_ms=100.0)})
+            self.assertEqual(report.queue_fill(Path(d) / 'missing'), {})
+
+
 class Emulator(unittest.TestCase):
+    def test_each_netem_change_restates_a_fresh_seed(self):
+        import re
+        wan = FakeWan()
+        e = emu.Emulator(topology.Paths('10.79.0.0/16'), wan, 20e6)
+        p = profiles.load('isp-transit')
+        e.build(p, repeat=0)
+        built = int(re.search(r'dev vb0 root handle 1: netem .*?seed (\d+)', '\n'.join(wan.cmds)).group(1))
+        seeds = [int(re.search(r'dev vb0 root handle 1: netem .*?seed (\d+)', e.command('delay', dict(direction='fwd', delta_ms=d))).group(1))
+                 for d in (8, 0, 8)]
+        self.assertEqual(len({built, *seeds}), 4)
+        e.build(p, repeat=0)
+        again = int(re.search(r'seed (\d+)', e.command('delay', dict(direction='fwd', delta_ms=8))).group(1))
+        self.assertEqual(again, seeds[0])
+
     def test_build_events_and_clear(self):
         wan = FakeWan()
         e = emu.Emulator(topology.Paths('10.79.0.0/16'), wan, 20e6)
-        p = profiles.load('P7')
+        p = profiles.load('cellular-handover')
         e.build(p, repeat=1)
         text = '\n'.join(wan.cmds)
         self.assertIn('tc qdisc add dev vb0 root handle 1: netem', text)
@@ -328,15 +502,134 @@ class Emulator(unittest.TestCase):
     def test_nft_script_counts_before_dropping(self):
         script = emu.nft_script(topology.Paths('10.79.0.0/16'))
         self.assertLess(script.index('comment "fwd0"'), script.index('@blocked counter drop'))
+        self.assertLess(script.index('comment "cross-rev0"'), script.index('@blocked counter drop'))
+        self.assertIn('iifname "va0" oifname "vb0" meta l4proto { tcp, udp } th dport 5201-5208 counter', script)
         self.assertIn('set blocked { type ifname; }', script)
+
+    def test_timeline_hands_cross_traffic_to_its_handlers(self):
+        wan = FakeWan()
+        e = emu.Emulator(topology.Paths('10.79.0.0/16'), wan, 20e6)
+        e.build(profiles.load('bloat-cable'))
+        seen = []
+        handlers = {'cross_on': lambda a: seen.append(a) or dict(action='cross_on', t0=1.0)}
+        acts = [(0, 'cross_on', dict(name='c#1', port=5201)), (0, 'rate', dict(name='r', factor=0.5))]
+        with tempfile.TemporaryDirectory() as d:
+            done = e.run_timeline(acts, 0, f'{d}/faults.jsonl', handlers=handlers)
+        self.assertEqual(seen, [dict(name='c#1', port=5201)])
+        self.assertEqual([r['action'] for r in done], ['cross_on', 'rate'])
+        self.assertIn('tbf rate 25797872bit', wan.cmds[-1])
+
+
+class RemoteWork(unittest.TestCase):
+    def provider(self, stack_dir, home='/home/u'):
+        dep = SimpleNamespace(host='remote', subnet='10.79.0.0/16', name='dep', stack_dir=stack_dir)
+        prov = contrib_docker.DockerContrib(dep)
+        calls = []
+
+        def sh(script, check=True, timeout=300):
+            calls.append(script)
+            return SimpleNamespace(stdout=home, stderr='', returncode=0)
+        prov.host = SimpleNamespace(local=False, sh=sh)
+        return prov, calls
+
+    def test_a_relative_stack_dir_sits_under_the_remote_home(self):
+        prov, calls = self.provider('moqbench-contrib')
+        self.assertEqual(prov.work, '/home/u/moqbench-contrib/dep')
+        self.assertEqual(prov.work, '/home/u/moqbench-contrib/dep')
+        self.assertEqual(len(calls), 1)
+
+    def test_an_absolute_stack_dir_is_used_as_given(self):
+        prov, calls = self.provider('/srv/mb')
+        self.assertEqual(prov.work, '/srv/mb/dep')
+        self.assertEqual(calls, [])
+
+    def test_no_home_is_an_error(self):
+        prov, _ = self.provider('moqbench-contrib', home='')
+        with self.assertRaises(contrib_docker.FabricError):
+            prov.work
+
+
+class FakeProv:
+    def __init__(self):
+        self.paths = topology.Paths('10.79.0.0/16')
+        self.started, self.stopped, self.shell = [], [], []
+
+    def sh(self, script, check=True, timeout=300):
+        self.shell.append(script)
+
+    def start(self, proc, run_dir, bin_dir, cell, sources_dir=None):
+        self.started.append(proc)
+        return f'mbc-{cell}'
+
+    def stop(self, names, signal='TERM', grace_s=5):
+        self.stopped.append((names, signal))
+
+
+class Cell(unittest.TestCase):
+    def cell(self, profile, lane='srt', out='/nonexistent', variant=None, **over):
+        test = make_test(lanes=[lane], profiles=[profile], **over)
+        return run.Cell(FakeProv(), test, spec.load_scenario('standard'), lanes.LANES[lane], profiles.load(profile),
+                        variant or {}, 0, f'r001-{lane}', out)
+
+    def test_capture(self):
+        self.assertFalse(any(p.name.startswith(('pcap', 'qdisc')) for p in self.cell('bloat-cable').helpers()))
+        procs = {p.name: p for p in self.cell('bloat-cable', capture='headers').helpers()}
+        self.assertEqual(procs['pcap-src0'].cmd, 'tcpdump -i wa0 -p -n -s 96 -U -w /out/src0.pcap not portrange 5201-5208')
+        self.assertEqual((procs['pcap-dst0'].ns, procs['pcap-dst0'].root), ('dst', True))
+        self.assertIn('--cmd fwd="tc -s -j qdisc show dev vb0" --cmd rev="tc -s -j qdisc show dev va0" --interval 0.1',
+                      procs['qdisc-wan'].cmd)
+        full = {p.name: p for p in self.cell('bloat-cable', capture='full').helpers()}
+        self.assertIn('-s 0 ', full['pcap-src0'].cmd)
+        c = self.cell('transcontinental', lane='moqt-aiomoqt-msfts', capture='full', placement='first-mile',
+                      variant=dict(pub_cc='bbr', relay_cc='bbr2', pub_timing='none'))
+        lane_procs = c.lane.procs(c.ctx)
+        self.assertEqual(c.capture_env(lane_procs, '/run'), ['qlog-aiomoqt-pub', 'qlog-aiomoqt-sub'])
+        pub = next(p for p in lane_procs if p.name == 'aiomoqt-pub')
+        self.assertEqual(pub.env['AIOPQUIC_QLOG_DIR'], '/out/qlog-aiomoqt-pub')
+        self.assertEqual(pub.env['SSLKEYLOGFILE'], '/out/keys-aiomoqt-pub.log')
+        self.assertEqual(pub.env['AIOPQUIC_TEXTLOG_FILE'], '/dev/null')
+        self.assertIn('mkdir -p -m 777 /run/qlog-aiomoqt-pub', c.prov.shell)
+        with self.assertRaises(config.ConfigError):
+            make_test(capture='yes')
+
+    def test_captures_are_gzipped(self):
+        import gzip
+        with tempfile.TemporaryDirectory() as d:
+            c = self.cell('bloat-cable', out=d, capture='headers')
+            (c.out / 'qlog-aiomoqt-pub').mkdir(parents=True)
+            (c.out / 'src0.pcap').write_bytes(b'pcap')
+            (c.out / 'qlog-aiomoqt-pub' / 'x.qlog').write_text('{}')
+            (c.out / 'srt-snd.json').write_text('{}')
+            c.compress_captures()
+            self.assertEqual(sorted(str(f.relative_to(c.out)) for f in c.out.rglob('*') if f.is_file()),
+                             ['qlog-aiomoqt-pub/x.qlog.gz', 'src0.pcap.gz', 'srt-snd.json'])
+            self.assertEqual(gzip.open(c.out / 'src0.pcap.gz').read(), b'pcap')
+
+    def test_cross_servers_and_clients(self):
+        c = self.cell('bloat-cable')
+        servers = [p for p in c.helpers() if p.name.startswith('cross-srv')]
+        self.assertEqual([(p.name, p.ns, p.cmd) for p in servers],
+                         [('cross-srv1', 'dst', 'iperf3 -s -p 5201 -J --logfile /out/cross-srv1.json')])
+        on, off = (c.cross_handlers('/run', '/bin')[k] for k in ('cross_on', 'cross_off'))
+        rec = on(dict(name='tcp-upload#2', port=5201, proto='tcp', load=None, streams=2, cc='cubic', for_s=20))
+        proc = c.prov.started[-1]
+        self.assertEqual((proc.name, proc.ns), ('cross-tcp-upload-2', 'src'))
+        self.assertEqual(proc.cmd, 'iperf3 -c 10.79.2.10 -p 5201 -t 20 -i 1 -J --connect-timeout 3000 '
+                                   '--logfile /out/cross-tcp-upload-2.json -P 2 -C cubic')
+        self.assertEqual(rec['action'], 'cross_on')
+        off(dict(name='tcp-upload#2', port=5201))
+        self.assertEqual(c.prov.stopped, [(['mbc-r001-cross-tcp-upload-2'], 'INT')])
+        on(dict(name='u', port=5202, proto='udp', load=0.5, streams=1, cc=None, for_s=5))
+        self.assertTrue(c.prov.started[-1].cmd.endswith('-u -l 1200 -b 10319148'))
+        self.assertFalse(any(p.name.startswith('cross') for p in self.cell('transcontinental').helpers()))
 
 
 class Calibration(unittest.TestCase):
     def test_spread_grows_with_burstiness(self):
-        bursty = profiles.load('P6').forward
+        bursty = profiles.load('intercontinental-bad').forward
         random = profiles.parse(dict(id='R', forward=dict(loss={'random': 2.952})), 't').forward
         self.assertGreater(calibrate.ge_sigma_pct(bursty, 40000), 3 * calibrate.ge_sigma_pct(random, 40000))
-        self.assertEqual(calibrate.ge_sigma_pct(profiles.load('P0').forward, 1000), 0.0)
+        self.assertEqual(calibrate.ge_sigma_pct(profiles.load('lan').forward, 1000), 0.0)
 
     def test_analyse(self):
         with tempfile.TemporaryDirectory() as d:
@@ -355,7 +648,7 @@ class Calibration(unittest.TestCase):
                     if s not in lost:
                         f.write(f'{s},{s * 1000000},{s * 1000000 + 81_000_000}\n')
                 f.write(f'# sent {sent}\n')
-            r = calibrate.analyse(run, profiles.load('P3'), 1900, 1)
+            r = calibrate.analyse(run, profiles.load('transcontinental'), 1900, 1)
         self.assertAlmostEqual(r['fwd_loss_pct'], 0.3)
         self.assertEqual(r['rev_loss_pct'], 0.0)
         self.assertEqual(r['reorder_events'], 1)

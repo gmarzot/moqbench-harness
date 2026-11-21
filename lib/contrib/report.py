@@ -6,7 +6,9 @@ data. The measurement window opens join_s after the first source datagram. Outpu
 break_ms or more at an output; late-or-lost at budget D counts units missing, or later than the first
 live-edge delay plus D (what a playout locked at the live edge with buffer D would miss). Taps stamp
 CLOCK_MONOTONIC; a run matched against a wall-clock log (the LOC lane) whose clock probe saw a
-wall-clock step above CLOCK_STEP_MS is marked clock_disturbed.
+wall-clock step above CLOCK_STEP_MS is marked clock_disturbed. On two VMs every tap stamps
+CLOCK_REALTIME, and a run is also clock_disturbed when chrony put either node more than
+SYNC_OFFSET_MS from NTP time at its start or end.
 """
 import csv
 import json
@@ -92,6 +94,7 @@ SETTLE_NS = 3 * NS
 # A wall-clock step larger than this makes a run's delay figures unreliable: units in flight across it
 # carry the step.
 CLOCK_STEP_MS = 20.0
+SYNC_OFFSET_MS = 1.0
 
 
 def live_anchor(units):
@@ -267,10 +270,75 @@ def impairment(meta, run):
         out[name] = dict(offered=offered, netem_drops=loss_drops, cap_drops=(cap or {}).get('drops', 0),
                          netem_loss_pct=r3(100 * loss_drops / offered) if offered else 0.0,
                          cap_drop_pct=r3(100 * (cap or {}).get('drops', 0) / offered) if offered and cap else 0.0)
+        if '30:' in qs:
+            out[name]['aqm_drops'] = qs['30:'].get('drops', 0)
+        cross = final.get('nft', {}).get(f'cross-{name}')
+        if cross and cross.get('packets'):
+            out[name]['cross_packets'] = cross['packets']
     nft = final.get('nft', {})
     out['nft'] = nft
     out['outage_drops'] = nft.get('outage', {}).get('packets')
+    fill = queue_fill(run)
+    if fill:
+        out['queue_fill'] = fill
     out['events'] = jsonl(run / 'faults.jsonl')
+    return out
+
+
+def interp(points, t):
+    """The value at t of (t, value) points: linear between them, flat beyond them."""
+    if t <= points[0][0]:
+        return points[0][1]
+    for (ta, va), (tb, vb) in zip(points, points[1:]):
+        if t <= tb:
+            return va + (vb - va) * (t - ta) / (tb - ta) if tb > ta else vb
+    return points[-1][1]
+
+
+def wire(meta, run, w0, w1, first_ns, scored):
+    """Bytes the lane put on the WAN each way over the scored seconds, against the source's, and
+    on-time source bytes per forward wire byte at each D. nft counts packets entering the WAN, before
+    impairment drops; its samples, on the controller clock, are aligned to the source tap at the
+    source's start."""
+    samples = jsonl(run / 'emu-samples.jsonl')
+    started = meta.get('source_started')
+    if not samples or started is None or first_ns is None:
+        return None
+    a, b = -(-w0 // NS), -(-w1 // NS)
+    src = ts_counts(run, 'in', a * NS, b * NS)['bytes']
+    if not src:
+        return None
+    ks = [ln['k'] for ln in meta['topology']['links']] or [0]
+
+    def over(way):
+        pts = [(x['t'], sum((x['nft'].get(f'{way}{k}') or {}).get('bytes', 0)
+                            - (x['nft'].get(f'cross-{way}{k}') or {}).get('bytes', 0) for k in ks))
+               for x in samples if 'nft' in x]
+        if not pts:
+            return 0
+        return int(interp(pts, started + (b * NS - first_ns) / NS) - interp(pts, started + (a * NS - first_ns) / NS))
+
+    fwd, rev = over('fwd'), over('rev')
+    llol = (scored or {}).get('late_or_lost_pct') or {}
+    return dict(source_bytes=src, fwd_bytes=fwd, rev_bytes=rev, fwd_ratio=r3(fwd / src), rev_ratio=round(rev / src, 4),
+                goodput_per_wire={d: r3(src * (1 - v / 100) / fwd) for d, v in llol.items() if fwd and v is not None})
+
+
+def queue_fill(run):
+    """Per sampled direction: the bottleneck FIFO's largest backlog, as queueing delay at its rate,
+    and the depth it was given."""
+    out = {}
+    for rec in jsonl(run / 'qdisc-wan.jsonl') + jsonl(run / 'qdisc-rev.jsonl'):
+        try:
+            qs = json.loads(rec.get('out') or '[]')
+        except ValueError:
+            continue
+        for q in qs:
+            o = q.get('options') or {}
+            if q.get('kind') != 'tbf' or not o.get('rate'):
+                continue
+            cur = out.setdefault(rec.get('name', 'fwd'), dict(max_ms=0.0, depth_ms=r3(o.get('lat', 0) / 1000)))
+            cur['max_ms'] = max(cur['max_ms'], r3(1000 * (q.get('backlog') or 0) / o['rate']))
     return out
 
 
@@ -398,6 +466,23 @@ def clock_pauses(run):
     return out
 
 
+def clock_sync(meta):
+    """Each node's worst |offset| from NTP time over the run's chrony readings (None when a reading is
+    missing), and whether one exceeds SYNC_OFFSET_MS; None for a one-host run."""
+    readings = [r for r in (meta.get('path') or {}).values() if isinstance(r, dict)]
+    if not readings:
+        return None
+    worst = {}
+    for r in readings:
+        for ns, c in (r.get('clock') or {}).items():
+            off = (c or {}).get('offset_ms')
+            prev = worst.get(ns, 0.0)
+            worst[ns] = None if off is None or prev is None else max(prev, abs(off))
+    disturbed = not worst or any(v is None or v > SYNC_OFFSET_MS for v in worst.values())
+    return dict(worst_offset_ms={ns: r3(v) if v is not None else None for ns, v in worst.items()},
+                disturbed=disturbed)
+
+
 def analyser(run):
     p = run / 'analyser.log'
     if not p.is_file():
@@ -442,24 +527,31 @@ def analyze(run_dir):
                                                     for b in meta['playout_ms']}
         main = next((out['outputs'][n] for n in meta.get('taps', []) if n != 'raw'), None) or {}
     out['impairment'] = impairment(meta, run)
+    w = wire(meta, run, w0, w1, insum.get('first_ns'), (out.get('outputs') or {}).get('raw') or main)
+    if w:
+        out['wire'] = w
     out['protocol'] = protocol_stats(run, meta['lane'])
     out['socket_drops'] = socket_drops(run)
     out['reconnections'] = reconnections(run)
     out['clock'] = clock_pauses(run)
     worst = max((abs(c['largest_step_ms']) for c in out['clock'].values()), default=0.0)
     out['clock_disturbed'] = bool(meta.get('wall_clock')) and worst > CLOCK_STEP_MS
+    sync = clock_sync(meta)
+    if sync:
+        out['clock_sync'] = sync
+        out['clock_disturbed'] = out['clock_disturbed'] or sync['disturbed']
     out['analyser'] = analyser(run)
     out['verdict'] = verdict(out, main, meta)
     return out
 
 
 def verdict(out, main, meta):
-    """P0 must read zero errors; other profiles only fail on no delivery."""
+    """lan must read zero errors; other profiles only fail on no delivery."""
     frames = main.get('frames')
     delivered = (main.get('delay_ms') or {}).get('n') or (isinstance(frames, int) and frames > (main.get('missing') or 0))
     if not delivered:
         return 'FAIL'
-    if meta['profile_id'] == 'P0':
+    if meta['profile_id'] == 'lan':
         clean = (main.get('pcr_missing', main.get('missing', 0)) == 0 and not (main.get('ts') or {}).get('cc_errors')
                  and not (main.get('breaks') or {}).get('count'))
         return 'PASS' if clean else 'FAIL'
@@ -469,25 +561,29 @@ def verdict(out, main, meta):
 def line(s):
     """One text line per run."""
     v = s.get('variant') or {}
-    head = f"{s['label']:<34} {s['lane']:<18} {s['profile']:<4} {json.dumps(v, separators=(',', ':')):<28}"
+    head = f"{s['label']:<34} {s['lane']:<18} {s['profile']:<21} {json.dumps(v, separators=(',', ':')):<28}"
     if 'error' in s:
         return f"{head} {s['error']}"
+    w = s.get('wire')
+    wire_txt = f", wire fwd/rev {w['fwd_ratio']}/{w['rev_ratio']}x src" if w else ''
     main = None
     if 'outputs' in s:
         name = next((n for n in s['outputs'] if n != 'raw'), None)
         main = s['outputs'].get(name) if name else None
     if main:
         d = main['delay_ms']
-        llol = main.get('late_or_lost_pct') or (s['outputs'].get('raw') or {}).get('late_or_lost_pct') or {}
-        return (f"{head} delay p50/p99/max {d['p50']}/{d['p99']}/{d['max']} ms, PCR lost {main['pcr_lost_pct']}%, "
+        # Late or lost comes from raw arrivals when there are any, so a playout buffer adds nothing to D.
+        raw = s['outputs'].get('raw')
+        llol = (raw or main).get('late_or_lost_pct') or {}
+        return (f"{head} {name}: delay p50/p99/max {d['p50']}/{d['p99']}/{d['max']} ms, PCR lost {main['pcr_lost_pct']}%, "
                 f"breaks {main['breaks']['count']} (longest {main['breaks']['longest_ms']} ms), "
-                f"cc {(main.get('ts') or {}).get('cc_errors')}, late|lost@D {llol}  {s['verdict']}"
+                f"cc {(main.get('ts') or {}).get('cc_errors')}, late|lost@D{' (raw)' if raw else ''} {llol}{wire_txt}  {s['verdict']}"
                 f"{'  CLOCK' if s.get('clock_disturbed') else ''}")
     f = s.get('frames') or {}
     return (f"{head} frames {f.get('frames')} missing {f.get('missing_pct')}%, key p50/p99 "
             f"{(f.get('key_delay_ms') or {}).get('p50')}/{(f.get('key_delay_ms') or {}).get('p99')} ms, other "
             f"{(f.get('other_delay_ms') or {}).get('p50')}/{(f.get('other_delay_ms') or {}).get('p99')} ms, "
-            f"late|lost@D {f.get('late_or_lost_pct')}  {s['verdict']}{'  CLOCK' if s.get('clock_disturbed') else ''}")
+            f"late|lost@D {f.get('late_or_lost_pct')}{wire_txt}  {s['verdict']}{'  CLOCK' if s.get('clock_disturbed') else ''}")
 
 
 def main(paths):
@@ -509,7 +605,7 @@ def table(summaries):
     out = []
     for s in sorted(summaries, key=lambda x: (x.get('profile', ''), x.get('lane', ''), x.get('label', ''))):
         if s.get('verdict') == 'PENDING':
-            out.append(f"{s['profile']:<4} {s['lane']:<20} {'':<26} PENDING: {s.get('reason')}")
+            out.append(f"{s['profile']:<21} {s['lane']:<20} {'':<26} PENDING: {s.get('reason')}")
             continue
         out.append(line(s))
     return '\n'.join(out)

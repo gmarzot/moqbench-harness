@@ -1,0 +1,22 @@
+id = "provisioned"
+name = "Provisioned link, policed"
+role = "realistic"
+description = "Dedicated access or cloud interconnect: committed rate policed at 1.25x the stream (5 ms queue, 64 kB bucket), a 0.01% loss floor, one 200 ms route flap per run."
+basis = "ITU-T Y.1541 class 6/7 loss objective 1e-5 and G.1050 profile A; single-rate policing (RFC 2697); Flach et al., An Internet-Wide Analysis of Traffic Policing (SIGCOMM 2016)"
+rtt_ms = 40
+
+[forward]
+loss = { gemodel = [0.006667, 66.666667, 100, 0] }
+cap = 1.25
+cap_latency_ms = 5
+seed = 4021
+
+[reverse]
+seed = 4022
+
+[[event]]
+kind = "outage"
+label = "route-flap"
+at_s = 61.3
+every_s = 900
+for_ms = 200

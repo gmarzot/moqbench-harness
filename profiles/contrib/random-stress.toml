@@ -1,0 +1,13 @@
+id = "random-stress"
+name = "Random loss envelope, 3%"
+role = "envelope"
+description = "Robustness envelope, not a path model: 100 ms RTT and 3% independent random loss forward."
+basis = "RFC 8868 section 4.2 random-loss minimum model; SRT Deployment Guide loss band up to 3% (4x RTT latency)"
+rtt_ms = 100
+
+[forward]
+loss = { random = 3 }
+seed = 4061
+
+[reverse]
+seed = 4062
