@@ -22,6 +22,8 @@ SRT_PASSPHRASE = 'moqbench-contribution'
 # SRT encryption per variant: URI options added on both ends.
 SRT_CRYPTO = {'none': '', 'aes-ctr': f'&passphrase={SRT_PASSPHRASE}&pbkeylen=16',
               'aes-gcm': f'&passphrase={SRT_PASSPHRASE}&pbkeylen=16&cryptomode=2'}
+# SRT FEC per variant (SRT's built-in packet filter), with ARQ for what it cannot repair.
+SRT_FEC = {'none': '', 'fec-10x5': '&packetfilter=fec,cols:10,rows:5,layout:staircase,arq:onreq'}
 PY = 'python3 /contrib/bin'
 
 
@@ -137,8 +139,8 @@ class Srt(Lane):
     needs = {'srt_aead': ('tools', 'cat /etc/contrib-tools-versions.txt', 'srt-aead: on')}
 
     def variants(self, test, profile):
-        return [dict(D=d, **({} if c == 'none' else {'crypto': c}))
-                for d, c in itertools.product(test.budgets(profile.rtt_ms), test.srt_crypto)]
+        return [dict(D=d, **({} if c == 'none' else {'crypto': c}), **({} if f == 'none' else {'fec': f}))
+                for d, c, f in itertools.product(test.budgets(profile.rtt_ms), test.srt_crypto, test.srt_fec)]
 
     def pending(self, features, variant=None):
         if (variant or {}).get('crypto') == 'aes-gcm' and not features.get('srt_aead'):
@@ -149,13 +151,15 @@ class Srt(Lane):
         d, t = ctx.variant['D'], ctx.tier
         fc, buf = srt_buffers(d, ctx.rtt_ms, t.mux_bps)
         pps = int(t.pps)
-        crypto = SRT_CRYPTO[ctx.variant.get('crypto', 'none')]
+        fec = SRT_FEC[ctx.variant.get('fec', 'none')]
+        crypto = SRT_CRYPTO[ctx.variant.get('crypto', 'none')] + fec
+        ohead = 100 if fec else 50
         rx = (f'srt-live-transmit -chunk:1316 -s:{pps} -pf:json -statsout:/out/srt-rcv.json '
               f'"srt://:{SRT_PORT}?mode=listener&latency={d}&lossmaxttl=32&fc={fc}&rcvbuf={buf}{crypto}" '
               f'"udp://{OUT}:{topology.PORTS_OUT["out"]}?ttl=1"')
         tx = (f'srt-live-transmit -chunk:1316 -s:{pps} -pf:json -statsout:/out/srt-snd.json "udp://{GROUP_IN}" '
               f'"srt://{ctx.paths.dst_ip()}:{SRT_PORT}?mode=caller&latency={d}&maxbw=0&inputbw={t.mux_bps // 8}'
-              f'&oheadbw=50&lossmaxttl=32&fc={fc}&sndbuf={buf}&rcvbuf={buf}{crypto}"')
+              f'&oheadbw={ohead}&lossmaxttl=32&fc={fc}&sndbuf={buf}&rcvbuf={buf}{crypto}"')
         return [Proc('srt-rcv', 'dst', 'tools', rx, 'receiver', settle_s=1),
                 Proc('srt-snd', 'src', 'tools', tx, 'sender', settle_s=2)]
 

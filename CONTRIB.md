@@ -227,7 +227,9 @@ exits. Each exit is logged and counted as a reconnection.
   `budgets_ms` (200, 300).
 - **SRT and RIST** run once per D, with SRT latency and RIST buffer set to D. SRT also runs once per
   `srt_crypto`: `none` (default), `aes-ctr` or `aes-gcm` (a test passphrase, AES-128; GCM needs the
-  tools image's SRT built with its AEAD option, which `build/contrib-tools.Dockerfile` does).
+  tools image's SRT built with its AEAD option, which `build/contrib-tools.Dockerfile` does), and once
+  per `srt_fec`: `none` (default) or `fec-10x5` (SRT's FEC filter, 10 columns by 5 rows, staircase,
+  ARQ on request; the sender's overhead ceiling rises to 100% for it).
 - **MoQT lanes** run once per congestion controller on the impaired hop: `relay_cc` for the relay
   (moqx: bbr2, bbr, cubic; aiomoqt-relay: picoquic's names) in `last-mile`, `pub_cc` for the
   aiomoqt publisher (bbr, bbr1, cubic, c4) in `first-mile` and in the dual-path lane. A test that

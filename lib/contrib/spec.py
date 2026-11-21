@@ -22,7 +22,7 @@ PLACEMENTS = ('last-mile', 'first-mile')
 RELAYS = {'moqx': 'bbr2', 'aiomoqt': 'bbr', 'none': None}
 TEST_KEYS = {'type', 'lanes', 'profiles', 'source', 'scenario', 'repeats', 'placement', 'rtt_multiples',
              'rtt_floor_ms', 'budgets_ms', 'playout_ms', 'relay_cc', 'pub_cc', 'seconds', 'note', 'suffix',
-             'dual_path', 'ingest', 'pub_timing', 'pub_deadline', 'sub_repair', 'srt_crypto', 'relay', 'capture'}
+             'dual_path', 'ingest', 'pub_timing', 'pub_deadline', 'sub_repair', 'srt_crypto', 'srt_fec', 'relay', 'capture'}
 CAPTURES = ('none', 'headers', 'full')
 SUITE_KEYS = {'description', 'requires', 'test', 'lane'}
 SCENARIO_KEYS = {'description', 'seconds', 'join_s', 'drain_s', 'source_mode', 'gap_ms', 'break_ms',
@@ -32,7 +32,7 @@ SCENARIO_DEFAULTS = dict(seconds=300, join_s=10, drain_s=5, source_mode='file', 
 TEST_DEFAULTS = dict(source='mpeg2-20m', scenario='standard', repeats=1, placement='last-mile',
                      rtt_multiples=[2, 3, 4, 6], rtt_floor_ms=20, budgets_ms=[200, 300], playout_ms=[300, 200],
                      relay='moqx', relay_cc=None, pub_cc=['bbr'], dual_path=False, ingest='srt',
-                     pub_timing=['none'], pub_deadline=['none'], sub_repair=['none'], srt_crypto=['none'],
+                     pub_timing=['none'], pub_deadline=['none'], sub_repair=['none'], srt_crypto=['none'], srt_fec=['none'],
                      capture='none')
 
 
@@ -144,6 +144,8 @@ class Test:
             raise config.ConfigError(f'{where}: sub_repair lists none and/or half')
         if not set(self.srt_crypto) <= set(lanes.SRT_CRYPTO):
             raise config.ConfigError(f'{where}: srt_crypto lists {", ".join(lanes.SRT_CRYPTO)}')
+        if not set(self.srt_fec) <= set(lanes.SRT_FEC):
+            raise config.ConfigError(f'{where}: srt_fec lists {", ".join(lanes.SRT_FEC)}')
         config.positive_int(where, 'repeats', self.repeats)
         self.seconds = data.get('seconds')
         self.note = data.get('note', '')

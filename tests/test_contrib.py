@@ -231,6 +231,16 @@ class Lanes(unittest.TestCase):
         self.assertIsNone(srt.pending({}, vs[1]))
         with self.assertRaises(config.ConfigError):
             make_test(srt_crypto=['aes-256'])
+        f = make_test(lanes=['srt'], rtt_multiples=[4], budgets_ms=[], srt_fec=['none', 'fec-10x5'])
+        fv = srt.variants(f, profiles.load('transcontinental'))
+        self.assertEqual(fv, [dict(D=320), dict(D=320, fec='fec-10x5')])
+        fec = {p.name: p.cmd for p in srt.procs(ctx(fv[1]))}
+        for cmd in fec.values():
+            self.assertIn('&packetfilter=fec,cols:10,rows:5,layout:staircase,arq:onreq"', cmd)
+        self.assertIn('&oheadbw=100&', fec['srt-snd'])
+        self.assertIn('&oheadbw=50&', plain['srt-snd'])
+        with self.assertRaises(config.ConfigError):
+            make_test(srt_fec=['fec-2d'])
 
     def test_rist(self):
         procs = {p.name: p for p in lanes.LANES['rist'].procs(ctx(dict(D=320)))}
