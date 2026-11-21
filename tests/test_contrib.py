@@ -15,7 +15,9 @@ from types import SimpleNamespace  # noqa: E402
 # Mean forward loss in percent each profile is built for.
 TARGET_LOSS = {'lan': 0.0, 'regional-clean': 0.02, 'national-managed': 0.1, 'transcontinental': 0.5, 'intercontinental-good': 0.3, 'longhaul-lossy': 1.0, 'intercontinental-bad': 3.0, 'cellular-handover': 2.0, 'leo-satellite': 0.4,
                'outage-ladder': 0.5, 'random-loss': 0.5, 'bloat-cable': 0.0, 'bloat-cellular': 0.0, 'cable-fqcodel': 0.0,
-               'cloud-path': 0.0, 'cloud-lossy': 0.5, 'cloud-bloat': 0.0, 'cloud-outage-ladder': 0.5}
+               'cloud-path': 0.0, 'cloud-lossy': 0.5, 'cloud-bloat': 0.0, 'cloud-outage-ladder': 0.5,
+               'clean-50': 0.0, 'clean-100': 0.0, 'provisioned': 0.01, 'isp-transit': 0.0, 'geo-satellite': 0.01,
+               'starlink-business': 0.4, 'transit-outage-ladder': 0.0, 'random-stress': 3.0}
 
 
 def make_test(**over):
@@ -39,6 +41,12 @@ class Profiles(unittest.TestCase):
                 p = profiles.load(name)
                 self.assertAlmostEqual(p.forward.mean_loss_pct(), TARGET_LOSS[name], delta=0.06 * max(1, TARGET_LOSS[name]))
                 self.assertNotEqual(p.seeds(0)[0], p.seeds(0)[1])
+
+    def test_roles(self):
+        self.assertEqual(profiles.load('random-stress').role, 'envelope')
+        self.assertEqual(profiles.load('transit-outage-ladder').role, 'envelope')
+        with self.assertRaises(config.ConfigError):
+            profiles.parse(dict(id='x', role='typical', rtt_ms=10), 'x')
 
     def test_ge_helpers(self):
         self.assertAlmostEqual(profiles.ge_mean(0.17, 33, 100, 0), 0.5126, places=3)
@@ -415,7 +423,42 @@ class FakeWan:
         return 0, ''
 
 
+class Delivered(unittest.TestCase):
+    def test_loss_periods_and_distances(self):
+        got = set(range(20)) - {3, 4, 5, 10, 17}
+        self.assertEqual(calibrate.loss_periods(got, 20), ([3, 1, 1], [7, 7]))
+        self.assertEqual(calibrate.loss_periods(set(range(5)), 7), ([2], []))
+        self.assertAlmostEqual(profiles.load('transcontinental').forward.burst_pkts(), 100 / 33, places=3)
+        self.assertAlmostEqual(profiles.load('random-stress').forward.burst_pkts(), 1 / 0.97, places=3)
+        self.assertIsNone(profiles.load('clean-50').forward.burst_pkts())
+
+    def test_queue_fill_reads_the_bottleneck_backlog(self):
+        import json
+        from contrib import report
+        tbf = dict(kind='tbf', handle='20:', options=dict(rate=2_500_000, burst=65535, lat=100_000), backlog=125_000)
+        with tempfile.TemporaryDirectory() as d:
+            lines = [dict(t=1.0, name='fwd', out=json.dumps([dict(kind='netem', handle='1:'), dict(tbf, backlog=b)]))
+                     for b in (0, 125_000, 50_000)]
+            (Path(d) / 'qdisc-wan.jsonl').write_text(''.join(json.dumps(x) + '\n' for x in lines))
+            self.assertEqual(report.queue_fill(Path(d)), {'fwd': dict(max_ms=50.0, depth_ms=100.0)})
+            self.assertEqual(report.queue_fill(Path(d) / 'missing'), {})
+
+
 class Emulator(unittest.TestCase):
+    def test_each_netem_change_restates_a_fresh_seed(self):
+        import re
+        wan = FakeWan()
+        e = emu.Emulator(topology.Paths('10.79.0.0/16'), wan, 20e6)
+        p = profiles.load('isp-transit')
+        e.build(p, repeat=0)
+        built = int(re.search(r'dev vb0 root handle 1: netem .*?seed (\d+)', '\n'.join(wan.cmds)).group(1))
+        seeds = [int(re.search(r'dev vb0 root handle 1: netem .*?seed (\d+)', e.command('delay', dict(direction='fwd', delta_ms=d))).group(1))
+                 for d in (8, 0, 8)]
+        self.assertEqual(len({built, *seeds}), 4)
+        e.build(p, repeat=0)
+        again = int(re.search(r'seed (\d+)', e.command('delay', dict(direction='fwd', delta_ms=8))).group(1))
+        self.assertEqual(again, seeds[0])
+
     def test_build_events_and_clear(self):
         wan = FakeWan()
         e = emu.Emulator(topology.Paths('10.79.0.0/16'), wan, 20e6)

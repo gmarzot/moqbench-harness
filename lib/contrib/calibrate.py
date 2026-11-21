@@ -85,6 +85,24 @@ def ge_sigma_pct(side, n):
     return 100 * math.sqrt(max(var, 0.0) / n)
 
 
+def loss_periods(received, sent):
+    """RFC 3357 loss periods over sequence numbers 0..sent-1: (period lengths, distances between
+    period starts), in packets."""
+    lengths, starts, run = [], [], 0
+    for seq in range(sent):
+        if seq in received:
+            if run:
+                lengths.append(run)
+                run = 0
+        else:
+            if not run:
+                starts.append(seq)
+            run += 1
+    if run:
+        lengths.append(run)
+    return lengths, [b - a for a, b in zip(starts, starts[1:])]
+
+
 def analyse(run, prof, pps, seconds):
     echo = report.rows(run / 'probe-echo.csv')
     back = report.rows(run / 'probe-send.csv')
@@ -112,6 +130,12 @@ def analyse(run, prof, pps, seconds):
     ok_delay = owd50 is not None and prof.forward.delay_ms <= owd50 <= prof.forward.delay_ms + slot_f + 2
     rtt50 = pct(rtt, 50)
     rtt_cmd = prof.forward.delay_ms + prof.reverse.delay_ms
+    lengths, distances = loss_periods(got, sent)
+    periods = dict(count=len(lengths), mean_pkts=r3(sum(lengths) / len(lengths)) if lengths else None,
+                   p99_pkts=pct(lengths, 99) if lengths else None, max_pkts=max(lengths, default=None),
+                   mean_ms=r3(1000 * sum(lengths) / len(lengths) / pps) if lengths and pps else None,
+                   distance_mean_pkts=r3(sum(distances) / len(distances)) if distances else None)
+    burst = prof.forward.burst_pkts()
     ok_rtt = rtt50 is not None and rtt_cmd <= rtt50 <= rtt_cmd + 2 * slot_f + 3
     return dict(profile=prof.id, packets=sent, fwd_loss_pct=r3(fwd_loss), fwd_expected_pct=r3(exp_f),
                 fwd_sigma_pct=r3(sig_f), rev_loss_pct=r3(rev_loss), rev_expected_pct=r3(exp_r),
@@ -119,6 +143,7 @@ def analyse(run, prof, pps, seconds):
                 owd_commanded_ms=prof.forward.delay_ms, slot_ms=list(prof.forward.slot_ms or ()),
                 rtt_ms=dict(p50=r3(rtt50), p99=r3(pct(rtt, 99))), rtt_commanded_ms=rtt_cmd,
                 reordered=reordered, reorder_events=events, reorder_commanded_pct=prof.forward.reorder_pct,
+                fwd_loss_periods=periods, fwd_burst_commanded_pkts=r3(burst) if burst else None,
                 ok=bool(ok_loss and ok_delay and ok_rtt), ok_loss=ok_loss, ok_delay=ok_delay, ok_rtt=ok_rtt)
 
 
@@ -168,7 +193,9 @@ def line(r):
             f"rev {r['rev_loss_pct']}% (cmd {r['rev_expected_pct']} ± {r['rev_sigma_pct']}), "
             f"OWD p1/p50/p99 {r['owd_ms']['p1']}/{r['owd_ms']['p50']}/{r['owd_ms']['p99']} ms (cmd {r['owd_commanded_ms']}"
             f"{' + slot ' + str(r['slot_ms']) if r['slot_ms'] else ''}), RTT p50 {r['rtt_ms']['p50']} ms "
-            f"(cmd {r['rtt_commanded_ms']}), reordered {r['reordered']} in {r['reorder_events']} events  "
+            f"(cmd {r['rtt_commanded_ms']}), reordered {r['reordered']} in {r['reorder_events']} events, "
+            f"loss periods {r['fwd_loss_periods']['count']} of mean {r['fwd_loss_periods']['mean_pkts']} pkts "
+            f"(cmd {r['fwd_burst_commanded_pkts']})  "
             f"{'OK' if r['ok'] else 'CHECK'}")
 
 

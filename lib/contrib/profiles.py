@@ -25,7 +25,8 @@ SIDE_KEYS = {'delay_ms', 'slot_ms', 'rate', 'loss', 'reorder_pct', 'cap', 'cap_m
              'cap_burst', 'cap_aqm', 'seed', 'limit'}
 AQMS = ('fifo', 'fq_codel')
 CROSS_PORT, CROSS_MAX = 5201, 8
-PROFILE_KEYS = {'id', 'name', 'description', 'basis', 'rtt_ms', 'run_s', 'base', 'forward', 'reverse', 'event'}
+PROFILE_KEYS = {'id', 'name', 'description', 'basis', 'role', 'rtt_ms', 'run_s', 'base', 'forward', 'reverse', 'event'}
+ROLES = ('control', 'realistic', 'envelope', 'stress')
 EVENT_KINDS = {'outage': {'at_s', 'every_s', 'for_ms', 'direction', 'label'},
                'step': {'at_s', 'every_s', 'delta_ms', 'for_s', 'direction', 'label'},
                'rate': {'at_s', 'every_s', 'factor', 'for_s', 'label'},
@@ -65,6 +66,15 @@ class Side:
     cap_aqm: str = 'fifo'
     seed: int = None
     limit: int = NETEM_LIMIT
+
+    def burst_pkts(self):
+        """Mean loss period in packets the loss model commands: 1/r for Gilbert, ~1 for random."""
+        if not self.loss:
+            return None
+        if 'gemodel' in self.loss:
+            r = self.loss['gemodel'][1]
+            return 100.0 / r if r else None
+        return 1.0 / (1.0 - self.loss['random'] / 100.0)
 
     def mean_loss_pct(self):
         if not self.loss:
@@ -140,6 +150,7 @@ class Profile:
     run_s: float = 0.0
     description: str = ''
     basis: str = ''
+    role: str = ''
 
     def seeds(self, repeat):
         """(forward, reverse) seeds for a repeat: every lane of a repeat sees the same loss pattern."""
@@ -187,7 +198,7 @@ class Profile:
 
     def summary(self, mux_bps):
         cap = self.forward.cap_bps(mux_bps)
-        return dict(id=self.id, name=self.name, rtt_ms=self.rtt_ms,
+        return dict(id=self.id, name=self.name, role=self.role, rtt_ms=self.rtt_ms,
                     fwd_loss_pct=round(self.forward.mean_loss_pct(), 4),
                     rev_loss_pct=round(self.reverse.mean_loss_pct(), 4),
                     fwd_netem=self.forward.netem_args(), rev_netem=self.reverse.netem_args(),
@@ -245,7 +256,10 @@ def parse(data, where, base=None):
                 reverse=side_from(f'{where}: reverse', rev, half) if rev is not None else (base.reverse if base else Side(half)),
                 events=list(base.events) if base and 'event' not in data else [],
                 run_s=float(data.get('run_s', base.run_s if base else 0)),
-                description=data.get('description', ''), basis=data.get('basis', ''))
+                description=data.get('description', ''), basis=data.get('basis', ''),
+                role=data.get('role', base.role if base else ''))
+    if p.role and p.role not in ROLES:
+        raise config.ConfigError(f'{where}: role is one of {", ".join(ROLES)}')
     if not p.id:
         raise config.ConfigError(f'{where}: a profile needs an id')
     for i, ev in enumerate(data.get('event', []), 1):

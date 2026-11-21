@@ -1,0 +1,11 @@
+id = "clean-100"
+name = "Clean terrestrial, 100 ms"
+role = "control"
+description = "Unimpaired provisioned path: 100 ms RTT, no loss, no bottleneck."
+rtt_ms = 100
+
+[forward]
+seed = 4011
+
+[reverse]
+seed = 4012

@@ -88,7 +88,8 @@ root 1:  netem limit 100000 delay D [slot MIN MAX] rate 1gbit [loss gemodel p r 
 - **Reported loss** is the loss applied, not the loss commanded: netem drops, cap drops and outage
   drops are reported apart.
 - **Seeds.** The two directions have different seeds; every lane of a repeat sees the same loss
-  pattern.
+  pattern. netem restarts its PRNG at the seed a `change` restates, so every event change restates a
+  fresh one: the pattern never replays from an event.
 
 Profiles are `profiles/contrib/<id>.toml`:
 
@@ -112,8 +113,22 @@ Profiles are `profiles/contrib/<id>.toml`:
 | `cloud-lossy` | real path, unmanaged loss (VMs) | 0 ms added | 0–16 ms | GE 0.5 % | 1.5× | as `transcontinental` |
 | `cloud-bloat` | real path, bloated uplink (VMs) | 0 ms added | — | — | 2.5×, 500 ms FIFO | as `bloat-cable` |
 | `cloud-outage-ladder` | real path, outage ladder (VMs) | as `cloud-lossy` | | | 1.5× | as `outage-ladder` |
+| `clean-50`, `clean-100` | clean provisioned path | 50 / 100 ms | — | — | — | — |
+| `provisioned` | dedicated access or cloud interconnect | 40 ms | — | GE 0.01 % | 1.25×, policed (5 ms queue) | 200 ms route flap |
+| `isp-transit` | best-effort ISP transit | 100 ms | — | — (from the queue) | 2.0×, 100 ms FIFO | 4 TCP uploads 10 s every 41.7 s; 256 ms outage; 8 ms step |
+| `geo-satellite` | GEO satellite IP link | 600 ms | — | GE 0.01 % | 1.5×, 100 ms FIFO | rain fade to 0.75× for 30 s (assumed) |
+| `starlink-business` | LEO business uplink | 40 ms, redrawn | — | GE 0.4 % each way | 30 Mb/s, 150 ms FIFO | capacity, delay and a 60 ms loss burst every 15 s (assumed sizes) |
+| `transit-outage-ladder` | outage ladder on `isp-transit` | 100 ms | | | 2.0× | as `outage-ladder` |
+| `random-stress` | random-loss envelope | 100 ms | — | random 3 % | — | — |
 
-- **Profile keys.** `forward`, `reverse`: `delay_ms` (default RTT/2), `slot_ms`, `rate`,
+**Broadcast contribution set.** `clean-50`, `clean-100`, `provisioned`, `isp-transit`, `geo-satellite`,
+`starlink-business`, `transit-outage-ladder` and `random-stress` cover the paths large-scale contribution
+uses: provisioned or cloud interconnect, best-effort transit, satellite and LEO. On them loss comes from
+queues, policers and outages over a small floor, as measured paths show; random loss is kept to one
+labelled envelope. A profile's `role` says which it is: `control`, `realistic`, `envelope` or `stress`;
+`basis` cites its sources and names the parameters that are assumed.
+
+- **Profile keys.** `role`, `basis`; `forward`, `reverse`: `delay_ms` (default RTT/2), `slot_ms`, `rate`,
   `loss = { gemodel = [...] }` or `{ random = PCT }`, `reorder_pct`, `cap` or `cap_mbit`,
   `cap_latency_ms`, `cap_aqm` (`fifo` or `fq_codel`), `seed`. `[[event]]` tables have a `kind`:
   - `outage`: `for_ms`, `direction`;
@@ -246,6 +261,7 @@ The input tap sits on the source group in `src`; output taps sit on the output g
 | late or lost at D | units missing, or with delay above the live-edge delay + D |
 | wire bytes, goodput | bytes each way on the WAN over the scored seconds (nft, before any qdisc) against the source's; on-time source bytes per forward wire byte at each D (`wire` in `summary.json`; the run line prints both ratios) |
 | applied impairment | netem, cap, AQM and outage drops per direction, and cross-traffic packets; the events as applied, with host times |
+| queue fill | the bottleneck's largest backlog as queueing delay against the depth it was given, from the 100 ms qdisc samples (`capture = "headers"`) |
 | cross traffic | iperf3 JSON per flow from the client (`cross-<event>.json`: per-second rate, retransmissions, cwnd, RTT) and the server |
 | relay | moqx admin counters, first to last sample (sent, losses, retransmissions, PTO, cwnd-blocked, pacer lag, RTT) |
 | publisher | moq2ts objects and SRT ingest loss and drops; aiomoqt `--stats-json`; SRT and RIST JSON statistics |
@@ -309,7 +325,9 @@ profile (events off) and echoes it back. It reports, against what the profile co
   packets;
 - one-way delay p1, p50 and p99;
 - RTT;
-- reordering, as packets and as events.
+- reordering, as packets and as events;
+- forward loss periods (RFC 3357): count, mean, p99 and longest in packets, mean in ms, and the mean
+  distance between them, against the mean burst the loss model commands.
 
 Calibration runs on a docker deployment only: its one-way delay needs one clock. It also records the
 host's socket buffer limits. `net.core.rmem_max` is global, not per namespace;

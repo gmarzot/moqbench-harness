@@ -278,6 +278,9 @@ def impairment(meta, run):
     nft = final.get('nft', {})
     out['nft'] = nft
     out['outage_drops'] = nft.get('outage', {}).get('packets')
+    fill = queue_fill(run)
+    if fill:
+        out['queue_fill'] = fill
     out['events'] = jsonl(run / 'faults.jsonl')
     return out
 
@@ -319,6 +322,24 @@ def wire(meta, run, w0, w1, first_ns, scored):
     llol = (scored or {}).get('late_or_lost_pct') or {}
     return dict(source_bytes=src, fwd_bytes=fwd, rev_bytes=rev, fwd_ratio=r3(fwd / src), rev_ratio=round(rev / src, 4),
                 goodput_per_wire={d: r3(src * (1 - v / 100) / fwd) for d, v in llol.items() if fwd and v is not None})
+
+
+def queue_fill(run):
+    """Per sampled direction: the bottleneck FIFO's largest backlog, as queueing delay at its rate,
+    and the depth it was given."""
+    out = {}
+    for rec in jsonl(run / 'qdisc-wan.jsonl') + jsonl(run / 'qdisc-rev.jsonl'):
+        try:
+            qs = json.loads(rec.get('out') or '[]')
+        except ValueError:
+            continue
+        for q in qs:
+            o = q.get('options') or {}
+            if q.get('kind') != 'tbf' or not o.get('rate'):
+                continue
+            cur = out.setdefault(rec.get('name', 'fwd'), dict(max_ms=0.0, depth_ms=r3(o.get('lat', 0) / 1000)))
+            cur['max_ms'] = max(cur['max_ms'], r3(1000 * (q.get('backlog') or 0) / o['rate']))
+    return out
 
 
 def reconnections(run):
