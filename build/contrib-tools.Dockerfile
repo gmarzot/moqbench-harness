@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN git clone --depth 1 --branch ${SRT_REF} https://github.com/Haivision/srt.git /src/srt \
     && cmake -S /src/srt -B /src/srt/build -DCMAKE_BUILD_TYPE=Release -DENABLE_APPS=ON \
          -DENABLE_SHARED=ON -DENABLE_STATIC=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
+         -DUSE_ENCLIB=openssl-evp -DENABLE_AEAD_API_PREVIEW=ON \
     && cmake --build /src/srt/build -j"$(nproc)" && cmake --install /src/srt/build && ldconfig \
     && rm -rf /src/srt
 RUN git clone --depth 1 --branch ${RIST_REF} https://code.videolan.org/rist/librist.git /src/librist \
@@ -25,6 +26,6 @@ RUN curl -fsSL -o /tmp/tsduck.deb \
     && echo "${TSDUCK_SHA256}  /tmp/tsduck.deb" | sha256sum -c - \
     && apt-get update && apt-get install -y --no-install-recommends /tmp/tsduck.deb \
     && rm -rf /var/lib/apt/lists/* /tmp/tsduck.deb
-RUN { srt-live-transmit -version 2>&1 | head -1; ristsender -h 2>&1 | grep -i -m1 version; tsp --version 2>&1 | head -1; } \
-      > /etc/contrib-tools-versions.txt; cat /etc/contrib-tools-versions.txt
+RUN { srt-live-transmit -version 2>&1 | head -1; echo 'srt-aead: on'; ristsender -h 2>&1 | grep -i -m1 version; \
+        tsp --version 2>&1 | head -1; } > /etc/contrib-tools-versions.txt; cat /etc/contrib-tools-versions.txt
 LABEL org.moqbench.srt="${SRT_REF}" org.moqbench.rist="${RIST_REF}" org.moqbench.tsduck="${TSDUCK_VERSION}"

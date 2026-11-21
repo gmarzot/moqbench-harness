@@ -215,6 +215,23 @@ class Lanes(unittest.TestCase):
         self.assertGreaterEqual(buf, (0.320 + 0.080) * 20e6 / 8)
         self.assertGreaterEqual(fc * 1316, (0.320 + 0.080) * 20e6 / 8)
 
+    def test_srt_encryption_variants(self):
+        t = make_test(lanes=['srt'], rtt_multiples=[4], budgets_ms=[], srt_crypto=['none', 'aes-ctr', 'aes-gcm'])
+        srt = lanes.LANES['srt']
+        vs = srt.variants(t, profiles.load('transcontinental'))
+        self.assertEqual(vs, [dict(D=320), dict(D=320, crypto='aes-ctr'), dict(D=320, crypto='aes-gcm')])
+        plain, ctr, gcm = ({p.name: p.cmd for p in srt.procs(ctx(v))} for v in vs)
+        self.assertNotIn('passphrase', plain['srt-snd'] + plain['srt-rcv'])
+        for cmd in (ctr['srt-snd'], ctr['srt-rcv']):
+            self.assertIn('&passphrase=moqbench-contribution&pbkeylen=16"', cmd)
+        for cmd in (gcm['srt-snd'], gcm['srt-rcv']):
+            self.assertIn('&pbkeylen=16&cryptomode=2"', cmd)
+        self.assertIn('AES-GCM', srt.pending({}, vs[2]))
+        self.assertIsNone(srt.pending({'srt_aead': True}, vs[2]))
+        self.assertIsNone(srt.pending({}, vs[1]))
+        with self.assertRaises(config.ConfigError):
+            make_test(srt_crypto=['aes-256'])
+
     def test_rist(self):
         procs = {p.name: p for p in lanes.LANES['rist'].procs(ctx(dict(D=320)))}
         self.assertIn('-p 1', procs['rist-snd'].cmd)
