@@ -20,6 +20,9 @@ CHAIN = 'mbc_forward'
 QDISC_KINDS = ('netem', 'tbf', 'fq_codel')
 
 
+CHANGE_SEED_STEP = 7919
+
+
 def nft_script(paths):
     rules = []
     for ln in paths.links:
@@ -65,6 +68,7 @@ class Emulator:
         self.paths, self.exec, self.mux_bps = paths, wan_exec, mux_bps
         self.profile = None
         self.seeds = (None, None)
+        self.changes = {}
 
     def sh(self, cmd):
         rc, out = self.exec(cmd)
@@ -76,6 +80,7 @@ class Emulator:
         """Every direction's tree, and the nft table with zeroed counters."""
         self.profile = profile
         self.seeds = profile.seeds(repeat)
+        self.changes = {}
         cmds = [f'nft delete table inet {TABLE} 2>/dev/null; true']
         for k, (fdev, rdev) in enumerate(zip(self.paths.fwd_dev, self.paths.rev_dev)):
             fseed, rseed = (s + 500 * k for s in self.seeds)
@@ -90,8 +95,11 @@ class Emulator:
         return self.profile.forward if dev in self.paths.fwd_dev else self.profile.reverse
 
     def seed_of(self, dev):
+        """A fresh seed for each change of a device's netem: netem restarts its PRNG at the seed a
+        change restates, so reusing one would replay the loss pattern after every event."""
         k = (self.paths.fwd_dev + self.paths.rev_dev).index(dev) % len(self.paths.links)
-        return (self.seeds[0] if dev in self.paths.fwd_dev else self.seeds[1]) + 500 * k
+        n = self.changes[dev] = self.changes.get(dev, 0) + 1
+        return (self.seeds[0] if dev in self.paths.fwd_dev else self.seeds[1]) + 500 * k + CHANGE_SEED_STEP * n
 
     def devs(self, direction):
         f, r = self.paths.fwd_dev[:1], self.paths.rev_dev[:1]
@@ -204,6 +212,7 @@ class VmEmulator(Emulator):
     def build(self, profile, repeat=0):
         self.profile = profile
         self.seeds = profile.seeds(repeat)
+        self.changes = {}
         for ns, side, seed in (('dst', profile.forward, self.seeds[0]), ('src', profile.reverse, self.seeds[1])):
             self.on(ns, f'nft delete table inet {TABLE} 2>/dev/null; true')
             for c in side.build(self.paths.ifb(ns), self.mux_bps, seed):
